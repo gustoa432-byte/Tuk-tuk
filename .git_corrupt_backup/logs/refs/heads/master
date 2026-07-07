@@ -1,0 +1,18 @@
+0000000000000000000000000000000000000000 3bf8226dd0f9479403a90d545720f521f744c2a1 Bot <bot@example.com> 1783397968 +0000	commit (initial): init
+3bf8226dd0f9479403a90d545720f521f744c2a1 ee6275a2c2ef88acf845b055a404c254cf41c7bf Bot <bot@example.com> 1783402106 +0000	commit: Refactor data layer for Conversations
+ee6275a2c2ef88acf845b055a404c254cf41c7bf d4f54a9137af6bf22ff9c64176e7b26ce4486d3a Bot <bot@example.com> 1783403961 +0000	commit: Phase 2
+d4f54a9137af6bf22ff9c64176e7b26ce4486d3a 5ec69fef4ed8189b55c79fb22f9a903c6a793c35 Bot <bot@example.com> 1783403975 +0000	commit (amend): Phase 2
+5ec69fef4ed8189b55c79fb22f9a903c6a793c35 4ab639fdb81e556b5c85af6d007efe2a27df3f00 Bot <bot@example.com> 1783406777 +0000	commit: Fix: UI compilation errors and implement custom design
+4ab639fdb81e556b5c85af6d007efe2a27df3f00 78a50c0967f0343e1389f89f9753cc1a01b97461 Bot <bot@example.com> 1783408239 +0000	commit: Fix: Kotlin null-safety and type mismatches in MainScreen UI
+78a50c0967f0343e1389f89f9753cc1a01b97461 6ef34456f8081701984344d2c7d633bb6eadc164 Bot <bot@example.com> 1783409133 +0000	commit: Fix: Implement Persistent Outgoing Queue with DB and exponential backoff
+6ef34456f8081701984344d2c7d633bb6eadc164 13ab8076eb4ebc87dee176c80b26e2b0a7d1ebdc Bot <bot@example.com> 1783410168 +0000	commit: Fix: DTN queue logic
+13ab8076eb4ebc87dee176c80b26e2b0a7d1ebdc 87c29aec81c99ce7b0d37d60f68af7d987f24a67 Bot <bot@example.com> 1783410647 +0000	commit: Refactor: Implement GATT Connection Pool
+87c29aec81c99ce7b0d37d60f68af7d987f24a67 ca93da7652e2e107c075d69e68bfeef6698ef895 Bot <bot@example.com> 1783410892 +0000	commit: Fix: GATT Pool leaks
+ca93da7652e2e107c075d69e68bfeef6698ef895 0debfce3cc5c111cfb7635dfbf32a7c54c5bd939 Bot <bot@example.com> 1783411774 +0000	commit: Fix: Val cannot be reassigned in enqueueMessage
+0debfce3cc5c111cfb7635dfbf32a7c54c5bd939 f38ebe11b6c06d33857af95374e8a9f899299210 Bot <bot@example.com> 1783412655 +0000	commit: Fix: Auto-resolve PENDING_KEY messages
+f38ebe11b6c06d33857af95374e8a9f899299210 c9994013eac3c2d0c33dbbec4c99a86bc852ad49 Bot <bot@example.com> 1783412938 +0000	commit: Fix: UI corruption and on-the-fly RSA encryption
+c9994013eac3c2d0c33dbbec4c99a86bc852ad49 99e0abdb71e57a2479d6f375034abf181d8919d3 Bot <bot@example.com> 1783413218 +0000	commit: Fix: Revert to PENDING_KEY on missing profile
+99e0abdb71e57a2479d6f375034abf181d8919d3 6ab58b71708ea1552dceb7054614a1bccfda5e65 Bot <bot@example.com> 1783415732 +0000	commit: Phase 1: Reliable DTN message delivery via Persistent Room Queue
+6ab58b71708ea1552dceb7054614a1bccfda5e65 d536c80849865f4eb1e74227e9c7a65e3af8256a Bot <bot@example.com> 1783423936 +0000	commit: Fix: Remove ambiguous imports in MainScreen
+d536c80849865f4eb1e74227e9c7a65e3af8256a cf33374c264cb1eb01ee45cc751b6628bb9dc5dd Bot <bot@example.com> 1783426483 +0000	commit: Refactor UI/UX: hide crypto info, reorganize Profile and Info tabs
+cf33374c264cb1eb01ee45cc751b6628bb9dc5dd 356ae3a93aa4ebae47400c90b0ab26cef2effe3a Bot <bot@example.com> 1783427360 +0000	commit: Update scanner UI: portrait mode, 1:1 ratio, top screen placement

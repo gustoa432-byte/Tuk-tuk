@@ -1,0 +1,19 @@
+--- app/src/main/java/com/blink/dtn/ui/BLinkViewModel.kt
++++ app/src/main/java/com/blink/dtn/ui/BLinkViewModel.kt
+@@ -10,6 +10,7 @@
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.flatMapLatest
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.launch
+@@ -62,6 +63,8 @@
+     val publicMessages = repository.getPublicChatHistory()
+         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+ 
++    val pendingCount = dao.getPendingMessagesFlow().map { it.size }
++
+     // c) Стейт для текущего открытого диалога
+     val currentDialogId = MutableStateFlow<String?>(null)
+     
