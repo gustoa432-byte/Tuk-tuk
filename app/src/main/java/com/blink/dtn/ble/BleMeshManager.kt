@@ -35,6 +35,10 @@ class BleMeshManager private constructor(
     private val dao: BLinkDao,
     private val myUniqueNodeId: String
 ) {
+    private data class DecodedWirePacket(
+        val message: Message,
+        val dedupKey: String
+    )
 
     private class TxBatch(val totalAttempts: Int) {
         val successes = java.util.concurrent.atomic.AtomicInteger(0)
@@ -220,6 +224,30 @@ class BleMeshManager private constructor(
     private fun clearPendingOperationsForDevice(address: String) {
         deviceQueues.remove(address)
         isOperationInProgress.remove(address)
+    }
+
+    private fun resetTransportState() {
+        activeBatches.values.forEach { it.watchdogJob?.cancel() }
+        activeBatches.clear()
+        messageBackoffMap.clear()
+        txBackoffMap.clear()
+
+        activeGattConnections.values.toList().forEach { disconnectGatt(it) }
+        activeGattConnections.clear()
+        activeMtuMap.clear()
+        connectionLastUsedMap.clear()
+
+        deviceQueues.clear()
+        isOperationInProgress.clear()
+        connectedGattClients.clear()
+        discoveredDevices.clear()
+        _peerCount.value = 0
+        _activePeers.value = emptyList()
+
+        chunkBuffers.values.forEach { it.watchdogJob?.cancel() }
+        chunkBuffers.clear()
+        activeRxBuffers.set(0)
+        evictionQueue.clear()
     }
 
     private fun executeWrite(op: BleOperation, address: String) {
@@ -453,6 +481,10 @@ class BleMeshManager private constructor(
             scanner?.stopScan(scanCallback)
             advertiser?.stopAdvertising(advertiseCallback)
             gattServer?.close()
+            gattServer = null
+            advertiser = null
+            scanner = null
+            resetTransportState()
             scope.cancel()
         } catch (e: SecurityException) {
             Log.e("DTN", "SecurityException stopping mesh: ${e.message}")
@@ -947,11 +979,12 @@ class BleMeshManager private constructor(
                     }
 
                     val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: throw Exception("Decryption returned null")
-                    val message = decodeWirePacket(jsonString)
+                    val decoded = decodeWirePacket(jsonString)
+                    val message = decoded.message
                     Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
                     Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
                     Log.d("BLE_PROCESS", "MessageId=${message.id} Type=${message.type}")
-                    handleIncomingPacket(message)
+                    handleIncomingPacket(message, decoded.dedupKey)
                 } catch (e: SecurityException) {
                     Log.e("DTN", "SecurityException in write request: ${e.message}")
                     showToast("Security Exception: ${e.message}")
@@ -966,8 +999,8 @@ class BleMeshManager private constructor(
     fun injectEncryptedPayload(value: ByteArray) {
         try {
             val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(value) ?: return
-            val message = decodeWirePacket(jsonString)
-            handleIncomingPacket(message)
+            val decoded = decodeWirePacket(jsonString)
+            handleIncomingPacket(decoded.message, decoded.dedupKey)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -978,18 +1011,30 @@ class BleMeshManager private constructor(
      * [NetworkPacket] format; fall back to legacy direct-[Message] JSON for peers
      * that have not upgraded yet.
      */
-    private fun decodeWirePacket(jsonString: String): Message {
+    private fun decodeWirePacket(jsonString: String): DecodedWirePacket {
         return try {
-            Json.decodeFromString<NetworkPacket>(jsonString).toMessage()
+            val packet = Json.decodeFromString<NetworkPacket>(jsonString)
+            DecodedWirePacket(
+                message = packet.toMessage(),
+                dedupKey = packet.packetId.ifEmpty { packet.messageId }
+            )
         } catch (_: Exception) {
-            Json.decodeFromString<Message>(jsonString)
+            val legacyMessage = Json.decodeFromString<Message>(jsonString)
+            DecodedWirePacket(
+                message = legacyMessage,
+                dedupKey = legacyMessage.id
+            )
         }
     }
 
-    private fun handleIncomingPacket(packet: Message) {
+    private fun handleIncomingPacket(packet: Message, dedupKey: String = packet.id) {
         Log.d("DTN", "Received packet: id=${packet.id} type=${packet.type} from=${packet.senderNick} ttl=${packet.ttl}")
         scope.launch {
-            val isSeen = dao.hasSeenPacket(packet.id)
+            if (packet.senderId == myUniqueNodeId && !packet.isAck) {
+                return@launch
+            }
+
+            val isSeen = dao.hasSeenPacket(dedupKey)
             if (isSeen) {
                 // DROP packet immediately
                 return@launch
@@ -1011,10 +1056,8 @@ class BleMeshManager private constructor(
                 }
             }
             
-            // Save to SeenPackets after validation
-            dao.insertSeenPacket(SeenPacket(packet.id, System.currentTimeMillis()))
-            
             if (packet.isAck) {
+                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 if (packet.targetId == myUniqueNodeId) {
                     val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
                         ?: packet.text.takeIf { it.isNotEmpty() }
@@ -1029,6 +1072,7 @@ class BleMeshManager private constructor(
                     return@launch
                 }
             } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
+                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 val parts = packet.text.split("|")
                 if (parts.size >= 2) {
                     val nick = parts[0]
@@ -1060,6 +1104,7 @@ class BleMeshManager private constructor(
                     }
                 }
             } else if (packet.type == "IDENTITY_REQUEST") {
+                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 if (packet.targetId == myUniqueNodeId) {
                     enqueueProfileBroadcast()
                 } else {
@@ -1067,6 +1112,7 @@ class BleMeshManager private constructor(
                     dao.insertRelayPacket(packet)
                 }
             } else if (packet.type == "PUBLIC" || packet.type == "SYSTEM_ANNOUNCEMENT") {
+                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 dao.insertMessageWithConversation(packet)
                 triggerNotification(packet)
             } else if (packet.type == "PRIVATE") {
@@ -1074,8 +1120,10 @@ class BleMeshManager private constructor(
                     val plainText = com.blink.dtn.crypto.RsaUtils.decryptAsymmetric(packet.text)
                     if (plainText.isEmpty()) {
                         Log.e("DTN", "Private decrypt failed for message ${packet.id}; dropping without ACK")
+                        enqueueProfileBroadcast()
                         return@launch
                     }
+                    dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                     val finalMsg = packet.copy(text = plainText)
                     dao.insertMessageWithConversation(finalMsg)
                     triggerNotification(finalMsg)
@@ -1096,6 +1144,7 @@ class BleMeshManager private constructor(
                     enqueueMessage(ack)
                     return@launch
                 } else {
+                    dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                     dao.insertRelayPacket(packet) // Save silently as relay payload
                 }
             }
