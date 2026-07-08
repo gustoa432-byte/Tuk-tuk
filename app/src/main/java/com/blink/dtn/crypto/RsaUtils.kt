@@ -34,6 +34,7 @@ object RsaUtils {
     }
 
     fun getPublicKeyBase64(): String {
+        generateAndStoreKeyPair()
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
         keyStore.load(null)
         val publicKey = keyStore.getCertificate(ALIAS)?.publicKey ?: return ""
@@ -59,6 +60,7 @@ object RsaUtils {
 
     fun decryptAsymmetric(cipherTextBase64: String): String {
         try {
+            generateAndStoreKeyPair()
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
             keyStore.load(null)
             val privateKey = keyStore.getKey(ALIAS, null) as? PrivateKey ?: return ""

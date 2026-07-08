@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
         
         // Retrieve or generate unique ID and Nickname from SharedPreferences
         val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
