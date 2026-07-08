@@ -8,6 +8,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class BLinkDao {
+    companion object {
+        const val RELAY_CONVERSATION_ID = "__relay__"
+    }
+
     @androidx.room.Transaction
     open suspend fun insertMessageWithConversation(msg: Message) {
         val convId = if (msg.type == "PUBLIC" || msg.type == "SYSTEM_ANNOUNCEMENT") {
@@ -42,6 +46,26 @@ abstract class BLinkDao {
         
         insertMessage(msg)
         android.util.Log.d("DB_INSERT", "ConversationId=${msg.conversationId} MessageId=${msg.id} Status=${msg.status}")
+    }
+
+    @androidx.room.Transaction
+    open suspend fun insertRelayPacket(msg: Message) {
+        var relayConversation = getConversationByIdInternal(RELAY_CONVERSATION_ID)
+        if (relayConversation == null) {
+            relayConversation = Conversation(
+                conversationId = RELAY_CONVERSATION_ID,
+                peerId = null,
+                displayName = "Relay Queue",
+                lastMessage = null,
+                lastTimestamp = System.currentTimeMillis(),
+                unreadCount = 0
+            )
+            insertConversationInternal(relayConversation)
+        }
+
+        msg.conversationId = RELAY_CONVERSATION_ID
+        insertMessage(msg)
+        android.util.Log.d("DB_INSERT", "RelayPacketId=${msg.id} Type=${msg.type} Status=${msg.status}")
     }
 
     @Query("SELECT * FROM conversations WHERE conversationId = :id LIMIT 1")

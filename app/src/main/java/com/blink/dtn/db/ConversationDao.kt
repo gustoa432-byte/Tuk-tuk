@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ConversationDao {
-    @Query("SELECT * FROM conversations ORDER BY lastTimestamp DESC")
+    @Query("SELECT * FROM conversations WHERE conversationId != '${BLinkDao.RELAY_CONVERSATION_ID}' ORDER BY lastTimestamp DESC")
     fun getAllConversations(): Flow<List<Conversation>>
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")

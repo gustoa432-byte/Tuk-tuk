@@ -164,13 +164,9 @@ class BLinkViewModel(
                     return@launch
                 }
 
-                val encryptedText = com.blink.dtn.crypto.RsaUtils.encryptAsymmetric(text, pubKey)
-                val (localMsg, networkMsg) = repository.createAndSavePrivateMessage(text, targetId, false, encryptedText)
-                
-                if (networkMsg != null) {
-                    bleMeshManager.enqueueMessage(networkMsg)
-                    com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
-                }
+                val (localMsg, _) = repository.createAndSavePrivateMessage(text, targetId)
+                bleMeshManager.enqueueMessage(localMsg)
+                com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
             } catch (e: Exception) {
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(getApplication(), "Private message error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()

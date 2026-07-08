@@ -120,8 +120,10 @@ class BleMeshManager private constructor(
     private var advertiser: BluetoothLeAdvertiser? = null
     private var scanner: BluetoothLeScanner? = null
     
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var scanJob: Job? = null
+    private var relayJob: Job? = null
+    private val isMeshRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     
     // The relay queue
         private val txBackoffMap = ConcurrentHashMap<String, Long>()
@@ -346,13 +348,25 @@ class BleMeshManager private constructor(
             val updatedMsg = message.copy(status = com.blink.dtn.db.Message.STATUS_PENDING)
             val existing = dao.getMessageById(updatedMsg.id)
             if (existing == null) {
-                dao.insertMessageWithConversation(updatedMsg)
+                if (shouldStoreAsRelayPacket(updatedMsg)) {
+                    dao.insertRelayPacket(updatedMsg)
+                } else {
+                    dao.insertMessageWithConversation(updatedMsg)
+                }
             } else {
                 dao.updateMessageInternal(updatedMsg)
             }
             android.util.Log.d("BLE_QUEUE", "MessageId=${updatedMsg.id} Type=${updatedMsg.type} Receiver=${updatedMsg.targetId ?: "null"} RetryCount=${updatedMsg.retryCount}")
             triggerRelay()
         }
+    }
+
+    private fun shouldStoreAsRelayPacket(message: Message): Boolean {
+        if (message.isAck || message.type == "ACK") return true
+        if (message.type == "IDENTITY_ANNOUNCEMENT" || message.type == "IDENTITY_REQUEST" || message.type == "SYSTEM_PROFILE") return true
+        return message.type == "PRIVATE" &&
+            message.senderId != myUniqueNodeId &&
+            message.targetId != myUniqueNodeId
     }
 
     private fun startIdleCleanupLoop() {
@@ -378,6 +392,13 @@ class BleMeshManager private constructor(
 
     fun startMesh() {
         try {
+            if (!isMeshRunning.compareAndSet(false, true)) {
+                triggerRelay()
+                return
+            }
+            if (!scope.isActive) {
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            }
             startIdleCleanupLoop()
             startGattServer()
             startAdvertising()
@@ -385,13 +406,20 @@ class BleMeshManager private constructor(
             startRelayLoop()
             enqueueProfileBroadcast()
         } catch (e: SecurityException) {
+            isMeshRunning.set(false)
             Log.e("DTN", "SecurityException starting mesh: ${e.message}")
+        } catch (e: Exception) {
+            isMeshRunning.set(false)
+            Log.e("DTN", "Exception starting mesh: ${e.message}")
         }
     }
     
     fun stopMesh() {
         try {
+            isMeshRunning.set(false)
             scanJob?.cancel()
+            relayJob?.cancel()
+            idleCleanupJob?.cancel()
             scanner?.stopScan(scanCallback)
             advertiser?.stopAdvertising(advertiseCallback)
             gattServer?.close()
@@ -473,7 +501,8 @@ class BleMeshManager private constructor(
             Log.e("ROUTE", "Exception in relay loop: ${exception.message}")
         }
 
-        scope.launch(exceptionHandler) {
+        relayJob?.cancel()
+        relayJob = scope.launch(exceptionHandler) {
             while (isActive) {
                 val messages = dao.getQueuedMessages()
                 val now = System.currentTimeMillis()
@@ -527,6 +556,11 @@ class BleMeshManager private constructor(
                         val profile = dao.getProfileById(targetId)
                         if (profile != null && profile.publicKey.isNotEmpty()) {
                             val encryptedText = com.blink.dtn.crypto.RsaUtils.encryptAsymmetric(networkMessage.text, profile.publicKey)
+                            if (encryptedText.isEmpty()) {
+                                Log.e("ROUTE", "Private encryption failed for ${networkMessage.id}; backing off")
+                                messageBackoffMap[networkMessage.id] = System.currentTimeMillis() + calculateBackoff(networkMessage.retryCount)
+                                continue
+                            }
                             networkMessage = networkMessage.copy(text = encryptedText)
                         } else {
                             val updatedMsg = networkMessage.copy(status = com.blink.dtn.db.Message.STATUS_PENDING_KEY)
@@ -605,8 +639,27 @@ class BleMeshManager private constructor(
         return baseMs * (1 shl minOf(retryCount, 6)) // max backoff ~ 320s
     }
 
+    private fun enqueuePayloadChunks(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        mtu: Int,
+        payload: ByteArray,
+        chunkMessageId: Int,
+        messageId: String
+    ): Boolean {
+        return try {
+            for (chunkBytes in BleChunkCodec.encode(payload, mtu, chunkMessageId)) {
+                enqueueOperation(BleOperation(gatt, characteristic, chunkBytes, chunkMessageId, messageId))
+            }
+            true
+        } catch (e: IllegalArgumentException) {
+            Log.e("BLE_TX", "Cannot chunk message $messageId: ${e.message}")
+            false
+        }
+    }
+
     private fun sendPayloadToDevice(device: BluetoothDevice, payload: ByteArray, messageId: String) {
-        val msgId = java.util.UUID.randomUUID().hashCode()
+        val msgId = BleChunkCodec.newChunkMessageId()
         val existingGatt = activeGattConnections[device.address]
         
         if (existingGatt != null) {
@@ -616,18 +669,10 @@ class BleMeshManager private constructor(
             val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
             if (characteristic != null) {
                 val currentMtu = activeMtuMap[device.address] ?: 20
-                val maxChunkSize = currentMtu - 10
-                val safeChunkSize = if (maxChunkSize > 0) maxChunkSize else 10
-                val chunks = payload.toList().chunked(safeChunkSize)
-                val totalChunks = chunks.size
-                for ((index, chunkList) in chunks.withIndex()) {
-                    val b0 = (msgId shr 24).toByte()
-                    val b1 = (msgId shr 16).toByte()
-                    val b2 = (msgId shr 8).toByte()
-                    val b3 = msgId.toByte()
-                    val header = byteArrayOf(0xAB.toByte(), b0, b1, b2, b3, index.toByte(), totalChunks.toByte())
-                    val chunkBytes = header + chunkList.toByteArray()
-                    enqueueOperation(BleOperation(existingGatt, characteristic, chunkBytes, msgId, messageId))
+                val enqueued = enqueuePayloadChunks(existingGatt, characteristic, currentMtu, payload, msgId, messageId)
+                if (!enqueued) {
+                    handleOperationResult(messageId, device.address, false)
+                    disconnectGatt(existingGatt)
                 }
             } else {
                 disconnectGatt(existingGatt)
@@ -647,6 +692,7 @@ class BleMeshManager private constructor(
                             gatt.requestMtu(512)
                         } catch (e: SecurityException) {
                             Log.e("BLE_TX", "SecurityException requesting MTU: ${e.message}")
+                            handleOperationResult(messageId, gatt.device.address, false)
                             disconnectGatt(gatt)
                         }
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -669,12 +715,14 @@ class BleMeshManager private constructor(
                         try {
                             gatt.discoverServices()
                         } catch (e: SecurityException) {
+                            handleOperationResult(messageId, gatt.device.address, false)
                             disconnectGatt(gatt)
                         }
                     } else {
                         try {
                             gatt.discoverServices()
                         } catch (e: SecurityException) {
+                            handleOperationResult(messageId, gatt.device.address, false)
                             disconnectGatt(gatt)
                         }
                     }
@@ -690,23 +738,17 @@ class BleMeshManager private constructor(
                         val service = gatt.getService(SERVICE_UUID)
                         val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
                         if (characteristic != null) {
-                            val maxChunkSize = currentMtu - 10
-                            val safeChunkSize = if (maxChunkSize > 0) maxChunkSize else 10
-                            val chunks = payload.toList().chunked(safeChunkSize)
-                            val totalChunks = chunks.size
-                            for ((index, chunkList) in chunks.withIndex()) {
-                                val b0 = (msgId shr 24).toByte()
-                                val b1 = (msgId shr 16).toByte()
-                                val b2 = (msgId shr 8).toByte()
-                                val b3 = msgId.toByte()
-                                val header = byteArrayOf(0xAB.toByte(), b0, b1, b2, b3, index.toByte(), totalChunks.toByte())
-                                val chunkBytes = header + chunkList.toByteArray()
-                                enqueueOperation(BleOperation(gatt, characteristic, chunkBytes, msgId, messageId))
+                            val enqueued = enqueuePayloadChunks(gatt, characteristic, currentMtu, payload, msgId, messageId)
+                            if (!enqueued) {
+                                handleOperationResult(messageId, gatt.device.address, false)
+                                disconnectGatt(gatt)
                             }
                         } else {
+                            handleOperationResult(messageId, gatt.device.address, false)
                             disconnectGatt(gatt)
                         }
                     } else {
+                        handleOperationResult(messageId, gatt.device.address, false)
                         disconnectGatt(gatt)
                     }
                 }
@@ -744,6 +786,7 @@ class BleMeshManager private constructor(
             Log.d("BLE_TX", "Attempting to send to ${device.address} messageId=$messageId")
         } catch (e: Exception) {
             Log.e("BLE_TX", "Exception connecting GATT client: ${e.message}")
+            handleOperationResult(messageId, device.address, false)
         }
     }
 
@@ -783,21 +826,12 @@ class BleMeshManager private constructor(
                     }
 
                     var assembledValue = value
-                    if (value.size >= 7 && value[0] == 0xAB.toByte()) {
-                        val b0 = value[1].toInt() and 0xFF
-                        val b1 = value[2].toInt() and 0xFF
-                        val b2 = value[3].toInt() and 0xFF
-                        val b3 = value[4].toInt() and 0xFF
-                        val msgId = (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
-                        val index = value[5].toInt() and 0xFF
-                        val total = value[6].toInt() and 0xFF
-                        
-                        // Bounds Checking: Ignore corrupted index/total headers
-                        if (total == 0 || index >= total) {
-                            return
-                        }
-                        
-                        val chunkData = value.copyOfRange(7, value.size)
+                    val chunk = BleChunkCodec.decode(value)
+                    if (chunk != null) {
+                        val msgId = chunk.messageId
+                        val index = chunk.index
+                        val total = chunk.total
+                        val chunkData = chunk.payload
                         
                         var entry = chunkBuffers[msgId]
                         if (entry == null) {
@@ -840,7 +874,7 @@ class BleMeshManager private constructor(
                             }
                         }
                         
-                        val safeEntry = entry!!
+                        val safeEntry = entry
                         
                         // Immutable First-Arrival: Do not overwrite clean chunks with corrupted duplicates
                         safeEntry.chunks.putIfAbsent(index, chunkData)
@@ -853,12 +887,12 @@ class BleMeshManager private constructor(
                                 // Strict index ordering 0 to total - 1
                                 var isValid = true
                                 for (i in 0 until total) {
-                                    val chunk = safeEntry.chunks[i]
-                                    if (chunk == null) {
+                                    val bufferedChunk = safeEntry.chunks[i]
+                                    if (bufferedChunk == null) {
                                         isValid = false
                                         break
                                     }
-                                    stream.write(chunk)
+                                    stream.write(bufferedChunk)
                                 }
                                 
                                 if (!isValid) {
@@ -938,10 +972,9 @@ class BleMeshManager private constructor(
             
             if (packet.isAck) {
                 if (packet.targetId == myUniqueNodeId) {
-                    dao.updateMessageStatus(packet.id, 1)
-                } else {
-                    dao.deleteTransitMessage(packet.id, myUniqueNodeId)
-                    dao.insertMessageWithConversation(packet)
+                    val ackedMessageId = packet.text.ifEmpty { packet.id }
+                    dao.updateMessageStatus(ackedMessageId, com.blink.dtn.db.Message.STATUS_SENT)
+                    return@launch
                 }
             } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
                 val parts = packet.text.split("|")
@@ -951,14 +984,23 @@ class BleMeshManager private constructor(
                     val pubKey = if (parts.size >= 3) parts[2] else ""
                     
                     val existingProfile = dao.getProfileById(packet.senderId)
-                    dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, pubKey))
+                    val trustedPublicKey = when {
+                        pubKey.isEmpty() -> existingProfile?.publicKey ?: ""
+                        existingProfile?.publicKey.isNullOrEmpty() -> pubKey
+                        existingProfile?.publicKey == pubKey -> pubKey
+                        else -> {
+                            Log.w("DTN", "Ignoring public key change for Node: ${packet.senderId}")
+                            existingProfile?.publicKey ?: ""
+                        }
+                    }
+                    dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, trustedPublicKey))
                     Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
                     
                     if (existingProfile == null || existingProfile.publicKey.isEmpty()) {
                         enqueueProfileBroadcast()
                     }
                     
-                    if (pubKey.isNotEmpty()) {
+                    if (trustedPublicKey.isNotEmpty()) {
                         val pendingMsgs = dao.getMessagesPendingKeyForUser(packet.senderId)
                         for (msg in pendingMsgs) {
                             enqueueMessage(msg)
@@ -970,7 +1012,7 @@ class BleMeshManager private constructor(
                     enqueueProfileBroadcast()
                 } else {
                     dao.deleteTransitMessage(packet.id, myUniqueNodeId)
-                    dao.insertMessageWithConversation(packet)
+                    dao.insertRelayPacket(packet)
                 }
             } else if (packet.type == "PUBLIC" || packet.type == "SYSTEM_ANNOUNCEMENT") {
                 dao.insertMessageWithConversation(packet)
@@ -978,25 +1020,29 @@ class BleMeshManager private constructor(
             } else if (packet.type == "PRIVATE") {
                 if (packet.targetId == myUniqueNodeId) {
                     val plainText = com.blink.dtn.crypto.RsaUtils.decryptAsymmetric(packet.text)
-                    val finalMsg = if (plainText.isNotEmpty()) packet.copy(text = plainText) else packet
+                    if (plainText.isEmpty()) {
+                        Log.e("DTN", "Private decrypt failed for message ${packet.id}; dropping without ACK")
+                        return@launch
+                    }
+                    val finalMsg = packet.copy(text = plainText)
                     dao.insertMessageWithConversation(finalMsg)
                     triggerNotification(finalMsg)
                     
                     // Generate and enqueue ACK
                     val ack = Message(
-                        id = packet.id,
-                        type = "PRIVATE",
+                        id = java.util.UUID.randomUUID().toString(),
+                        type = "ACK",
                         senderId = myUniqueNodeId,
                         senderNick = currentNick,
                         targetId = packet.senderId,
-                        text = "",
+                        text = packet.id,
                         timestamp = System.currentTimeMillis(),
                         ttl = 7,
                         isAck = true
                     )
                     enqueueMessage(ack)
                 } else {
-                    dao.insertMessageWithConversation(packet) // Save silently as relay payload
+                    dao.insertRelayPacket(packet) // Save silently as relay payload
                 }
             }
             
