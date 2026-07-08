@@ -300,6 +300,7 @@ class BleMeshManager private constructor(
     val peerCount: StateFlow<Int> = _peerCount.asStateFlow()
     private var currentNick: String = "User"
     private var currentIsVip: Boolean = false
+    private val notificationAdapter = MeshNotificationAdapter(context)
 
     fun updateMyProfile(nick: String, isVip: Boolean) {
         currentNick = nick
@@ -362,7 +363,28 @@ class BleMeshManager private constructor(
                     dao.insertMessageWithConversation(updatedMsg)
                 }
             } else {
-                dao.updateMessageInternal(updatedMsg)
+                val userVisible = existing.conversationId != BLinkDao.RELAY_CONVERSATION_ID &&
+                    existing.conversationId.isNotEmpty()
+                if (userVisible && shouldStoreAsRelayPacket(updatedMsg)) {
+                    dao.updateMessageInternal(
+                        existing.copy(
+                            ttl = updatedMsg.ttl,
+                            status = com.blink.dtn.db.Message.STATUS_PENDING
+                        )
+                    )
+                } else if (userVisible &&
+                    updatedMsg.type == "PRIVATE" &&
+                    updatedMsg.senderId != myUniqueNodeId
+                ) {
+                    dao.updateMessageInternal(
+                        existing.copy(
+                            ttl = updatedMsg.ttl,
+                            status = existing.status
+                        )
+                    )
+                } else {
+                    dao.updateMessageInternal(updatedMsg)
+                }
             }
             android.util.Log.d("BLE_QUEUE", "MessageId=${updatedMsg.id} Type=${updatedMsg.type} Receiver=${updatedMsg.targetId ?: "null"} RetryCount=${updatedMsg.retryCount}")
             triggerRelay()
@@ -594,7 +616,8 @@ class BleMeshManager private constructor(
                 
                 val bytes: ByteArray
                 try {
-                    val jsonPayload = Json.encodeToString(networkMessage)
+                    val wirePacket = NetworkPacket.fromMessage(networkMessage)
+                    val jsonPayload = Json.encodeToString(wirePacket)
                     bytes = com.blink.dtn.crypto.CryptoUtils.encrypt(jsonPayload)
                 } catch (e: Exception) {
                     // Finding #2 hardening: a serialization/encryption failure on one message
@@ -924,7 +947,7 @@ class BleMeshManager private constructor(
                     }
 
                     val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: throw Exception("Decryption returned null")
-                    val message = Json.decodeFromString<Message>(jsonString)
+                    val message = decodeWirePacket(jsonString)
                     Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
                     Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
                     Log.d("BLE_PROCESS", "MessageId=${message.id} Type=${message.type}")
@@ -943,10 +966,23 @@ class BleMeshManager private constructor(
     fun injectEncryptedPayload(value: ByteArray) {
         try {
             val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(value) ?: return
-            val message = Json.decodeFromString<Message>(jsonString)
+            val message = decodeWirePacket(jsonString)
             handleIncomingPacket(message)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * Decode an on-wire JSON payload into a local [Message]. Prefer the explicit
+     * [NetworkPacket] format; fall back to legacy direct-[Message] JSON for peers
+     * that have not upgraded yet.
+     */
+    private fun decodeWirePacket(jsonString: String): Message {
+        return try {
+            Json.decodeFromString<NetworkPacket>(jsonString).toMessage()
+        } catch (_: Exception) {
+            Json.decodeFromString<Message>(jsonString)
         }
     }
 
@@ -980,8 +1016,16 @@ class BleMeshManager private constructor(
             
             if (packet.isAck) {
                 if (packet.targetId == myUniqueNodeId) {
-                    val ackedMessageId = packet.text.ifEmpty { packet.id }
-                    dao.updateMessageStatus(ackedMessageId, com.blink.dtn.db.Message.STATUS_SENT)
+                    val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
+                        ?: packet.text.takeIf { it.isNotEmpty() }
+                        ?: return@launch
+                    val ackedMsg = dao.getMessageById(ackedMessageId)
+                    val status = if (ackedMsg?.type == "PRIVATE") {
+                        com.blink.dtn.db.Message.STATUS_DELIVERED
+                    } else {
+                        com.blink.dtn.db.Message.STATUS_SENT
+                    }
+                    dao.updateMessageStatus(ackedMessageId, status)
                     return@launch
                 }
             } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
@@ -1043,12 +1087,14 @@ class BleMeshManager private constructor(
                         senderId = myUniqueNodeId,
                         senderNick = currentNick,
                         targetId = packet.senderId,
-                        text = packet.id,
+                        text = "",
+                        originalMessageId = packet.id,
                         timestamp = System.currentTimeMillis(),
                         ttl = 7,
                         isAck = true
                     )
                     enqueueMessage(ack)
+                    return@launch
                 } else {
                     dao.insertRelayPacket(packet) // Save silently as relay payload
                 }
@@ -1062,18 +1108,12 @@ class BleMeshManager private constructor(
     }
 
     private fun triggerNotification(packet: Message) {
-        if (com.blink.dtn.utils.AppForegroundState.isForeground) return
-
-        val notificationManager = context.getSystemService(android.app.NotificationManager::class.java) ?: return
-        
-        val builder = androidx.core.app.NotificationCompat.Builder(context, "tuktuk_messages")
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle(if (packet.type == "PRIVATE") "Private message from ${packet.senderNick}" else "New message in TukTuk")
-            .setContentText(packet.text)
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-
-        notificationManager.notify(packet.id.hashCode(), builder.build())
+        notificationAdapter.notifyIncoming(
+            id = packet.id,
+            isPrivate = packet.type == "PRIVATE",
+            senderNick = packet.senderNick,
+            body = packet.text
+        )
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {

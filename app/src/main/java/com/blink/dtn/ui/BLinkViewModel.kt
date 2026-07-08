@@ -45,6 +45,7 @@ class BLinkViewModel(
                 // 48 hours for messages
                 val messageTtl = System.currentTimeMillis() - (48 * 60 * 60 * 1000L)
                 dao.deleteOldMessages(messageTtl)
+                dao.deleteOldSeenPackets(messageTtl)
                 
                 // 7 days for user profiles
                 val profileTtl = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
@@ -78,6 +79,11 @@ class BLinkViewModel(
         
     fun setCurrentDialog(conversationId: String?) {
         currentDialogId.value = conversationId
+        if (conversationId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                dao.markConversationRead(conversationId)
+            }
+        }
     }
 
     val peerCount = bleMeshManager.peerCount

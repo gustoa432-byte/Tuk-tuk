@@ -592,7 +592,7 @@ fun MessageBubble(msg: Message, myNodeId: String, showSender: Boolean = false, o
                     if (isMine) {
                         Spacer(modifier = Modifier.width(4.dp))
                         val statusColor = when (msg.status) {
-                            Message.STATUS_SENT -> TextSecondary
+                            Message.STATUS_SENT, Message.STATUS_DELIVERED -> TextSecondary
                             Message.STATUS_FAILED -> DangerColor
                             else -> DividerColor
                         }
