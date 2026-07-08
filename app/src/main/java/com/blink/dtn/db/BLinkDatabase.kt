@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 10, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 11, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -113,6 +113,14 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // Adds originalMessageId, which carries the end-to-end id an ACK confirms
+        // (previously this was overloaded into the `text`/`payload` field).
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `messages` ADD COLUMN `originalMessageId` TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -120,8 +128,15 @@ abstract class BLinkDatabase : RoomDatabase() {
                     BLinkDatabase::class.java,
                     "blink_database"
                 )
-                .addMigrations(MIGRATION_9_10)
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_9_10, MIGRATION_10_11)
+                // Do NOT wipe user data on every unknown schema change. Real
+                // migrations are provided for 9->10->11; destructive fallback is
+                // deliberately limited to legacy pre-9 schemas (which never had a
+                // migration path) and to downgrades. Any future forgotten
+                // migration will now surface as a crash in debug instead of
+                // silently deleting messages.
+                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
+                .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 INSTANCE = instance
                 instance

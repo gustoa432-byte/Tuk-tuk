@@ -345,6 +345,14 @@ class BleMeshManager private constructor(
     
     fun enqueueMessage(message: Message) {
         scope.launch {
+            // Mark messages we originate as already "seen" so that when the mesh
+            // floods them back to us we drop the echo instead of re-inserting a
+            // duplicate UI row, inflating unread counts, or clobbering our own
+            // locally-stored copy. TX is driven from the DB queue, not the
+            // seen-set, so this never suppresses our own outgoing transmissions.
+            if (message.senderId == myUniqueNodeId) {
+                dao.insertSeenPacket(SeenPacket(message.id, System.currentTimeMillis()))
+            }
             val updatedMsg = message.copy(status = com.blink.dtn.db.Message.STATUS_PENDING)
             val existing = dao.getMessageById(updatedMsg.id)
             if (existing == null) {
