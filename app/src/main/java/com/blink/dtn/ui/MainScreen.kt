@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.filled.Check
 
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -628,6 +627,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var nickname by remember { mutableStateOf(viewModel.myNick) }
+    var language by remember { mutableStateOf("Русский") }
     
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
@@ -743,6 +743,29 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             Spacer(modifier = Modifier.width(8.dp))
             Text("Сканировать QR", color = TextPrimary, style = Typography.titleMedium)
         }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Text("Язык", style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Русский",
+                color = if (language == "Русский") TextPrimary else TextSecondary,
+                style = Typography.bodyMedium,
+                modifier = Modifier.bounceClick { language = "Русский" }.padding(8.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                "English",
+                color = if (language == "English") TextPrimary else TextSecondary,
+                style = Typography.bodyMedium,
+                modifier = Modifier.bounceClick { language = "English" }.padding(8.dp)
+            )
+        }
     }
 }
 
@@ -768,73 +791,141 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
     }
 }
 
+private const val AUTHOR_TELEGRAM = "b6dmachine"
+
+private fun openAuthorTelegram(context: Context) {
+    val appIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("tg://resolve?domain=$AUTHOR_TELEGRAM"))
+    val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/$AUTHOR_TELEGRAM"))
+    try {
+        context.startActivity(appIntent)
+    } catch (_: Exception) {
+        try {
+            context.startActivity(webIntent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "Не удалось открыть Telegram", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
 @Composable
 fun InfoTab() {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    var language by remember { mutableStateOf("Русский") }
+    val storyStyle = Typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
+    val quietStyle = Typography.bodySmall.copy(lineHeight = 15.sp)
+    val helpItems = listOf(
+        "покупать оборудование для тестов",
+        "разрабатывать маршрутизацию",
+        "тестировать сеть в реальных условиях",
+        "развивать дальнюю связь",
+        "выпускать новые версии"
+    )
+
+    // Soft scroll only as overflow fallback on tiny screens; content is compacted
+    // to fit a typical phone without scrolling.
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.Start
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text("Что такое Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
+        // 1. Зачем существует TukTuk
+        Text("О проекте", style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(2.dp))
+        Text("TukTuk", style = Typography.titleLarge, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Tuk-Tuk — простой мессенджер, который работает без интернета.",
-            style = Typography.bodyMedium,
+            "Мессенджер, который помогает оставаться на связи, когда пропадает интернет.",
+            style = quietStyle,
             color = TextSecondary
         )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Возможности", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
-        val features = listOf("Общий чат", "Личные сообщения", "Передача через BLE Mesh", "Работает без интернета")
-        features.forEach { feature ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(feature, style = Typography.bodyMedium, color = TextSecondary)
-            }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("Почему появился TukTuk?", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Во время отключения света я не смог сообщить родному человеку, что со мной всё в порядке. " +
+                "Пришлось ехать через весь город только ради одной фразы: «Со мной всё хорошо».",
+            style = storyStyle,
+            color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "После этого я решил создать TukTuk, чтобы люди могли оставаться на связи даже тогда, " +
+                "когда привычный интернет недоступен.",
+            style = storyStyle,
+            color = TextPrimary
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 2. Как он помогает (без техжаргона)
+        Text("Как помогает", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Общий чат рядом · Личные сообщения · Работает без интернета · Связь через телефоны вокруг",
+            style = quietStyle,
+            color = TextSecondary
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 3. Как можно помочь — пока только Telegram, без донат-ссылок
+        Text("Поддержать развитие", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Если TukTuk оказался полезным, вы можете помочь развитию сети.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("Ваша поддержка помогает:", style = quietStyle, color = TextSecondary)
+        helpItems.forEach { item ->
+            Text("✔  $item", style = quietStyle, color = TextSecondary)
         }
-        
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        TukTukButton(onClick = { openAuthorTelegram(context) }) {
+            Text("❤️ Стать участником сети", color = TextPrimary, style = Typography.labelMedium)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = { openAuthorTelegram(context) }) {
+            Text("☕ Угостить автора кофе", color = TextPrimary, style = Typography.labelMedium)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 4. Обратная связь
         Text("Обратная связь", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Telegram",
-            style = Typography.bodyMedium,
+            "Нашли ошибку? Есть идея? Хотите помочь проекту? Напишите разработчику.",
+            style = quietStyle,
             color = TextSecondary
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = { 
-            clipboardManager.setText(AnnotatedString("@b6dmachine"))
-            Toast.makeText(context, "Ник скопирован", Toast.LENGTH_SHORT).show()
-        }) {
-            Text("@b6dmachine (Скопировать)", color = TextPrimary, style = Typography.titleMedium)
-        }
-        
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                "Русский", 
-                color = if (language == "Русский") TextPrimary else TextSecondary, 
-                style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "Русский" }.padding(8.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                "English", 
-                color = if (language == "English") TextPrimary else TextSecondary, 
-                style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "English" }.padding(8.dp)
-            )
+            Text("@$AUTHOR_TELEGRAM", style = Typography.bodyMedium, color = TextPrimary)
+            TukTukButton(onClick = { openAuthorTelegram(context) }) {
+                Text("Написать", color = TextPrimary, style = Typography.labelMedium)
+            }
         }
-        
-        Spacer(modifier = Modifier.height(100.dp))
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Я читаю все сообщения, но могу отвечать не сразу.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            "TukTuk остаётся бесплатным для всех.\nСпасибо каждому, кто помогает делать сеть лучше.",
+            style = quietStyle,
+            color = TextSecondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
     }
 }
 
