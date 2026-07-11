@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.material.icons.filled.Check
 
 import androidx.compose.foundation.shape.CircleShape
@@ -773,7 +772,6 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
 fun InfoTab() {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val uriHandler = LocalUriHandler.current
     var language by remember { mutableStateOf("Русский") }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -800,19 +798,6 @@ fun InfoTab() {
         }
         
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Поддержка проекта", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "Поддержка помогает тестировать приложение, развивать BLE Mesh и в будущем добавить поддержку LoRa.",
-            style = Typography.bodyMedium,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = { uriHandler.openUri("https://boosty.to/tuktuk") }) {
-            Text("Поддержать автора", color = TextPrimary, style = Typography.titleMedium)
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
         Text("Обратная связь", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
@@ -822,10 +807,10 @@ fun InfoTab() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         TukTukButton(onClick = { 
-            clipboardManager.setText(AnnotatedString("@tuktuk_dev"))
+            clipboardManager.setText(AnnotatedString("@b6dmachine"))
             Toast.makeText(context, "Ник скопирован", Toast.LENGTH_SHORT).show()
         }) {
-            Text("@tuktuk_dev (Скопировать)", color = TextPrimary, style = Typography.titleMedium)
+            Text("@b6dmachine (Скопировать)", color = TextPrimary, style = Typography.titleMedium)
         }
         
         Spacer(modifier = Modifier.height(48.dp))
