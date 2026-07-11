@@ -24,6 +24,8 @@ import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.BLinkViewModelFactory
 import com.blink.dtn.ui.MainScreen
 import com.blink.dtn.ui.theme.BLinkTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
 
@@ -40,7 +42,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
-        
+
+        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
+        runBlocking(Dispatchers.IO) {
+            com.blink.dtn.utils.LegacyIdMigration.runIfNeeded(this@MainActivity, dao)
+        }
+
         // Self-certifying node id: derived from our RSA public key (see NodeIdentity),
         // not a random value, so the id cryptographically binds to the key. RsaUtils
         // (called above and inside myNodeId()) guarantees the keypair exists first.
@@ -54,7 +61,6 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putString("nick", myNick).apply()
         }
         
-        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
         val conversationDao = BLinkDatabase.getDatabase(this).conversationDao()
         val bleManager = BleMeshManager.getInstance(this, dao, myNodeId)
         val factory = BLinkViewModelFactory(application, dao, conversationDao, bleManager, myNodeId, myNick)

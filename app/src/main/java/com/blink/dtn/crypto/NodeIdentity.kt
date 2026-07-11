@@ -39,6 +39,20 @@ object NodeIdentity {
     /** Convenience: our own node id, derived from our AndroidKeyStore public key. */
     fun myNodeId(): String = deriveNodeId(RsaUtils.getPublicKeyBase64())
 
+    /** Length of a self-certifying node id (80-bit Base32, no padding). */
+    const val NODE_ID_LENGTH = ID_CHARS
+
+    /**
+     * Pre-v2 ids were `UUID.randomUUID().substring(0, 8).uppercase()` — 8 hex chars,
+     * unrelated to the key. Anything of that shape in peer/conversation references
+     * is stale after the self-certifying-id migration.
+     */
+    fun isLegacyNodeId(id: String?): Boolean {
+        if (id.isNullOrBlank()) return false
+        if (id == "general" || id == com.blink.dtn.db.BLinkDao.RELAY_CONVERSATION_ID) return false
+        return id.length == 8 && id.all { it in '0'..'9' || it in 'A'..'F' }
+    }
+
     /**
      * Base32-encode exactly [ID_BYTES] bytes (80 bits) into [ID_CHARS] chars.
      * No padding is needed because 80 is a multiple of 5.

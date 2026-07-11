@@ -169,6 +169,55 @@ abstract class BLinkDao {
     @Query("DELETE FROM user_profiles WHERE lastSeen < :threshold")
     abstract suspend fun deleteOldProfiles(threshold: Long)
 
+    @Query("DELETE FROM user_profiles WHERE userId = :userId")
+    abstract suspend fun deleteProfileById(userId: String)
+
+    @Query("DELETE FROM user_profiles WHERE length(userId) = 8 AND userId GLOB '[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'")
+    abstract suspend fun deleteLegacyFormatProfiles()
+
+    @Query("DELETE FROM conversations WHERE conversationId = :conversationId")
+    abstract suspend fun deleteConversationById(conversationId: String)
+
+    @Query("DELETE FROM conversations WHERE conversationId != 'general' AND length(conversationId) = 8")
+    abstract suspend fun deleteLegacyFormatConversations()
+
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId")
+    abstract suspend fun deleteMessagesInConversation(conversationId: String)
+
+    @Query("DELETE FROM messages WHERE conversationId != 'general' AND length(conversationId) = 8")
+    abstract suspend fun deleteLegacyFormatPrivateMessages()
+
+    @Query("UPDATE messages SET senderId = :newNodeId WHERE senderId = :oldNodeId AND conversationId = 'general'")
+    abstract suspend fun reattributePublicMessages(oldNodeId: String, newNodeId: String)
+
+    @Query("DELETE FROM messages WHERE senderId = :oldNodeId AND status IN (0, 1, 4)")
+    abstract suspend fun deleteQueuedMessagesFromSender(oldNodeId: String)
+
+    @Query("DELETE FROM seen_packets")
+    abstract suspend fun deleteAllSeenPackets()
+
+    /**
+     * One-time purge after the random-id -> self-certifying-id migration.
+     * Keeps the public chat; drops stale private/relay state and re-attributes
+     * our own public messages to the new node id.
+     */
+    @androidx.room.Transaction
+    open suspend fun cleanupLegacyNodeIdData(oldNodeId: String, newNodeId: String) {
+        deleteMessagesInConversation(RELAY_CONVERSATION_ID)
+        deleteConversationById(RELAY_CONVERSATION_ID)
+
+        deleteLegacyFormatPrivateMessages()
+        deleteLegacyFormatConversations()
+
+        reattributePublicMessages(oldNodeId, newNodeId)
+        deleteQueuedMessagesFromSender(oldNodeId)
+
+        deleteProfileById(oldNodeId)
+        deleteLegacyFormatProfiles()
+
+        deleteAllSeenPackets()
+    }
+
     // --- BlockedUser ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun blockUser(blockedUser: BlockedUser)

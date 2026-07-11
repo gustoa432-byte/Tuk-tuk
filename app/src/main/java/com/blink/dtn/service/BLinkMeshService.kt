@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -36,13 +37,16 @@ class BLinkMeshService : Service() {
     override fun onCreate() {
         super.onCreate()
         com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
+        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
+        runBlocking(Dispatchers.IO) {
+            com.blink.dtn.utils.LegacyIdMigration.runIfNeeded(this@BLinkMeshService, dao)
+        }
+
         val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
         // Self-certifying node id derived from our RSA public key (same keystore key
         // as MainActivity → identical id). Overwrites any legacy random id.
         myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
         prefs.edit().putString("node_id", myNodeId).apply()
-        
-        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
 
         // ZOMBIE SWEEP
         serviceScope.launch {
