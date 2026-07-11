@@ -65,6 +65,14 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8" // Forced rewrite
     }
+
+    // Friendly install name: assembleDebug → app/build/outputs/apk/debug/Tuktuk.apk
+    applicationVariants.configureEach {
+        outputs.configureEach {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                .outputFileName = "Tuktuk.apk"
+        }
+    }
 }
 
 dependencies {
