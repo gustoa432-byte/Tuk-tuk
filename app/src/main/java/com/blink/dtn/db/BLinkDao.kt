@@ -131,6 +131,9 @@ abstract class BLinkDao {
     @Query("SELECT * FROM messages WHERE status = 4 AND targetId = :userId")
     abstract suspend fun getMessagesPendingKeyForUser(userId: String): List<Message>
 
+    @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND targetId = :peerId AND senderId = :myId AND status IN (2, 3)")
+    abstract suspend fun getUndeliveredPrivateToPeer(peerId: String, myId: String): List<Message>
+
     @Query("SELECT DISTINCT targetId FROM messages WHERE status = 4 AND targetId IS NOT NULL")
     abstract suspend fun getPendingKeyTargets(): List<String>
     

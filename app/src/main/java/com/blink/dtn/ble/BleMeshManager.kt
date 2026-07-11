@@ -1109,11 +1109,16 @@ class BleMeshManager private constructor(
             // durable DB table) drop it immediately — do NOT process, do NOT
             // forward. Otherwise mark it seen once, here, before any processing,
             // so every type-branch below is naturally idempotent.
-            val seen = recentSeenIds.contains(dedupKey) || dao.hasSeenPacket(dedupKey)
-            if (seen) {
+            // Atomic in-memory gate: add() returns false if the id was already
+            // present, so two concurrent duplicate arrivals can never both pass.
+            if (!recentSeenIds.add(dedupKey)) {
                 return@launch
             }
-            recentSeenIds.add(dedupKey)
+            // Cross-restart backstop: the in-memory LRU is empty after a process
+            // restart, but the durable table still remembers the id.
+            if (dao.hasSeenPacket(dedupKey)) {
+                return@launch
+            }
             dao.insertSeenPacket(SeenPacket(dedupKey, now))
 
             // Drop expired packets to prevent resurrection of dead data across the mesh
@@ -1168,6 +1173,11 @@ class BleMeshManager private constructor(
                     val pubKey = if (parts.size >= 3) parts[2] else ""
                     
                     val existingProfile = dao.getProfileById(packet.senderId)
+                    // A genuine rekey: we already had a non-empty key for this peer
+                    // and the incoming non-empty key differs (the TOFU else-branch).
+                    val keyChanged = pubKey.isNotEmpty() &&
+                        !existingProfile?.publicKey.isNullOrEmpty() &&
+                        existingProfile!!.publicKey != pubKey
                     val trustedPublicKey = when {
                         pubKey.isEmpty() -> existingProfile?.publicKey ?: ""
                         existingProfile?.publicKey.isNullOrEmpty() -> pubKey
@@ -1182,7 +1192,27 @@ class BleMeshManager private constructor(
                     }
                     dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, trustedPublicKey))
                     Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
-                    
+
+                    // Peer rekeyed: any of our own private messages already SENT/FAILED
+                    // to this peer were encrypted with the OLD key and can never be
+                    // decrypted. Resend them with a NEW stable id (same id would be
+                    // dropped by relays that already saw the old one). The relay loop
+                    // re-encrypts from the locally-stored plaintext with the new key.
+                    if (keyChanged) {
+                        val undelivered = dao.getUndeliveredPrivateToPeer(packet.senderId, myUniqueNodeId)
+                        for (old in undelivered) {
+                            val resend = old.copy(
+                                id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
+                                status = com.blink.dtn.db.Message.STATUS_PENDING,
+                                retryCount = 0,
+                                timestamp = System.currentTimeMillis()
+                            )
+                            dao.deleteMessageById(old.id)
+                            dao.insertMessageWithConversation(resend)
+                            enqueueMessage(resend)
+                        }
+                    }
+
                     if (existingProfile == null || existingProfile.publicKey.isEmpty()) {
                         enqueueProfileBroadcast()
                     }
