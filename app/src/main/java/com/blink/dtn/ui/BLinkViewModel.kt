@@ -16,7 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.UUID
+import com.blink.dtn.utils.MeshIdGenerator
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -37,6 +37,7 @@ class BLinkViewModel(
 
 
     init {
+        MeshIdGenerator.init(application)
         bleMeshManager.updateMyProfile(myNick, false)
         
         // Execute background cleanup periodically while the app is alive
@@ -151,7 +152,7 @@ class BLinkViewModel(
                     repository.createAndSavePrivateMessage(text, targetId, isPendingKey = true)
                     
                     val reqMsg = Message(
-                        id = UUID.randomUUID().toString(),
+                        id = MeshIdGenerator.next(myNodeId),
                         type = "IDENTITY_REQUEST",
                         senderId = myNodeId,
                         senderNick = myNick,
@@ -159,7 +160,7 @@ class BLinkViewModel(
                         text = "REQ",
                         room = "system",
                         timestamp = System.currentTimeMillis(),
-                        ttl = 3,
+                        ttl = 7,
                         isMine = true
                     )
                     bleMeshManager.enqueueMessage(reqMsg)

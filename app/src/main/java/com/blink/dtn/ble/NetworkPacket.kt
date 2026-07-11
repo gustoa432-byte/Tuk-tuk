@@ -2,21 +2,21 @@ package com.blink.dtn.ble
 
 import com.blink.dtn.db.Message
 import kotlinx.serialization.Serializable
-import java.util.UUID
 
 /**
  * Explicit on-the-wire packet model for the mesh.
  *
  * This is intentionally separate from [Message], which remains the local
  * UI/persistence model. Keeping the two apart lets us:
- *  - separate the per-hop packet identity ([packetId], regenerated on every
- *    (re)transmission) from the end-to-end message identity ([messageId], stable
- *    across hops and used for de-duplication and ACK correlation);
+ *  - carry the end-to-end message identity ([messageId], stable across hops and
+ *    used for de-duplication and ACK correlation). [packetId] is kept equal to
+ *    [messageId] so a message is recognised as the same logical packet no matter
+ *    which path or hop it arrives by;
  *  - carry protocol-only fields (e.g. [originalMessageId] for ACKs) without
  *    overloading UI fields such as `Message.text`.
  *
- * De-duplication across the mesh is always keyed on [messageId]; [packetId] is
- * only a per-hop identifier useful for tracing a single transmission.
+ * De-duplication across the mesh is always keyed on the stable id
+ * ([packetId] == [messageId]).
  */
 @Serializable
 data class NetworkPacket(
@@ -59,12 +59,13 @@ data class NetworkPacket(
 
     companion object {
         /**
-         * Build a fresh wire packet from a local [Message]. A new [packetId] is
-         * minted for this specific transmission while [messageId] preserves the
-         * end-to-end identity carried by [Message.id].
+         * Build a wire packet from a local [Message]. [packetId] is set equal to
+         * [messageId] (the stable end-to-end id carried by [Message.id]) so that
+         * de-duplication recognises the same logical message across every hop and
+         * retransmission — the packet id no longer changes per transmission.
          */
         fun fromMessage(msg: Message): NetworkPacket = NetworkPacket(
-            packetId = UUID.randomUUID().toString(),
+            packetId = msg.id,
             messageId = msg.id,
             type = msg.type,
             senderId = msg.senderId,

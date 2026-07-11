@@ -35,6 +35,23 @@ class BleMeshManager private constructor(
     private val dao: BLinkDao,
     private val myUniqueNodeId: String
 ) {
+    init {
+        com.blink.dtn.utils.MeshIdGenerator.init(context)
+    }
+
+    // Fast in-memory hot-path de-dup filter, in addition to the durable DB
+    // seen_packets table. During a broadcast storm this avoids a DB round-trip
+    // for the common duplicate case. Bounded LRU (access-order LinkedHashMap)
+    // capped at 2048 entries; guarded by its own monitor since LinkedHashMap is
+    // not thread-safe.
+    private val recentSeenIds: MutableSet<String> = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(
+            object : java.util.LinkedHashMap<String, Boolean>(512, 0.75f, true) {
+                override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>): Boolean = size > 2048
+            }
+        )
+    )
+
     private data class DecodedWirePacket(
         val message: Message,
         val dedupKey: String
@@ -343,7 +360,7 @@ class BleMeshManager private constructor(
             val pubKey = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64()
             val payload = "$currentNick|$currentIsVip|$pubKey"
             val msg = Message(
-                id = UUID.randomUUID().toString(),
+                id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
                 type = "IDENTITY_ANNOUNCEMENT",
                 senderId = myUniqueNodeId,
                 senderNick = currentNick,
@@ -351,7 +368,7 @@ class BleMeshManager private constructor(
                 text = payload,
                 room = "system",
                 timestamp = System.currentTimeMillis(),
-                ttl = 3 
+                ttl = DEFAULT_TTL
             )
             enqueueMessage(msg)
         } catch (e: Exception) {
@@ -361,6 +378,10 @@ class BleMeshManager private constructor(
 
     companion object {
         private const val TAG = "BleMeshManager"
+        // Hop budget for flooded messages. Key-exchange (IDENTITY_*) packets use
+        // the same value as data (PRIVATE/PUBLIC) so keys can propagate as far as
+        // the data they unlock; otherwise peers >3 hops away could never get keys.
+        const val DEFAULT_TTL = 7
         val SERVICE_UUID: UUID = UUID.fromString("0000b111-0000-1000-8000-00805f9b34fb")
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("0000b112-0000-1000-8000-00805f9b34fb")
         
@@ -471,7 +492,7 @@ class BleMeshManager private constructor(
                         identityRequestBackoffMap[targetId] = now
 
                         val req = com.blink.dtn.db.Message(
-                            id = java.util.UUID.randomUUID().toString(),
+                            id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
                             type = "IDENTITY_REQUEST",
                             senderId = myUniqueNodeId,
                             senderNick = currentNick,
@@ -479,7 +500,7 @@ class BleMeshManager private constructor(
                             text = "",
                             room = "system",
                             timestamp = System.currentTimeMillis(),
-                            ttl = 3
+                            ttl = DEFAULT_TTL
                         )
                         enqueueMessage(req)
                     }
@@ -673,7 +694,7 @@ class BleMeshManager private constructor(
                             dao.updateMessageInternal(updatedMsg)
                             
                             val req = com.blink.dtn.db.Message(
-                                id = java.util.UUID.randomUUID().toString(),
+                                id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
                                 type = "IDENTITY_REQUEST",
                                 senderId = myUniqueNodeId,
                                 senderNick = currentNick,
@@ -681,7 +702,7 @@ class BleMeshManager private constructor(
                                 text = "",
                                 room = "system",
                                 timestamp = System.currentTimeMillis(),
-                                ttl = 3
+                                ttl = DEFAULT_TTL
                             )
                             enqueueMessage(req)
                             
@@ -1074,19 +1095,30 @@ class BleMeshManager private constructor(
     private fun handleIncomingPacket(packet: Message, dedupKey: String = packet.id) {
         Log.d("DTN", "Received packet: id=${packet.id} type=${packet.type} from=${packet.senderNick} ttl=${packet.ttl}")
         scope.launch {
+            // Echo suppression: never process/relay our own non-ACK packets that
+            // the mesh flooded back to us. Kept as the very first check, before the
+            // seen logic, so we do not record our own echoes as seen.
             if (packet.senderId == myUniqueNodeId && !packet.isAck) {
                 return@launch
             }
 
-            val isSeen = dao.hasSeenPacket(dedupKey)
-            if (isSeen) {
-                // DROP packet immediately
+            val now = System.currentTimeMillis()
+
+            // Ingress de-dup on the STABLE end-to-end id, up front and uniformly:
+            // if we have already seen this id (in the fast in-memory LRU or the
+            // durable DB table) drop it immediately — do NOT process, do NOT
+            // forward. Otherwise mark it seen once, here, before any processing,
+            // so every type-branch below is naturally idempotent.
+            val seen = recentSeenIds.contains(dedupKey) || dao.hasSeenPacket(dedupKey)
+            if (seen) {
                 return@launch
             }
-            
+            recentSeenIds.add(dedupKey)
+            dao.insertSeenPacket(SeenPacket(dedupKey, now))
+
             // Drop expired packets to prevent resurrection of dead data across the mesh
             val messageTtlMs = 48 * 60 * 60 * 1000L
-            if (System.currentTimeMillis() - packet.timestamp > messageTtlMs) {
+            if (now - packet.timestamp > messageTtlMs) {
                 return@launch
             }
 
@@ -1101,7 +1133,20 @@ class BleMeshManager private constructor(
             }
             
             if (packet.isAck) {
-                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
+                // ACK-triggered purge: when an end-to-end ACK for data message X
+                // passes through, drop any relay-queued copy of X and make sure
+                // late-arriving copies of X are dropped by ingress de-dup.
+                //  - TRANSIT nodes (targetId != me): purge the relay copy row.
+                //  - ORIGIN (targetId == me): do NOT delete — X is the user's own
+                //    visible sent row; only mark it delivered below. Adding X's id
+                //    to seen is harmless (our own echoes are dropped anyway).
+                packet.originalMessageId?.takeIf { it.isNotEmpty() }?.let { ackedId ->
+                    recentSeenIds.add(ackedId)
+                    dao.insertSeenPacket(SeenPacket(ackedId, now))
+                    if (packet.targetId != myUniqueNodeId) {
+                        dao.deleteMessageById(ackedId)
+                    }
+                }
                 if (packet.targetId == myUniqueNodeId) {
                     val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
                         ?: packet.text.takeIf { it.isNotEmpty() }
@@ -1116,7 +1161,6 @@ class BleMeshManager private constructor(
                     return@launch
                 }
             } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
-                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 val parts = packet.text.split("|")
                 if (parts.size >= 2) {
                     val nick = parts[0]
@@ -1151,7 +1195,6 @@ class BleMeshManager private constructor(
                     }
                 }
             } else if (packet.type == "IDENTITY_REQUEST") {
-                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 if (packet.targetId == myUniqueNodeId) {
                     enqueueProfileBroadcast()
                 } else {
@@ -1159,25 +1202,30 @@ class BleMeshManager private constructor(
                     dao.insertRelayPacket(packet)
                 }
             } else if (packet.type == "PUBLIC" || packet.type == "SYSTEM_ANNOUNCEMENT") {
-                dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                 dao.insertMessageWithConversation(packet)
                 triggerNotification(packet)
             } else if (packet.type == "PRIVATE") {
                 if (packet.targetId == myUniqueNodeId) {
                     val plainText = com.blink.dtn.crypto.RsaUtils.decryptAsymmetric(packet.text)
                     if (plainText.isEmpty()) {
+                        // A private message addressed to me is decrypted with MY
+                        // own private key, which always exists; failure means the
+                        // sender used a STALE public key of mine. Retrying the same
+                        // ciphertext can never succeed, so re-announce my identity
+                        // to make the sender re-encrypt a FRESH message (new stable
+                        // id). This packet was already marked seen up front, so it
+                        // is dropped and will not be reprocessed.
                         Log.e("DTN", "Private decrypt failed for message ${packet.id}; dropping without ACK")
                         enqueueProfileBroadcast()
                         return@launch
                     }
-                    dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                     val finalMsg = packet.copy(text = plainText)
                     dao.insertMessageWithConversation(finalMsg)
                     triggerNotification(finalMsg)
                     
                     // Generate and enqueue ACK
                     val ack = Message(
-                        id = java.util.UUID.randomUUID().toString(),
+                        id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
                         type = "ACK",
                         senderId = myUniqueNodeId,
                         senderNick = currentNick,
@@ -1191,7 +1239,6 @@ class BleMeshManager private constructor(
                     enqueueMessage(ack)
                     return@launch
                 } else {
-                    dao.insertSeenPacket(SeenPacket(dedupKey, System.currentTimeMillis()))
                     dao.insertRelayPacket(packet) // Save silently as relay payload
                 }
             }

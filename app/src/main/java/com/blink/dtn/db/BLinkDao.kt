@@ -103,6 +103,13 @@ abstract class BLinkDao {
     @Query("DELETE FROM messages WHERE id = :msgId AND senderId != :myId AND targetId != :myId")
     abstract suspend fun deleteTransitMessage(msgId: String, myId: String)
 
+    // Unconditional purge of a message row by id. Used when an end-to-end ACK
+    // passes through a transit node to drop the relay-queued copy of the acked
+    // message. Callers must ensure this is never invoked for a user-visible row
+    // (e.g. the origin's own sent message).
+    @Query("DELETE FROM messages WHERE id = :id")
+    abstract suspend fun deleteMessageById(id: String)
+
     @Query("UPDATE messages SET status = :status WHERE id = :msgId")
     abstract suspend fun updateMessageStatus(msgId: String, status: Int)
 
