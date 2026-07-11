@@ -52,6 +52,8 @@ class BleMeshManager private constructor(
     private val activeMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val connectionLastUsedMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var idleCleanupJob: Job? = null
+    private var keyRequestRetryJob: Job? = null
+    private val identityRequestBackoffMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val relayTrigger = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
     fun triggerRelay() {
@@ -448,6 +450,46 @@ class BleMeshManager private constructor(
         }
     }
 
+    // Messages stored with STATUS_PENDING_KEY are not picked up by the relay TX queue
+    // (which selects status IN (0,1)); they only revive when an IDENTITY_ANNOUNCEMENT for
+    // the target arrives. Since the initial IDENTITY_REQUEST is sent once and BLE flooding
+    // is lossy, periodically re-request the identity for any peer we still lack a key for.
+    private fun startKeyRequestRetryLoop() {
+        keyRequestRetryJob?.cancel()
+        keyRequestRetryJob = scope.launch {
+            while (isActive) {
+                delay(20000)
+                try {
+                    val targets = dao.getPendingKeyTargets()
+                    val now = System.currentTimeMillis()
+                    for (targetId in targets) {
+                        val profile = dao.getProfileById(targetId)
+                        if (profile != null && profile.publicKey.isNotEmpty()) continue
+
+                        val lastRequest = identityRequestBackoffMap[targetId] ?: 0L
+                        if (now - lastRequest < 20000) continue
+                        identityRequestBackoffMap[targetId] = now
+
+                        val req = com.blink.dtn.db.Message(
+                            id = java.util.UUID.randomUUID().toString(),
+                            type = "IDENTITY_REQUEST",
+                            senderId = myUniqueNodeId,
+                            senderNick = currentNick,
+                            targetId = targetId,
+                            text = "",
+                            room = "system",
+                            timestamp = System.currentTimeMillis(),
+                            ttl = 3
+                        )
+                        enqueueMessage(req)
+                    }
+                } catch (e: Exception) {
+                    Log.e("DTN", "Key request retry loop error: ${e.message}")
+                }
+            }
+        }
+    }
+
     fun startMesh() {
         try {
             if (!isMeshRunning.compareAndSet(false, true)) {
@@ -458,6 +500,7 @@ class BleMeshManager private constructor(
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
             startIdleCleanupLoop()
+            startKeyRequestRetryLoop()
             startGattServer()
             startAdvertising()
             startScanningCycle()
@@ -478,6 +521,7 @@ class BleMeshManager private constructor(
             scanJob?.cancel()
             relayJob?.cancel()
             idleCleanupJob?.cancel()
+            keyRequestRetryJob?.cancel()
             scanner?.stopScan(scanCallback)
             advertiser?.stopAdvertising(advertiseCallback)
             gattServer?.close()
@@ -1085,8 +1129,11 @@ class BleMeshManager private constructor(
                         existingProfile?.publicKey.isNullOrEmpty() -> pubKey
                         existingProfile?.publicKey == pubKey -> pubKey
                         else -> {
-                            Log.w("DTN", "Ignoring public key change for Node: ${packet.senderId}")
-                            existingProfile?.publicKey ?: ""
+                            // Small local mesh: AndroidKeyStore keys are regenerated on
+                            // reinstall/clear-data, so a differing announcement is treated
+                            // as a legitimate rekey rather than pinned forever.
+                            Log.w("DTN", "Public key CHANGED for Node: ${packet.senderId}, accepting new key")
+                            pubKey
                         }
                     }
                     dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, trustedPublicKey))

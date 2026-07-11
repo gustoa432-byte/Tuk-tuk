@@ -123,6 +123,9 @@ abstract class BLinkDao {
     
     @Query("SELECT * FROM messages WHERE status = 4 AND targetId = :userId")
     abstract suspend fun getMessagesPendingKeyForUser(userId: String): List<Message>
+
+    @Query("SELECT DISTINCT targetId FROM messages WHERE status = 4 AND targetId IS NOT NULL")
+    abstract suspend fun getPendingKeyTargets(): List<String>
     
     @Query("SELECT * FROM messages WHERE status = 0")
     abstract fun getPendingMessagesFlow(): Flow<List<Message>>

@@ -7,12 +7,26 @@ import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.SecureRandom
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 object RsaUtils {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val ALIAS = "BLinkRSAKey"
+
+    // Hybrid envelope constants. RSA/ECB/PKCS1Padding (max ~245 bytes) can only wrap a
+    // small key, so we RSA-wrap a fresh AES-256 key and AES-GCM the actual body.
+    // Envelope format is a delimiter-joined string: "v1:<b64 rsaKey>:<b64 iv>:<b64 ct+tag>".
+    // ':' never appears in Base64.NO_WRAP output (alphabet is A-Za-z0-9+/=), so it is an
+    // unambiguous delimiter.
+    private const val ENVELOPE_VERSION = "v1"
+    private const val ENVELOPE_DELIMITER = ":"
+    private const val AES_KEY_SIZE_BYTES = 32
+    private const val GCM_IV_SIZE_BYTES = 12
+    private const val GCM_TAG_BITS = 128
 
     fun generateAndStoreKeyPair() {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
@@ -43,15 +57,34 @@ object RsaUtils {
 
     fun encryptAsymmetric(plainText: String, publicKeyBase64: String): String {
         try {
+            // 1. Fresh random AES-256 key + 12-byte GCM IV.
+            val secureRandom = SecureRandom()
+            val aesKeyBytes = ByteArray(AES_KEY_SIZE_BYTES).also { secureRandom.nextBytes(it) }
+            val iv = ByteArray(GCM_IV_SIZE_BYTES).also { secureRandom.nextBytes(it) }
+            val aesKey = SecretKeySpec(aesKeyBytes, "AES")
+
+            // 2. AES/GCM/NoPadding over the UTF-8 body (128-bit tag appended to ciphertext).
+            val aesCipher = Cipher.getInstance("AES/GCM/NoPadding")
+            aesCipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(GCM_TAG_BITS, iv))
+            val cipherText = aesCipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+
+            // 3. RSA/ECB/PKCS1Padding wrap of the 32-byte AES key with the recipient key.
             val publicBytes = Base64.decode(publicKeyBase64, Base64.NO_WRAP)
             val keySpec = X509EncodedKeySpec(publicBytes)
             val keyFactory = KeyFactory.getInstance("RSA")
             val publicKey = keyFactory.generatePublic(keySpec)
 
-            val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
-            cipher.init(Cipher.ENCRYPT_MODE, publicKey)
-            val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-            return Base64.encodeToString(cipherText, Base64.NO_WRAP)
+            val rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+            rsaCipher.init(Cipher.ENCRYPT_MODE, publicKey)
+            val wrappedKey = rsaCipher.doFinal(aesKeyBytes)
+
+            // 4. Package the envelope string.
+            return listOf(
+                ENVELOPE_VERSION,
+                Base64.encodeToString(wrappedKey, Base64.NO_WRAP),
+                Base64.encodeToString(iv, Base64.NO_WRAP),
+                Base64.encodeToString(cipherText, Base64.NO_WRAP)
+            ).joinToString(ENVELOPE_DELIMITER)
         } catch (e: Exception) {
             e.printStackTrace()
             return ""
@@ -60,15 +93,30 @@ object RsaUtils {
 
     fun decryptAsymmetric(cipherTextBase64: String): String {
         try {
+            // 1. Parse the envelope. Anything malformed -> "".
+            val parts = cipherTextBase64.split(ENVELOPE_DELIMITER)
+            if (parts.size != 4 || parts[0] != ENVELOPE_VERSION) return ""
+            val wrappedKey = Base64.decode(parts[1], Base64.NO_WRAP)
+            val iv = Base64.decode(parts[2], Base64.NO_WRAP)
+            val cipherText = Base64.decode(parts[3], Base64.NO_WRAP)
+
+            // 2. RSA-decrypt the AES key with the AndroidKeyStore private key.
             generateAndStoreKeyPair()
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
             keyStore.load(null)
             val privateKey = keyStore.getKey(ALIAS, null) as? PrivateKey ?: return ""
 
-            val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
-            cipher.init(Cipher.DECRYPT_MODE, privateKey)
-            val cipherText = Base64.decode(cipherTextBase64, Base64.NO_WRAP)
-            val plainText = cipher.doFinal(cipherText)
+            val rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+            rsaCipher.init(Cipher.DECRYPT_MODE, privateKey)
+            val aesKeyBytes = rsaCipher.doFinal(wrappedKey)
+
+            // 3. AES/GCM decrypt the body.
+            val aesKey = SecretKeySpec(aesKeyBytes, "AES")
+            val aesCipher = Cipher.getInstance("AES/GCM/NoPadding")
+            aesCipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(GCM_TAG_BITS, iv))
+            val plainText = aesCipher.doFinal(cipherText)
+
+            // 4. UTF-8 plaintext.
             return String(plainText, Charsets.UTF_8)
         } catch (e: Exception) {
             e.printStackTrace()
