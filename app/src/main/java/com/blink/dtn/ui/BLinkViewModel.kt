@@ -128,6 +128,38 @@ class BLinkViewModel(
 
     fun getProfileFlow(userId: String) = dao.getProfileByIdFlow(userId)
 
+    // Contact QR payload: carries our public key so a scan can pin the key
+    // out-of-band without waiting for a BLE identity announcement. JSONObject
+    // escapes the nick correctly.
+    val myContactQr: String
+        get() = org.json.JSONObject().apply {
+            put("v", 1)
+            put("id", myNodeId)
+            put("pk", com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
+            put("n", myNick)
+        }.toString()
+
+    // Persist a QR-scanned contact with its pinned public key. The id is the
+    // self-certifying hash of pubKeyBase64, so this can only ever pin the one
+    // key that matches the id (a later BLE announcement must carry the same key
+    // or it is rejected at ingress).
+    fun addScannedContact(id: String, nick: String, pubKeyBase64: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.insertOrUpdateProfile(
+                com.blink.dtn.db.UserProfile(
+                    id,
+                    nick.ifEmpty { id },
+                    System.currentTimeMillis(),
+                    false,
+                    pubKeyBase64
+                )
+            )
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                setCurrentDialog(id)
+            }
+        }
+    }
+
     fun sendPublicMessage(text: String, room: String = "general") {
         viewModelScope.launch(Dispatchers.IO) {
             try {

@@ -24,7 +24,6 @@ import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.BLinkViewModelFactory
 import com.blink.dtn.ui.MainScreen
 import com.blink.dtn.ui.theme.BLinkTheme
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
@@ -42,13 +41,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
         
-        // Retrieve or generate unique ID and Nickname from SharedPreferences
+        // Self-certifying node id: derived from our RSA public key (see NodeIdentity),
+        // not a random value, so the id cryptographically binds to the key. RsaUtils
+        // (called above and inside myNodeId()) guarantees the keypair exists first.
         val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
-        var myNodeId = prefs.getString("node_id", null)
-        if (myNodeId == null) {
-            myNodeId = UUID.randomUUID().toString().substring(0, 8).uppercase()
-            prefs.edit().putString("node_id", myNodeId).apply()
-        }
+        val myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
+        prefs.edit().putString("node_id", myNodeId).apply()
         
         var myNick = prefs.getString("nick", null)
         if (myNick == null) {

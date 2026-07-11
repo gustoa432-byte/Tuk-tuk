@@ -55,6 +55,16 @@ object RsaUtils {
         return Base64.encodeToString(publicKey.encoded, Base64.NO_WRAP)
     }
 
+    // Canonical public-key bytes (X.509 DER) — exactly what getPublicKeyBase64()
+    // base64-encodes. These are the bytes hashed to derive the self-certifying
+    // node id (see NodeIdentity).
+    fun getPublicKeyDer(): ByteArray? {
+        generateAndStoreKeyPair()
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+        return keyStore.getCertificate(ALIAS)?.publicKey?.encoded
+    }
+
     fun encryptAsymmetric(plainText: String, publicKeyBase64: String): String {
         try {
             // 1. Fresh random AES-256 key + 12-byte GCM IV.

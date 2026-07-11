@@ -631,10 +631,24 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     var nickname by remember { mutableStateOf(viewModel.myNick) }
     
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        if (result.contents != null) {
-            val scannedId = result.contents
-            if (scannedId.isNotBlank()) {
-                viewModel.setCurrentDialog(scannedId)
+        val scanned = result.contents
+        if (scanned != null && scanned.isNotBlank()) {
+            // Try the self-certifying contact payload first (pins the public key).
+            // Fall back to treating the scan as a bare node id for legacy/manual entry.
+            val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
+            val pk = json?.optString("pk", "")
+            if (json != null && !pk.isNullOrEmpty()) {
+                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
+                val claimedId = json.optString("id", "")
+                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
+                    Toast.makeText(context, "Invalid QR: key does not match ID", Toast.LENGTH_LONG).show()
+                } else {
+                    val nick = json.optString("n", "")
+                    viewModel.addScannedContact(derivedId, nick, pk)
+                    onScanSuccess()
+                }
+            } else {
+                viewModel.setCurrentDialog(scanned)
                 onScanSuccess()
             }
         }
@@ -675,8 +689,11 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
         )
         Spacer(modifier = Modifier.height(32.dp))
-        val qrBitmap = remember(viewModel.myNodeId) {
-            generateQrCode(viewModel.myNodeId, 512)?.asImageBitmap()
+        // QR encodes the full contact payload (id + public key + nick) so a scan
+        // pins the key out-of-band. The human-readable id below stays as-is.
+        val contactQr = viewModel.myContactQr
+        val qrBitmap = remember(contactQr) {
+            generateQrCode(contactQr, 512)?.asImageBitmap()
         }
         
         if (qrBitmap != null) {

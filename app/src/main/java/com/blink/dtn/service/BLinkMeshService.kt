@@ -24,7 +24,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import java.util.UUID
 
 class BLinkMeshService : Service() {
     private lateinit var myNodeId: String
@@ -38,9 +37,10 @@ class BLinkMeshService : Service() {
         super.onCreate()
         com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
         val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
-        myNodeId = prefs.getString("node_id", null) ?: UUID.randomUUID().toString().substring(0, 8).uppercase().also {
-            prefs.edit().putString("node_id", it).apply()
-        }
+        // Self-certifying node id derived from our RSA public key (same keystore key
+        // as MainActivity → identical id). Overwrites any legacy random id.
+        myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
+        prefs.edit().putString("node_id", myNodeId).apply()
         
         val dao = BLinkDatabase.getDatabase(this).bLinkDao()
 

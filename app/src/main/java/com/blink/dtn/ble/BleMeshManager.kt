@@ -1171,7 +1171,20 @@ class BleMeshManager private constructor(
                     val nick = parts[0]
                     val isVip = parts[1].toBoolean()
                     val pubKey = if (parts.size >= 3) parts[2] else ""
-                    
+
+                    // Self-certifying id: the sender's node id MUST equal the hash of the key
+                    // it announces. This makes impersonating another node's id require a
+                    // ~2^80 hash preimage, so reject any announcement whose id does not match
+                    // its key. (Empty-key announcements carry no key to verify — let the
+                    // existing empty-key handling deal with them.)
+                    if (pubKey.isNotEmpty()) {
+                        val expectedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pubKey)
+                        if (expectedId.isEmpty() || expectedId != packet.senderId) {
+                            Log.w("DTN", "Rejected IDENTITY spoof: senderId=${packet.senderId} does not match key hash=$expectedId")
+                            return@launch
+                        }
+                    }
+
                     val existingProfile = dao.getProfileById(packet.senderId)
                     // A genuine rekey: we already had a non-empty key for this peer
                     // and the incoming non-empty key differs (the TOFU else-branch).
