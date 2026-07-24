@@ -37,6 +37,7 @@ class BleMeshManager private constructor(
 ) {
     init {
         com.blink.dtn.utils.MeshIdGenerator.init(context)
+        com.blink.dtn.telemetry.TraceStore.init(context)
     }
 
     // Fast in-memory hot-path de-dup filter, in addition to the durable DB
@@ -124,8 +125,28 @@ class BleMeshManager private constructor(
                 batch.watchdogJob?.cancel()
                 activeBatches.remove(messageId)
                 if (s > 0) {
+                    trace(
+                        messageId,
+                        com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "successes" to s,
+                            "failures" to f,
+                            "result" to "Success"
+                        ),
+                        visual = "📤 Передано соседям"
+                    )
                     safeEmitResult(TxResult.Success(messageId))
                 } else {
+                    trace(
+                        messageId,
+                        com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "successes" to s,
+                            "failures" to f,
+                            "failedMacs" to batch.failedMacs.joinToString(","),
+                            "result" to "Failure"
+                        )
+                    )
                     messageBackoffMap[messageId] = System.currentTimeMillis() + 10_000L
                     safeEmitResult(TxResult.Failure(messageId, batch.failedMacs.toList()))
                 }
@@ -272,11 +293,25 @@ class BleMeshManager private constructor(
     private fun executeWrite(op: BleOperation, address: String) {
         try {
             android.util.Log.d("BLE_TX", "MessageId=${op.messageId} DeviceMAC=${address} PayloadSize=${op.payload.size}")
+            trace(
+                op.messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_START,
+                com.blink.dtn.telemetry.detailsOf(
+                    "peer" to address,
+                    "bytes" to op.payload.size,
+                    "chunkMsgId" to op.msgId
+                )
+            )
             var successFlag = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val success = op.gatt.writeCharacteristic(op.characteristic, op.payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                 if (success != android.bluetooth.BluetoothStatusCodes.SUCCESS) {
                     Log.e("DTN", "writeCharacteristic failed with status: $success. Payload size: ${op.payload.size}")
+                    trace(
+                        op.messageId,
+                        com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
+                        com.blink.dtn.telemetry.detailsOf("peer" to address, "status" to success)
+                    )
                     completeOperation(address, op, success = false)
                     handleOperationResult(op.messageId, address, false)
                     disconnectGatt(op.gatt)
@@ -292,6 +327,11 @@ class BleMeshManager private constructor(
                 val success = op.gatt.writeCharacteristic(op.characteristic)
                 if (!success) {
                     Log.e("BLE_TX", "writeCharacteristic failed (legacy). Payload size: ${op.payload.size}")
+                    trace(
+                        op.messageId,
+                        com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
+                        com.blink.dtn.telemetry.detailsOf("peer" to address, "legacy" to true)
+                    )
                     completeOperation(address, op, success = false)
                     handleOperationResult(op.messageId, address, false)
                     disconnectGatt(op.gatt)
@@ -300,6 +340,11 @@ class BleMeshManager private constructor(
                 }
             }
             if (successFlag) {
+                trace(
+                    op.messageId,
+                    com.blink.dtn.telemetry.TraceStages.GATT_WRITE_DONE,
+                    com.blink.dtn.telemetry.detailsOf("peer" to address, "bytes" to op.payload.size)
+                )
                 scope.launch {
                     delay(3000)
                     // Finding #3 hardening: only treat as a failure if the write callback
@@ -313,6 +358,11 @@ class BleMeshManager private constructor(
             }
         } catch (e: Exception) {
             Log.e("BLE_TX", "Exception writing characteristic: ${e.message}")
+            trace(
+                op.messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
+                com.blink.dtn.telemetry.detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(800))
+            )
             completeOperation(address, op, success = false)
             handleOperationResult(op.messageId, address, false)
             disconnectGatt(op.gatt)
@@ -395,8 +445,24 @@ class BleMeshManager private constructor(
         }
     }
     
+    private fun ensureTrace(messageId: String, type: String? = null, senderId: String? = null, targetId: String? = null) {
+        if (com.blink.dtn.telemetry.TraceStore.getByMessageId(messageId) != null) return
+        com.blink.dtn.telemetry.TraceStore.begin(
+            messageId = messageId,
+            targetId = targetId,
+            senderId = senderId,
+            messageType = type
+        )
+    }
+
+    private fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null) {
+        ensureTrace(messageId)
+        com.blink.dtn.telemetry.TraceStore.stage(messageId, stage, details, visual)
+    }
+
     fun enqueueMessage(message: Message) {
         scope.launch {
+            ensureTrace(message.id, message.type, message.senderId, message.targetId)
             // Mark messages we originate as already "seen" so that when the mesh
             // floods them back to us we drop the echo instead of re-inserting a
             // duplicate UI row, inflating unread counts, or clobbering our own
@@ -437,6 +503,21 @@ class BleMeshManager private constructor(
                     dao.updateMessageInternal(updatedMsg)
                 }
             }
+            val queued = dao.getQueuedMessages()
+            val position = queued.indexOfFirst { it.id == updatedMsg.id }.let { if (it < 0) queued.size else it }
+            trace(
+                updatedMsg.id,
+                com.blink.dtn.telemetry.TraceStages.QUEUE_ADDED,
+                com.blink.dtn.telemetry.detailsOf(
+                    "queuePosition" to position,
+                    "queueSize" to queued.size,
+                    "retryCounter" to updatedMsg.retryCount,
+                    "priority" to "normal",
+                    "type" to updatedMsg.type,
+                    "asRelay" to shouldStoreAsRelayPacket(updatedMsg)
+                ),
+                visual = if (updatedMsg.senderId == myUniqueNodeId) "📤 В очереди на отправку" else "🌫 В relay-очереди"
+            )
             android.util.Log.d("BLE_QUEUE", "MessageId=${updatedMsg.id} Type=${updatedMsg.type} Receiver=${updatedMsg.targetId ?: "null"} RetryCount=${updatedMsg.retryCount}")
             triggerRelay()
         }
@@ -662,11 +743,27 @@ class BleMeshManager private constructor(
                 }
                 
                 Log.d("ROUTE", "Processing message ${message.id} type=${message.type}")
-                Log.d("ROUTE", "Processing message ${message.id} type=${message.type}")
+
+                trace(
+                    message.id,
+                    com.blink.dtn.telemetry.TraceStages.RELAY_PROCESS,
+                    com.blink.dtn.telemetry.detailsOf(
+                        "type" to message.type,
+                        "ttl" to message.ttl,
+                        "retryCount" to message.retryCount,
+                        "peersCount" to discoveredDevices.size
+                    ),
+                    visual = "🌫 Распыляется по сети"
+                )
 
                 val messageTtlMs = 48 * 60 * 60 * 1000L
                 if (System.currentTimeMillis() - message.timestamp > messageTtlMs || message.ttl <= 0) {
                     Log.w("ROUTE", "Message ${message.id} expired or TTL <= 0")
+                    com.blink.dtn.telemetry.TraceStore.finish(
+                        message.id,
+                        "Expired",
+                        com.blink.dtn.telemetry.detailsOf("ttl" to message.ttl, "ageMs" to (System.currentTimeMillis() - message.timestamp))
+                    )
                     safeEmitResult(TxResult.Failure(message.id, emptyList()))
                     continue
                 }
@@ -675,6 +772,15 @@ class BleMeshManager private constructor(
                     // DTN: Just wait for devices, do not fail
                     continue
                 }
+
+                trace(
+                    message.id,
+                    com.blink.dtn.telemetry.TraceStages.BLE_PEERS,
+                    com.blink.dtn.telemetry.detailsOf(
+                        "peersCount" to discoveredDevices.size,
+                        "nearbyDevices" to discoveredDevices.joinToString(",") { it.address }
+                    )
+                )
                 
                 var networkMessage = message
                 if (networkMessage.type == "PRIVATE" && networkMessage.senderId == myUniqueNodeId && networkMessage.text.isNotEmpty()) {
@@ -682,16 +788,50 @@ class BleMeshManager private constructor(
                     if (targetId != null) {
                         val profile = dao.getProfileById(targetId)
                         if (profile != null && profile.publicKey.isNotEmpty()) {
+                            val encStart = System.currentTimeMillis()
+                            trace(
+                                networkMessage.id,
+                                com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_START,
+                                com.blink.dtn.telemetry.detailsOf(
+                                    "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(profile.publicKey),
+                                    "plainUtf8Bytes" to networkMessage.text.toByteArray(Charsets.UTF_8).size
+                                ),
+                                visual = "🔐 Шифрование"
+                            )
                             val encryptedText = com.blink.dtn.crypto.RsaUtils.encryptAsymmetric(networkMessage.text, profile.publicKey)
                             if (encryptedText.isEmpty()) {
                                 Log.e("ROUTE", "Private encryption failed for ${networkMessage.id}; backing off")
+                                trace(
+                                    networkMessage.id,
+                                    com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_FAIL,
+                                    com.blink.dtn.telemetry.detailsOf(
+                                        "durationMs" to (System.currentTimeMillis() - encStart),
+                                        "error" to "encryptAsymmetric returned empty"
+                                    )
+                                )
                                 messageBackoffMap[networkMessage.id] = System.currentTimeMillis() + calculateBackoff(networkMessage.retryCount)
                                 continue
                             }
+                            trace(
+                                networkMessage.id,
+                                com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_DONE,
+                                com.blink.dtn.telemetry.detailsOf(
+                                    "cipherLength" to encryptedText.length,
+                                    "encryptionDurationMs" to (System.currentTimeMillis() - encStart)
+                                ),
+                                visual = "🔐 Зашифровано"
+                            )
                             networkMessage = networkMessage.copy(text = encryptedText)
                         } else {
                             val updatedMsg = networkMessage.copy(status = com.blink.dtn.db.Message.STATUS_PENDING_KEY)
                             dao.updateMessageInternal(updatedMsg)
+
+                            trace(
+                                networkMessage.id,
+                                com.blink.dtn.telemetry.TraceStages.RSA_MISSING_KEY,
+                                com.blink.dtn.telemetry.detailsOf("reason" to "key_missing_at_relay_time", "queuedIdentityRequest" to true),
+                                visual = "🔑 Ключ пропал — IDENTITY_REQUEST"
+                            )
                             
                             val req = com.blink.dtn.db.Message(
                                 id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
@@ -776,12 +916,32 @@ class BleMeshManager private constructor(
         messageId: String
     ): Boolean {
         return try {
-            for (chunkBytes in BleChunkCodec.encode(payload, mtu, chunkMessageId)) {
+            val chunkStart = System.currentTimeMillis()
+            val chunks = BleChunkCodec.encode(payload, mtu, chunkMessageId)
+            trace(
+                messageId,
+                com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,
+                com.blink.dtn.telemetry.detailsOf(
+                    "originalPayloadBytes" to payload.size,
+                    "chunksCount" to chunks.size,
+                    "chunkSizes" to chunks.joinToString(",") { it.size.toString() },
+                    "mtu" to mtu,
+                    "chunkCreationDurationMs" to (System.currentTimeMillis() - chunkStart),
+                    "peer" to gatt.device.address
+                ),
+                visual = "📚 Разделено на ${chunks.size} чанков"
+            )
+            for (chunkBytes in chunks) {
                 enqueueOperation(BleOperation(gatt, characteristic, chunkBytes, chunkMessageId, messageId))
             }
             true
         } catch (e: IllegalArgumentException) {
             Log.e("BLE_TX", "Cannot chunk message $messageId: ${e.message}")
+            trace(
+                messageId,
+                com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,
+                com.blink.dtn.telemetry.detailsOf("error" to e.message)
+            )
             false
         }
     }
@@ -793,6 +953,12 @@ class BleMeshManager private constructor(
         if (existingGatt != null) {
             Log.d("BLE_TX", "Reusing existing GATT connection for ${device.address}")
             connectionLastUsedMap[device.address] = System.currentTimeMillis()
+            trace(
+                messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_READY,
+                com.blink.dtn.telemetry.detailsOf("peer" to device.address, "reuseGatt" to true),
+                visual = "🚶 Несёт ${device.name ?: device.address}"
+            )
             val service = existingGatt.getService(SERVICE_UUID)
             val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
             if (characteristic != null) {
@@ -1163,6 +1329,22 @@ class BleMeshManager private constructor(
                         com.blink.dtn.db.Message.STATUS_SENT
                     }
                     dao.updateMessageStatus(ackedMessageId, status)
+                    val latency = ackedMsg?.let { System.currentTimeMillis() - it.timestamp }
+                    trace(
+                        ackedMessageId,
+                        com.blink.dtn.telemetry.TraceStages.ACK_RECEIVED,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "ackFrom" to packet.senderId,
+                            "latencyMs" to latency,
+                            "status" to status
+                        ),
+                        visual = "✅ Доставлено"
+                    )
+                    com.blink.dtn.telemetry.TraceStore.finish(
+                        ackedMessageId,
+                        if (status == com.blink.dtn.db.Message.STATUS_DELIVERED) "Delivered" else "Sent",
+                        com.blink.dtn.telemetry.detailsOf("ackLatencyMs" to latency)
+                    )
                     return@launch
                 }
             } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
@@ -1205,6 +1387,20 @@ class BleMeshManager private constructor(
                     }
                     dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, trustedPublicKey))
                     Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
+                    if (trustedPublicKey.isNotEmpty()) {
+                        ensureTrace(packet.id, "IDENTITY_ANNOUNCEMENT", packet.senderId, null)
+                        trace(
+                            packet.id,
+                            com.blink.dtn.telemetry.TraceStages.ID_STORED,
+                            com.blink.dtn.telemetry.detailsOf(
+                                "nodeId" to packet.senderId,
+                                "nick" to nick,
+                                "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(trustedPublicKey),
+                                "keyChanged" to keyChanged
+                            ),
+                            visual = "🔑 Ключ сохранён"
+                        )
+                    }
 
                     // Peer rekeyed: any of our own private messages already SENT/FAILED
                     // to this peer were encrypted with the OLD key and can never be
@@ -1249,6 +1445,19 @@ class BleMeshManager private constructor(
                 triggerNotification(packet)
             } else if (packet.type == "PRIVATE") {
                 if (packet.targetId == myUniqueNodeId) {
+                    ensureTrace(packet.id, "PRIVATE", packet.senderId, packet.targetId)
+                    trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.RX_PACKET,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "from" to packet.senderId,
+                            "ttl" to packet.ttl,
+                            "cipherLen" to packet.text.length
+                        ),
+                        visual = "📍 Получено устройством"
+                    )
+                    val decStart = System.currentTimeMillis()
+                    trace(packet.id, com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_START)
                     val plainText = com.blink.dtn.crypto.RsaUtils.decryptAsymmetric(packet.text)
                     if (plainText.isEmpty()) {
                         // A private message addressed to me is decrypted with MY
@@ -1259,11 +1468,35 @@ class BleMeshManager private constructor(
                         // id). This packet was already marked seen up front, so it
                         // is dropped and will not be reprocessed.
                         Log.e("DTN", "Private decrypt failed for message ${packet.id}; dropping without ACK")
+                        trace(
+                            packet.id,
+                            com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_FAIL,
+                            com.blink.dtn.telemetry.detailsOf(
+                                "durationMs" to (System.currentTimeMillis() - decStart),
+                                "failureReason" to "empty_plaintext_stale_or_wrong_key"
+                            )
+                        )
+                        com.blink.dtn.telemetry.TraceStore.finish(packet.id, "Dropped", com.blink.dtn.telemetry.detailsOf("reason" to "decrypt_failed"))
                         enqueueProfileBroadcast()
                         return@launch
                     }
+                    trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_DONE,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "durationMs" to (System.currentTimeMillis() - decStart),
+                            "plainLen" to plainText.length
+                        ),
+                        visual = "🔓 Расшифровано"
+                    )
+                    val convStart = System.currentTimeMillis()
                     val finalMsg = packet.copy(text = plainText)
                     dao.insertMessageWithConversation(finalMsg)
+                    trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.RX_CONVERSATION,
+                        com.blink.dtn.telemetry.detailsOf("insertDurationMs" to (System.currentTimeMillis() - convStart))
+                    )
                     triggerNotification(finalMsg)
                     
                     // Generate and enqueue ACK
@@ -1279,16 +1512,35 @@ class BleMeshManager private constructor(
                         ttl = 7,
                         isAck = true
                     )
+                    trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.ACK_GENERATED,
+                        com.blink.dtn.telemetry.detailsOf("ackId" to ack.id, "to" to packet.senderId)
+                    )
                     enqueueMessage(ack)
+                    trace(packet.id, com.blink.dtn.telemetry.TraceStages.ACK_QUEUED, com.blink.dtn.telemetry.detailsOf("ackId" to ack.id))
                     return@launch
                 } else {
                     dao.insertRelayPacket(packet) // Save silently as relay payload
+                    trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.MESH_RELAY_STORE,
+                        com.blink.dtn.telemetry.detailsOf("ttl" to packet.ttl, "from" to packet.senderId, "to" to packet.targetId),
+                        visual = "🚲 Relay дальше"
+                    )
                 }
             }
             
             packet.ttl = packet.ttl - 1
             if (packet.ttl > 0) {
+                trace(
+                    packet.id,
+                    com.blink.dtn.telemetry.TraceStages.MESH_FORWARD,
+                    com.blink.dtn.telemetry.detailsOf("ttlAfter" to packet.ttl, "viaNode" to myUniqueNodeId)
+                )
                 enqueueMessage(packet)
+            } else {
+                trace(packet.id, com.blink.dtn.telemetry.TraceStages.MESH_SKIP, com.blink.dtn.telemetry.detailsOf("reason" to "ttl_exhausted"))
             }
         }
     }

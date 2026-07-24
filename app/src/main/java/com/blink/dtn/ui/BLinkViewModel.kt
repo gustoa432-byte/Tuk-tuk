@@ -17,6 +17,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.blink.dtn.utils.MeshIdGenerator
+import com.blink.dtn.telemetry.TraceKind
+import com.blink.dtn.telemetry.TraceStages
+import com.blink.dtn.telemetry.TraceStore
+import com.blink.dtn.telemetry.detailsOf
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -33,11 +37,21 @@ class BLinkViewModel(
 
     companion object {
         val fastSyncTrigger = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+        private fun uiTextDetails(text: String) = detailsOf(
+            "messageLength" to text.length,
+            "utf8Bytes" to text.toByteArray(Charsets.UTF_8).size,
+            "emojiCount" to text.codePoints().toArray().count { cp ->
+                cp in 0x1F300..0x1FAFF || cp in 0x2600..0x27BF
+            },
+            "newLineCount" to text.count { it == '\n' }
+        )
     }
 
 
     init {
         MeshIdGenerator.init(application)
+        TraceStore.init(application)
         bleMeshManager.updateMyProfile(myNick, false)
         
         // Execute background cleanup periodically while the app is alive
@@ -88,6 +102,7 @@ class BLinkViewModel(
     }
 
     val peerCount = bleMeshManager.peerCount
+    val activePeers = bleMeshManager.activePeers
     
     val vkActive: kotlinx.coroutines.flow.StateFlow<Boolean> = kotlinx.coroutines.flow.flow {
         while (true) {
@@ -162,11 +177,45 @@ class BLinkViewModel(
 
     fun sendPublicMessage(text: String, room: String = "general") {
         viewModelScope.launch(Dispatchers.IO) {
+            val trace = TraceStore.begin(
+                kind = TraceKind.MESSAGE,
+                conversationId = "general",
+                senderId = myNodeId,
+                messageType = "PUBLIC"
+            )
+            TraceStore.stage(
+                trace.traceId,
+                TraceStages.UI_SEND_PRESSED,
+                uiTextDetails(text) + detailsOf("conversationId" to "general", "targetNode" to "broadcast"),
+                visual = "📦 Сообщение упаковано"
+            )
             try {
+                val dbStart = System.currentTimeMillis()
+                TraceStore.stage(trace.traceId, TraceStages.DB_INSERT_START)
                 val msg = repository.createAndSavePublicMessage(text, room)
+                TraceStore.attachMessageId(trace.traceId, msg.id)
+                TraceStore.stage(
+                    msg.id,
+                    TraceStages.DB_INSERT_DONE,
+                    detailsOf(
+                        "messageId" to msg.id,
+                        "insertDurationMs" to (System.currentTimeMillis() - dbStart),
+                        "ttl" to msg.ttl,
+                        "needAck" to false,
+                        "encrypted" to false,
+                        "privatePublic" to "PUBLIC"
+                    ),
+                    visual = "📚 Записано в базу"
+                )
+                TraceStore.stage(
+                    msg.id,
+                    TraceStages.PREP_ENTITY,
+                    detailsOf("packetId" to msg.id, "ttl" to msg.ttl, "priority" to "normal")
+                )
                 bleMeshManager.enqueueMessage(msg)
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
             } catch (e: Exception) {
+                TraceStore.finish(trace.traceId, "Failed", detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(1500)))
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(getApplication(), "Public message error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 }
@@ -176,13 +225,60 @@ class BLinkViewModel(
 
     fun sendPrivateMessage(text: String, targetId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            val trace = TraceStore.begin(
+                kind = TraceKind.MESSAGE,
+                conversationId = targetId,
+                targetId = targetId,
+                senderId = myNodeId,
+                messageType = "PRIVATE"
+            )
+            TraceStore.stage(
+                trace.traceId,
+                TraceStages.UI_SEND_PRESSED,
+                uiTextDetails(text) + detailsOf(
+                    "conversationId" to targetId,
+                    "targetNode" to targetId,
+                    "traceId" to trace.traceId
+                ),
+                visual = "📦 Сообщение упаковано"
+            )
             try {
                 val profile = dao.getProfileById(targetId)
                 val pubKey = profile?.publicKey
+                TraceStore.stage(
+                    trace.traceId,
+                    TraceStages.RSA_KEY_CHECK,
+                    detailsOf(
+                        "recipientPublicKeyExists" to !pubKey.isNullOrEmpty(),
+                        "publicKeySource" to if (profile != null) "user_profiles" else "none",
+                        "keyFingerprint" to (pubKey?.let { com.blink.dtn.crypto.NodeIdentity.deriveNodeId(it) } ?: ""),
+                        "keyAgeMs" to (profile?.let { System.currentTimeMillis() - it.lastSeen })
+                    )
+                )
 
                 if (pubKey.isNullOrEmpty()) {
-                    repository.createAndSavePrivateMessage(text, targetId, isPendingKey = true)
-                    
+                    val dbStart = System.currentTimeMillis()
+                    TraceStore.stage(trace.traceId, TraceStages.DB_INSERT_START)
+                    val (pendingMsg, _) = repository.createAndSavePrivateMessage(text, targetId, isPendingKey = true)
+                    TraceStore.attachMessageId(trace.traceId, pendingMsg.id)
+                    TraceStore.stage(
+                        pendingMsg.id,
+                        TraceStages.DB_INSERT_DONE,
+                        detailsOf("insertDurationMs" to (System.currentTimeMillis() - dbStart), "status" to "PENDING_KEY")
+                    )
+                    TraceStore.stage(
+                        pendingMsg.id,
+                        TraceStages.RSA_MISSING_KEY,
+                        detailsOf("reason" to "no_public_key_in_profile", "queuedIdentityRequest" to true),
+                        visual = "🔑 Нет ключа — запрос в сеть"
+                    )
+
+                    val idTrace = TraceStore.begin(
+                        kind = TraceKind.IDENTITY,
+                        targetId = targetId,
+                        senderId = myNodeId,
+                        messageType = "IDENTITY_REQUEST"
+                    )
                     val reqMsg = Message(
                         id = MeshIdGenerator.next(myNodeId),
                         type = "IDENTITY_REQUEST",
@@ -195,6 +291,8 @@ class BLinkViewModel(
                         ttl = 7,
                         isMine = true
                     )
+                    TraceStore.attachMessageId(idTrace.traceId, reqMsg.id)
+                    TraceStore.stage(reqMsg.id, TraceStages.ID_REQUEST, detailsOf("forMessageId" to pendingMsg.id), visual = "📡 IDENTITY_REQUEST")
                     bleMeshManager.enqueueMessage(reqMsg)
                     
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
@@ -203,10 +301,28 @@ class BLinkViewModel(
                     return@launch
                 }
 
+                val dbStart = System.currentTimeMillis()
+                TraceStore.stage(trace.traceId, TraceStages.DB_INSERT_START)
                 val (localMsg, _) = repository.createAndSavePrivateMessage(text, targetId)
+                TraceStore.attachMessageId(trace.traceId, localMsg.id)
+                TraceStore.stage(
+                    localMsg.id,
+                    TraceStages.DB_INSERT_DONE,
+                    detailsOf(
+                        "messageId" to localMsg.id,
+                        "insertDurationMs" to (System.currentTimeMillis() - dbStart),
+                        "ttl" to localMsg.ttl,
+                        "needAck" to true,
+                        "encrypted" to true,
+                        "privatePublic" to "PRIVATE"
+                    ),
+                    visual = "📚 Записано в базу"
+                )
+                TraceStore.stage(localMsg.id, TraceStages.ID_USED, detailsOf("keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pubKey)))
                 bleMeshManager.enqueueMessage(localMsg)
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
             } catch (e: Exception) {
+                TraceStore.finish(trace.traceId, "Failed", detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(1500)))
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(getApplication(), "Private message error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 }

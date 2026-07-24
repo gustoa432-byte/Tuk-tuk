@@ -931,8 +931,16 @@ fun InfoTab() {
 
 @Composable
 fun DeveloperPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
+    val context = LocalContext.current
     val peerCount by viewModel.peerCount.collectAsState()
     val pending by viewModel.pendingCount.collectAsState(0)
+    val peers by viewModel.activePeers.collectAsState(emptyList())
+    val visual by com.blink.dtn.telemetry.TraceStore.recentVisual.collectAsState()
+    var autoSend by remember {
+        mutableStateOf(com.blink.dtn.telemetry.TraceAutoSend.isOptedIn(context))
+    }
+    val recentTraces = remember { com.blink.dtn.telemetry.TraceStore.listRecent(8) }
+
     Column(modifier = Modifier.fillMaxSize().background(BackgroundDark).padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             IconButton(onClick = onClose) {
@@ -948,9 +956,51 @@ fun DeveloperPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         Text("Routing Mode: BLE DTN Mesh", color = TextSecondary, style = Typography.bodyLarge)
         Spacer(modifier = Modifier.height(8.dp))
         Text("InFlight: Managed by TxBatch", color = TextSecondary, style = Typography.bodyLarge)
+
         Spacer(modifier = Modifier.height(24.dp))
-        TukTukButton(onClick = { /* Export mock */ }) {
-            Text("Export Logs", color = TextPrimary)
+        Text("Message Trace (чёрный ящик)", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(8.dp))
+        if (visual.isEmpty()) {
+            Text("Пока нет шагов — отправьте сообщение.", color = TextSecondary, style = Typography.bodySmall)
+        } else {
+            visual.takeLast(12).forEach { step ->
+                Text(step, color = TextSecondary, style = Typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Последние traces: ${recentTraces.size}", color = TextSecondary, style = Typography.bodySmall)
+        recentTraces.take(5).forEach { t ->
+            Text(
+                "${t.messageType ?: t.kind} ${t.messageId?.take(18) ?: t.traceId.take(8)}… → ${t.terminalStatus ?: "Pending"} (${t.events.size} evt)",
+                color = TextSecondary,
+                style = Typography.labelSmall,
+                modifier = Modifier.padding(vertical = 2.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Switch(
+                checked = autoSend,
+                onCheckedChange = {
+                    autoSend = it
+                    com.blink.dtn.telemetry.TraceAutoSend.setOptIn(context, it)
+                }
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Авто-отправка trace при интернете", color = TextSecondary, style = Typography.bodySmall)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        TukTukButton(onClick = {
+            com.blink.dtn.telemetry.TraceStore.shareExport(context, peerCount, peers)
+            if (autoSend) {
+                com.blink.dtn.telemetry.TraceAutoSend.maybeQueueUpload(context, peerCount, peers)
+            }
+            Toast.makeText(context, "Export Trace готов", Toast.LENGTH_SHORT).show()
+        }) {
+            Text("Export Trace", color = TextPrimary)
         }
     }
 }
