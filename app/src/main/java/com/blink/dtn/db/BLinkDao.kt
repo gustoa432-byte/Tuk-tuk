@@ -85,7 +85,8 @@ abstract class BLinkDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertMessage(message: Message): Long
 
-    @Query("SELECT * FROM messages WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT') AND senderNick NOT IN (SELECT blockedNick FROM blocked_users) ORDER BY CASE WHEN type = 'SYSTEM_ANNOUNCEMENT' THEN 1 ELSE 0 END DESC, timestamp DESC")
+    // Oldest → newest so UI can pin the latest bubble above the input.
+    @Query("SELECT * FROM messages WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT') AND senderNick NOT IN (SELECT blockedNick FROM blocked_users) ORDER BY timestamp ASC")
     abstract fun getPublicMessagesFlow(): Flow<List<Message>>
 
     @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY timestamp ASC")
@@ -105,10 +106,29 @@ abstract class BLinkDao {
 
     // Unconditional purge of a message row by id. Used when an end-to-end ACK
     // passes through a transit node to drop the relay-queued copy of the acked
-    // message. Callers must ensure this is never invoked for a user-visible row
-    // (e.g. the origin's own sent message).
+    // message, and for local user delete / cancel-send.
     @Query("DELETE FROM messages WHERE id = :id")
     abstract suspend fun deleteMessageById(id: String)
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp DESC LIMIT 1")
+    abstract suspend fun getLatestMessageInConversation(conversationId: String): Message?
+
+    /** Local-only delete; refreshes conversation preview when needed. */
+    @androidx.room.Transaction
+    open suspend fun deleteMessageLocally(id: String) {
+        val msg = getMessageById(id) ?: return
+        deleteMessageById(id)
+        val convId = msg.conversationId
+        if (convId.isEmpty() || convId == RELAY_CONVERSATION_ID) return
+        val conv = getConversationByIdInternal(convId) ?: return
+        val latest = getLatestMessageInConversation(convId)
+        updateConversationInternal(
+            conv.copy(
+                lastMessage = latest?.text,
+                lastTimestamp = latest?.timestamp ?: conv.lastTimestamp
+            )
+        )
+    }
 
     @Query("UPDATE messages SET status = :status WHERE id = :msgId")
     abstract suspend fun updateMessageStatus(msgId: String, status: Int)

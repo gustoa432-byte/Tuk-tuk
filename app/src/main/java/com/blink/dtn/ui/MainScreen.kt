@@ -16,6 +16,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 
@@ -424,6 +425,13 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     val dialogs by viewModel.dialogs.collectAsState()
     val displayName = dialogs.find { it.conversationId == contactId }?.displayName ?: "Неизвестный контакт"
     var messageText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
     
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(
@@ -448,9 +456,18 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 Text("Здесь пока нет сообщений.", color = TextSecondary, style = Typography.bodyMedium)
             }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f), reverseLayout = true) {
-                items(messages.reversed()) { msg ->
-                    MessageBubble(msg, viewModel.myNodeId)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                reverseLayout = false
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        msg = msg,
+                        myNodeId = viewModel.myNodeId,
+                        onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                    )
                 }
             }
         }
@@ -474,6 +491,13 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
 fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Unit) {
     val messages by viewModel.publicMessages.collectAsState()
     var messageText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
 
@@ -482,9 +506,20 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
                 Text("В общем чате пока тихо.\nНапишите что-нибудь!", color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f), reverseLayout = true) {
-                items(messages.reversed()) { msg ->
-                    MessageBubble(msg, viewModel.myNodeId, showSender = true, onSenderClick = onPrivateChatRequested)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                reverseLayout = false
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        msg = msg,
+                        myNodeId = viewModel.myNodeId,
+                        showSender = true,
+                        onSenderClick = onPrivateChatRequested,
+                        onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                    )
                 }
             }
         }
@@ -547,13 +582,73 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
 }
 
 @Composable
-fun MessageBubble(msg: Message, myNodeId: String, showSender: Boolean = false, onSenderClick: ((String) -> Unit)? = null) {
+fun MessageBubble(
+    msg: Message,
+    myNodeId: String,
+    showSender: Boolean = false,
+    onSenderClick: ((String) -> Unit)? = null,
+    onDeleteLocal: (() -> Unit)? = null,
+    onCancelSend: (() -> Unit)? = null
+) {
     val isMine = msg.senderId == myNodeId || msg.isMine
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = formatter.format(Date(msg.timestamp))
+    var showActions by remember { mutableStateOf(false) }
+    val canCancel = isMine && (
+        msg.status == Message.STATUS_PENDING ||
+            msg.status == Message.STATUS_IN_FLIGHT ||
+            msg.status == Message.STATUS_PENDING_KEY ||
+            msg.status == Message.STATUS_FAILED
+        )
+
+    if (showActions) {
+        AlertDialog(
+            onDismissRequest = { showActions = false },
+            title = { Text("Сообщение", color = TextPrimary) },
+            text = {
+                Text(
+                    if (canCancel) {
+                        "Удалить только у себя или отменить отправку (пока не ушло в сеть)."
+                    } else {
+                        "Удалить сообщение только на этом устройстве. У других оно останется."
+                    },
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showActions = false
+                    onDeleteLocal?.invoke()
+                }) {
+                    Text("Удалить у себя", color = DangerColor)
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (canCancel) {
+                        TextButton(onClick = {
+                            showActions = false
+                            onCancelSend?.invoke()
+                        }) {
+                            Text("Отменить отправку", color = TextPrimary)
+                        }
+                    }
+                    TextButton(onClick = { showActions = false }) {
+                        Text("Закрыть", color = TextSecondary)
+                    }
+                }
+            },
+            containerColor = SurfaceDark
+        )
+    }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .pointerInput(msg.id) {
+                detectTapGestures(onLongPress = { showActions = true })
+            },
         horizontalAlignment = if (isMine) Alignment.End else Alignment.Start
     ) {
         if (showSender && !isMine) {
@@ -592,6 +687,7 @@ fun MessageBubble(msg: Message, myNodeId: String, showSender: Boolean = false, o
                         val statusColor = when (msg.status) {
                             Message.STATUS_SENT, Message.STATUS_DELIVERED -> TextSecondary
                             Message.STATUS_FAILED -> DangerColor
+                            Message.STATUS_PENDING, Message.STATUS_IN_FLIGHT, Message.STATUS_PENDING_KEY -> DividerColor
                             else -> DividerColor
                         }
                         Box(modifier = Modifier.size(6.dp).background(statusColor, CircleShape))
@@ -627,7 +723,9 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var nickname by remember { mutableStateOf(viewModel.myNick) }
+    var savedNick by remember { mutableStateOf(viewModel.myNick) }
     var language by remember { mutableStateOf("Русский") }
+    val nickDirty = nickname.trim() != savedNick.trim()
     
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
@@ -674,7 +772,6 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             onValueChange = {
                 if (it.length <= 15) {
                     nickname = it
-                    viewModel.updateMyProfile(it, false)
                 }
             },
             textStyle = Typography.titleLarge.copy(color = TextPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
@@ -687,6 +784,26 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
         )
+        Spacer(modifier = Modifier.height(12.dp))
+        TukTukButton(
+            onClick = {
+                val trimmed = nickname.trim()
+                if (trimmed.isEmpty()) {
+                    Toast.makeText(context, "Введите имя", Toast.LENGTH_SHORT).show()
+                    return@TukTukButton
+                }
+                nickname = trimmed
+                viewModel.updateMyProfile(trimmed, false)
+                savedNick = trimmed
+                Toast.makeText(context, "Имя сохранено", Toast.LENGTH_SHORT).show()
+            }
+        ) {
+            Text(
+                if (nickDirty) "Сохранить" else "Сохранено",
+                color = if (nickDirty) TextPrimary else TextSecondary,
+                style = Typography.labelMedium
+            )
+        }
         Spacer(modifier = Modifier.height(32.dp))
         // QR encodes the full contact payload (id + public key + nick) so a scan
         // pins the key out-of-band. The human-readable id below stays as-is.
@@ -792,7 +909,7 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
 }
 
 private const val AUTHOR_TELEGRAM = "b6dmachine"
-private const val OFFICIAL_CHANNEL = "tuk-tuk-official"
+private const val OFFICIAL_CHANNEL = "tuk_tuk_official"
 private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
 
 private fun openTelegramLink(context: Context, pathOrUsername: String) {

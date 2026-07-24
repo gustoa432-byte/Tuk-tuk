@@ -524,6 +524,41 @@ class BleMeshManager private constructor(
         }
     }
 
+    /**
+     * Abort an outgoing message that has not finished delivery: drop BLE TX ops,
+     * remove the active batch, and delete the local row. Already SENT/DELIVERED
+     * messages are left alone (use local delete instead).
+     */
+    suspend fun cancelOutgoing(messageId: String): Boolean {
+        val msg = dao.getMessageById(messageId) ?: return false
+        if (msg.senderId != myUniqueNodeId) return false
+        val cancellable = msg.status == Message.STATUS_PENDING ||
+            msg.status == Message.STATUS_IN_FLIGHT ||
+            msg.status == Message.STATUS_PENDING_KEY ||
+            msg.status == Message.STATUS_FAILED
+        if (!cancellable) return false
+
+        activeBatches[messageId]?.watchdogJob?.cancel()
+        activeBatches.remove(messageId)
+        messageBackoffMap.remove(messageId)
+
+        for ((_, queue) in deviceQueues) {
+            val it = queue.iterator()
+            while (it.hasNext()) {
+                if (it.next().messageId == messageId) it.remove()
+            }
+        }
+
+        dao.deleteMessageLocally(messageId)
+        com.blink.dtn.telemetry.TraceStore.finish(
+            messageId,
+            "Cancelled",
+            com.blink.dtn.telemetry.detailsOf("reason" to "user_cancel_send")
+        )
+        Log.d("BLE_QUEUE", "Cancelled outgoing MessageId=$messageId")
+        return true
+    }
+
     private fun shouldStoreAsRelayPacket(message: Message): Boolean {
         if (message.isAck || message.type == "ACK") return true
         if (message.type == "IDENTITY_ANNOUNCEMENT" || message.type == "IDENTITY_REQUEST" || message.type == "SYSTEM_PROFILE") return true

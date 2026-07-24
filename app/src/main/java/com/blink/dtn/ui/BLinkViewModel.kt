@@ -335,6 +335,32 @@ class BLinkViewModel(
             dao.blockUser(BlockedUser(nick, System.currentTimeMillis()))
     }
     }
+
+    /** Remove a message from this device only (own or others). */
+    fun deleteMessageLocally(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // If still in the TX path, drop BLE ops first so it cannot reappear / finish late.
+            bleMeshManager.cancelOutgoing(messageId)
+            dao.deleteMessageLocally(messageId)
+        }
+    }
+
+    /**
+     * Cancel an outgoing send that is still pending / in flight / waiting for key / failed.
+     * Already sent or delivered messages cannot be recalled from the mesh — only local delete.
+     */
+    fun cancelOutgoingMessage(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = bleMeshManager.cancelOutgoing(messageId)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    if (ok) "Отправка отменена" else "Уже отправлено — можно только удалить у себя",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
 }
 
 class BLinkViewModelFactory(
