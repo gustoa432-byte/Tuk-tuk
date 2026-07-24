@@ -123,7 +123,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val isConnected = vkActive || peerCount > 0
 
     if (showDevPanel) {
-        DeveloperPanel(viewModel = viewModel, onClose = { showDevPanel = false })
+        DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
         return
     }
 
@@ -792,10 +792,14 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
 }
 
 private const val AUTHOR_TELEGRAM = "b6dmachine"
+private const val OFFICIAL_CHANNEL = "tuk-tuk-official"
+private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
 
-private fun openAuthorTelegram(context: Context) {
-    val appIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("tg://resolve?domain=$AUTHOR_TELEGRAM"))
-    val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/$AUTHOR_TELEGRAM"))
+private fun openTelegramLink(context: Context, pathOrUsername: String) {
+    val web = if (pathOrUsername.startsWith("http")) pathOrUsername else "https://t.me/$pathOrUsername"
+    val domain = pathOrUsername.removePrefix("https://t.me/").removePrefix("http://t.me/")
+    val appIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("tg://resolve?domain=$domain"))
+    val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(web))
     try {
         context.startActivity(appIntent)
     } catch (_: Exception) {
@@ -805,6 +809,14 @@ private fun openAuthorTelegram(context: Context) {
             Toast.makeText(context, "Не удалось открыть Telegram", Toast.LENGTH_SHORT).show()
         }
     }
+}
+
+private fun openAuthorTelegram(context: Context) {
+    openTelegramLink(context, AUTHOR_TELEGRAM)
+}
+
+private fun openOfficialChannel(context: Context) {
+    openTelegramLink(context, OFFICIAL_CHANNEL)
 }
 
 @Composable
@@ -868,6 +880,21 @@ fun InfoTab() {
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // Official channel
+        Text("Официальный канал", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Новости и обновления TukTuk.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = { openOfficialChannel(context) }) {
+            Text("t.me/$OFFICIAL_CHANNEL", color = TextPrimary, style = Typography.labelMedium)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         // 3. Как можно помочь — пока только Telegram, без донат-ссылок
         Text("Поддержать развитие", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(4.dp))
@@ -892,30 +919,38 @@ fun InfoTab() {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 4. Обратная связь
+        // 4. Обратная связь — ошибки и идеи на почту
         Text("Обратная связь", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Нашли ошибку? Есть идея? Хотите помочь проекту? Напишите разработчику.",
+            "Нашли ошибку? Есть идея? Хотите помочь проекту? Напишите — письма приходят на почту проекта.",
             style = quietStyle,
             color = TextSecondary
         )
         Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("@$AUTHOR_TELEGRAM", style = Typography.bodyMedium, color = TextPrimary)
-            TukTukButton(onClick = { openAuthorTelegram(context) }) {
-                Text("Написать", color = TextPrimary, style = Typography.labelMedium)
-            }
+        Text(FEEDBACK_EMAIL, style = Typography.bodyMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = {
+            com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
+                context,
+                subject = "TukTuk feedback",
+                body = "Опишите ошибку или идею:\n\n"
+            )
+        }) {
+            Text("Написать", color = TextPrimary, style = Typography.labelMedium)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             "Я читаю все сообщения, но могу отвечать не сразу.",
             style = quietStyle,
             color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Личный Telegram автора: @$AUTHOR_TELEGRAM",
+            style = quietStyle,
+            color = TextSecondary,
+            modifier = Modifier.clickable { openAuthorTelegram(context) }
         )
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -931,76 +966,6 @@ fun InfoTab() {
 
 @Composable
 fun DeveloperPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
-    val context = LocalContext.current
-    val peerCount by viewModel.peerCount.collectAsState()
-    val pending by viewModel.pendingCount.collectAsState(0)
-    val peers by viewModel.activePeers.collectAsState(emptyList())
-    val visual by com.blink.dtn.telemetry.TraceStore.recentVisual.collectAsState()
-    var autoSend by remember {
-        mutableStateOf(com.blink.dtn.telemetry.TraceAutoSend.isOptedIn(context))
-    }
-    val recentTraces = remember { com.blink.dtn.telemetry.TraceStore.listRecent(8) }
-
-    Column(modifier = Modifier.fillMaxSize().background(BackgroundDark).padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = TextPrimary)
-            }
-            Text("Developer Panel", style = Typography.titleLarge, color = TextPrimary)
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("BLE Devices (Active Peers): $peerCount", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Pending Messages (Queue): $pending", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Routing Mode: BLE DTN Mesh", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("InFlight: Managed by TxBatch", color = TextSecondary, style = Typography.bodyLarge)
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Message Trace (чёрный ящик)", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
-        if (visual.isEmpty()) {
-            Text("Пока нет шагов — отправьте сообщение.", color = TextSecondary, style = Typography.bodySmall)
-        } else {
-            visual.takeLast(12).forEach { step ->
-                Text(step, color = TextSecondary, style = Typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-        Text("Последние traces: ${recentTraces.size}", color = TextSecondary, style = Typography.bodySmall)
-        recentTraces.take(5).forEach { t ->
-            Text(
-                "${t.messageType ?: t.kind} ${t.messageId?.take(18) ?: t.traceId.take(8)}… → ${t.terminalStatus ?: "Pending"} (${t.events.size} evt)",
-                color = TextSecondary,
-                style = Typography.labelSmall,
-                modifier = Modifier.padding(vertical = 2.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.Switch(
-                checked = autoSend,
-                onCheckedChange = {
-                    autoSend = it
-                    com.blink.dtn.telemetry.TraceAutoSend.setOptIn(context, it)
-                }
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Авто-отправка trace при интернете", color = TextSecondary, style = Typography.bodySmall)
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = {
-            com.blink.dtn.telemetry.TraceStore.shareExport(context, peerCount, peers)
-            if (autoSend) {
-                com.blink.dtn.telemetry.TraceAutoSend.maybeQueueUpload(context, peerCount, peers)
-            }
-            Toast.makeText(context, "Export Trace готов", Toast.LENGTH_SHORT).show()
-        }) {
-            Text("Export Trace", color = TextPrimary)
-        }
-    }
+    // Kept as alias — Delivery Observatory is the Phase-2 black-box UI.
+    DeliveryObservatoryPanel(viewModel, onClose)
 }

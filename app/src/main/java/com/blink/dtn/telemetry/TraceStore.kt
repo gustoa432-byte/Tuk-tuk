@@ -8,7 +8,6 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +55,7 @@ object TraceStore {
             if (appContext != null) return
             appContext = context.applicationContext
             tracesDir = File(context.applicationContext.filesDir, "traces").also { it.mkdirs() }
+            PeerDirectory.init(context)
         }
     }
 
@@ -141,6 +141,8 @@ object TraceStore {
 
     /**
      * Write a zip under cacheDir and return the shareable File, or null on failure.
+     * Contents: export.json, trace.json (latest observatory), timeline.json, mesh.json,
+     * device.json, statistics.json, peer_directory.json, and per-trace JSON files.
      */
     fun exportZip(context: Context, peerCount: Int = 0, peers: List<String> = emptyList()): File? {
         init(context)
@@ -148,6 +150,8 @@ object TraceStore {
             val stamp = SimpleDateFormat("yyyy_MM_dd_HHmmss", Locale.US).format(Date())
             val outFile = File(context.cacheDir, "trace_$stamp.zip")
             val traces = listRecent(100)
+            val reports = TraceAnalyzer.analyzeAll(traces)
+            val latest = reports.firstOrNull()
             val bundle = TraceExportBundle(
                 exportedAt = System.currentTimeMillis(),
                 appVersion = runCatching {
@@ -158,17 +162,28 @@ object TraceStore {
                 traces = traces
             )
             ZipOutputStream(BufferedOutputStream(FileOutputStream(outFile))).use { zos ->
-                zos.putNextEntry(ZipEntry("export.json"))
-                zos.write(json.encodeToString(bundle).toByteArray(Charsets.UTF_8))
-                zos.closeEntry()
-                traces.forEach { t ->
-                    zos.putNextEntry(ZipEntry("traces/${t.traceId}.json"))
-                    zos.write(json.encodeToString(t).toByteArray(Charsets.UTF_8))
+                fun put(name: String, text: String) {
+                    zos.putNextEntry(ZipEntry(name))
+                    zos.write(text.toByteArray(Charsets.UTF_8))
                     zos.closeEntry()
                 }
-                zos.putNextEntry(ZipEntry("device.json"))
-                zos.write(json.encodeToString(bundle.device).toByteArray(Charsets.UTF_8))
-                zos.closeEntry()
+                put("export.json", json.encodeToString(bundle))
+                put("device.json", json.encodeToString(bundle.device))
+                put("mesh.json", json.encodeToString(latest?.mesh ?: MeshGraph(emptyList(), emptyList())))
+                put("peer_directory.json", json.encodeToString(PeerDirectory.snapshot()))
+                if (latest != null) {
+                    put("trace.json", json.encodeToString(latest))
+                    put("timeline.json", json.encodeToString(latest.timeline))
+                    put("statistics.json", json.encodeToString(latest.statistics))
+                    put("journey.json", json.encodeToString(latest.journey))
+                    put("health.json", json.encodeToString(latest.health))
+                    put("diagnosis.json", json.encodeToString(latest.diagnosis))
+                    put("heatmap.json", json.encodeToString(latest.heatmap))
+                }
+                put("observatory_all.json", json.encodeToString(reports))
+                traces.forEach { t ->
+                    put("traces/${t.traceId}.json", json.encodeToString(t))
+                }
             }
             outFile
         } catch (e: Exception) {
@@ -179,15 +194,7 @@ object TraceStore {
 
     fun shareExport(context: Context, peerCount: Int, peers: List<String>) {
         val file = exportZip(context, peerCount, peers) ?: return
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/zip"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "TukTuk MessageTrace $file.name")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(Intent.createChooser(intent, "Export Trace").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        FeedbackMailer.sendTraceZip(context, file)
     }
 
     fun captureDevice(context: Context): DeviceSnapshot {
@@ -304,5 +311,7 @@ object TraceAutoSend {
         val dest = File(context.filesDir, "traces_pending_upload/${zip.name}")
         zip.copyTo(dest, overwrite = true)
         Log.i("MessageTrace", "Queued auto-upload artifact ${dest.absolutePath}")
+        // Offer email to the feedback mailbox when online + opted-in.
+        FeedbackMailer.sendTraceZip(context, dest, subject = "TukTuk auto MessageTrace")
     }
 }

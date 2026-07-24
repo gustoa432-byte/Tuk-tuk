@@ -307,11 +307,12 @@ class BleMeshManager private constructor(
                 val success = op.gatt.writeCharacteristic(op.characteristic, op.payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                 if (success != android.bluetooth.BluetoothStatusCodes.SUCCESS) {
                     Log.e("DTN", "writeCharacteristic failed with status: $success. Payload size: ${op.payload.size}")
-                    trace(
-                        op.messageId,
-                        com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
-                        com.blink.dtn.telemetry.detailsOf("peer" to address, "status" to success)
-                    )
+            trace(
+                op.messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
+                com.blink.dtn.telemetry.detailsOf("peer" to address, "status" to success)
+            )
+            com.blink.dtn.telemetry.PeerDirectory.noteError(address)
                     completeOperation(address, op, success = false)
                     handleOperationResult(op.messageId, address, false)
                     disconnectGatt(op.gatt)
@@ -1389,6 +1390,7 @@ class BleMeshManager private constructor(
                     Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
                     if (trustedPublicKey.isNotEmpty()) {
                         ensureTrace(packet.id, "IDENTITY_ANNOUNCEMENT", packet.senderId, null)
+                        com.blink.dtn.telemetry.PeerDirectory.noteNode(packet.senderId, nick)
                         trace(
                             packet.id,
                             com.blink.dtn.telemetry.TraceStages.ID_STORED,
@@ -1567,6 +1569,7 @@ class BleMeshManager private constructor(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             // Cache discovered device
+            com.blink.dtn.telemetry.PeerDirectory.noteBleDevice(result.device, result.rssi)
             if (discoveredDevices.add(result.device)) {
                 _peerCount.value = discoveredDevices.size
                         _activePeers.value = discoveredDevices.map { it.address }

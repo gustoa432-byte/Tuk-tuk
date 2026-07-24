@@ -73,6 +73,8 @@ data class TraceExportBundle(
 )
 
 object TraceStages {
+    // Transport-agnostic namespaces: BLE.* today; LoRa.* / VK.* / WiFi.* / Internet.* tomorrow
+    // without rewriting TraceStore or TraceAnalyzer.
     // UI
     const val UI_SEND_PRESSED = "UI.SendPressed"
     // Prep
