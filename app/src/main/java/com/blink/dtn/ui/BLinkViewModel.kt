@@ -166,7 +166,12 @@ class BLinkViewModel(
         }
     }
 
-    private suspend fun upsertPeerAsContact(peerId: String, nick: String = "", pubKeyBase64: String? = null) {
+    private suspend fun upsertPeerAsContact(
+        peerId: String,
+        nick: String = "",
+        pubKeyBase64: String? = null,
+        verifiedOutOfBand: Boolean = false
+    ) {
         val existing = dao.getProfileById(peerId)
         if (existing?.isBlocked == true) return
         val resolvedNick = nick.ifBlank { existing?.nickname.orEmpty() }.ifBlank { peerId }
@@ -175,7 +180,8 @@ class BLinkViewModel(
                 nickname = if (nick.isNotBlank()) nick else existing.nickname,
                 lastSeen = System.currentTimeMillis(),
                 publicKey = pubKeyBase64?.takeIf { it.isNotEmpty() } ?: existing.publicKey,
-                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
+                verifiedOutOfBand = existing.verifiedOutOfBand || verifiedOutOfBand
             )
         } else {
             com.blink.dtn.db.UserProfile(
@@ -184,7 +190,8 @@ class BLinkViewModel(
                 lastSeen = System.currentTimeMillis(),
                 isVip = false,
                 publicKey = pubKeyBase64.orEmpty(),
-                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
+                verifiedOutOfBand = verifiedOutOfBand
             )
         }
         dao.insertOrUpdateProfile(profile)
@@ -264,7 +271,7 @@ class BLinkViewModel(
     // or it is rejected at ingress).
     fun addScannedContact(id: String, nick: String, pubKeyBase64: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            upsertPeerAsContact(id, nick, pubKeyBase64)
+            upsertPeerAsContact(id, nick, pubKeyBase64, verifiedOutOfBand = true)
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 setCurrentDialog(id)
             }
@@ -395,7 +402,11 @@ class BLinkViewModel(
                     bleMeshManager.enqueueMessage(reqMsg)
                     
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(getApplication(), "Missing public key. Requesting from mesh...", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Нет ключа собеседника — запросили по сети. Лучше сверить QR.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
                     return@launch
                 }
@@ -460,6 +471,30 @@ class BLinkViewModel(
             }
         }
     }
+
+    /** Re-queue a failed / stuck outgoing message. */
+    fun retryOutgoingMessage(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = dao.getMessageById(messageId) ?: return@launch
+            if (msg.senderId != myNodeId) return@launch
+            val retryable = msg.status == Message.STATUS_FAILED ||
+                msg.status == Message.STATUS_PENDING ||
+                msg.status == Message.STATUS_PENDING_KEY
+            if (!retryable) return@launch
+            dao.updateMessageStatusAndRetryCount(messageId, Message.STATUS_PENDING, 0)
+            bleMeshManager.triggerRelay()
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(getApplication(), "Повторная отправка…", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun setDutyPreset(preset: com.blink.dtn.ble.MeshDutyPreset) {
+        bleMeshManager.applyDutyPreset(preset)
+    }
+
+    fun currentDutyPreset(): com.blink.dtn.ble.MeshDutyPreset =
+        bleMeshManager.currentDutyPreset()
 }
 
 class BLinkViewModelFactory(

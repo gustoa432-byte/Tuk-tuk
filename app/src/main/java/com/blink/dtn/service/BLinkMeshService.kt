@@ -56,6 +56,7 @@ class BLinkMeshService : Service() {
 
         com.blink.dtn.telemetry.MeshDutyTelemetry.init(this)
         com.blink.dtn.telemetry.MeshDutyTelemetry.startBatteryReceiver(this)
+        com.blink.dtn.ble.MeshDutyPrefs.init(this)
 
         runCatching {
             val wifiDirect = com.blink.dtn.transport.WifiDirectTransport(applicationContext)
@@ -137,6 +138,11 @@ class BLinkMeshService : Service() {
                                 val newRetry = currentMsg.retryCount + 1
                                 if (newRetry >= 10) {
                                     dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_FAILED)
+                                    com.blink.dtn.telemetry.TraceStore.finish(
+                                        result.msgId,
+                                        "Failed",
+                                        com.blink.dtn.telemetry.detailsOf("retries" to newRetry)
+                                    )
                                 } else {
                                     dao.updateMessageStatusAndRetryCount(result.msgId, com.blink.dtn.db.Message.STATUS_PENDING, newRetry)
                                 }

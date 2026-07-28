@@ -32,12 +32,13 @@ import com.blink.dtn.ui.theme.Typography
  */
 object DeliveryVoyageLabels {
     fun label(msg: Message): String = when (msg.status) {
-        Message.STATUS_PENDING, Message.STATUS_PENDING_KEY -> "отправляется"
+        Message.STATUS_PENDING -> "в очереди"
+        Message.STATUS_PENDING_KEY -> "ждём ключ"
         Message.STATUS_IN_FLIGHT -> "у соседей"
         Message.STATUS_SENT -> if (msg.type == "PRIVATE") "в пути" else "у соседей"
         Message.STATUS_DELIVERED -> "доставлено"
         Message.STATUS_FAILED -> "ошибка"
-        else -> "отправляется"
+        else -> "в очереди"
     }
 
     fun color(msg: Message): Color = when (msg.status) {
@@ -50,21 +51,56 @@ object DeliveryVoyageLabels {
 
     fun subtitle(msg: Message): String = when (msg.status) {
         Message.STATUS_PENDING -> "В очереди на отправку"
-        Message.STATUS_PENDING_KEY -> "Ждём ключ собеседника"
-        Message.STATUS_IN_FLIGHT -> "Пишем соседям по BLE"
+        Message.STATUS_PENDING_KEY -> "Ждём ключ собеседника (лучше сверить QR)"
+        Message.STATUS_IN_FLIGHT -> "Пишем соседям (BLE / Wi‑Fi Direct)"
         Message.STATUS_SENT ->
             if (msg.type == "PRIVATE") "Ушло в сеть, ждём подтверждение (ACK)"
             else "Передано соседям (общий чат — без личного ACK)"
         Message.STATUS_DELIVERED -> "Получено подтверждение от адресата"
-        Message.STATUS_FAILED -> "Не удалось доставить после повторов"
+        Message.STATUS_FAILED -> "Не удалось доставить после повторов — нажмите, чтобы повторить"
         else -> ""
+    }
+}
+
+/** Session delivery health from recent traces (Observatory summary). */
+data class DeliveryHealthSummary(
+    val total: Int,
+    val delivered: Int,
+    val failed: Int,
+    val pending: Int
+) {
+    val successRatePct: Int
+        get() {
+            val done = delivered + failed
+            if (done <= 0) return 0
+            return ((delivered * 100.0) / done).toInt()
+        }
+
+    companion object {
+        fun fromRecentTraces(limit: Int = 40): DeliveryHealthSummary {
+            val traces = TraceStore.listRecent(limit).filter {
+                it.messageType == "PRIVATE" || it.messageType == "PUBLIC"
+            }
+            var delivered = 0
+            var failed = 0
+            var pending = 0
+            for (t in traces) {
+                when (t.terminalStatus?.lowercase()) {
+                    "delivered", "sent" -> delivered++
+                    "failed", "expired", "timeout", "cancelled" -> failed++
+                    else -> pending++
+                }
+            }
+            return DeliveryHealthSummary(traces.size, delivered, failed, pending)
+        }
     }
 }
 
 @Composable
 fun MessageVoyageDialog(
     msg: Message,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onRetry: (() -> Unit)? = null
 ) {
     val report = remember(msg.id, msg.status) {
         TraceStore.getByMessageId(msg.id)?.let { TraceAnalyzer.analyze(it) }
@@ -101,8 +137,7 @@ fun MessageVoyageDialog(
                         Spacer(modifier = Modifier.height(4.dp))
                         report.route.take(6).forEachIndexed { i, hop ->
                             Text(
-                                "${"  ".repeat(0)}${hop.label}" +
-                                    (hop.detail?.let { " · $it" } ?: ""),
+                                hop.label + (hop.detail?.let { " · $it" } ?: ""),
                                 color = TextSecondary,
                                 style = Typography.labelSmall
                             )
@@ -135,8 +170,24 @@ fun MessageVoyageDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Закрыть", color = TextSecondary)
+            if (msg.status == Message.STATUS_FAILED && onRetry != null) {
+                TextButton(onClick = {
+                    onRetry()
+                    onDismiss()
+                }) {
+                    Text("Повторить", color = TextPrimary)
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text("Закрыть", color = TextSecondary)
+                }
+            }
+        },
+        dismissButton = {
+            if (msg.status == Message.STATUS_FAILED && onRetry != null) {
+                TextButton(onClick = onDismiss) {
+                    Text("Закрыть", color = TextSecondary)
+                }
             }
         },
         containerColor = SurfaceDark

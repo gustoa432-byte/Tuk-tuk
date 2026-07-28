@@ -23,7 +23,12 @@ data class UserProfile(
      * CONTACT — accepted / QR-scanned / user-initiated.
      * BLOCKED — ignored; further private ingress is dropped locally.
      */
-    val trustStatus: String = TRUST_CONTACT
+    val trustStatus: String = TRUST_CONTACT,
+    /**
+     * True when public key was pinned out-of-band (QR). Distinguishes «проверен»
+     * from mesh-discovered «из сети» contacts.
+     */
+    val verifiedOutOfBand: Boolean = false
 ) {
     companion object {
         const val TRUST_STRANGER = "STRANGER"
@@ -34,6 +39,7 @@ data class UserProfile(
     val isContact: Boolean get() = trustStatus == TRUST_CONTACT
     val isStranger: Boolean get() = trustStatus == TRUST_STRANGER
     val isBlocked: Boolean get() = trustStatus == TRUST_BLOCKED
+    val isVerified: Boolean get() = verifiedOutOfBand && isContact
 
     /** Local alias if set, else network nick, else node id. */
     fun displayLabel(fallback: String? = null): String {
@@ -42,5 +48,19 @@ data class UserProfile(
         val nick = nickname.trim()
         if (nick.isNotEmpty()) return nick
         return fallback?.takeIf { it.isNotBlank() } ?: userId
+    }
+
+    fun shortId(chars: Int = 8): String {
+        val id = userId.trim()
+        if (id.length <= chars) return id
+        return id.take(chars)
+    }
+
+    /** Russian trust badge for dialogs. */
+    fun trustBadgeRu(): String = when {
+        isBlocked -> "блок"
+        isStranger -> "незнакомец"
+        isVerified -> "проверен"
+        else -> "из сети"
     }
 }

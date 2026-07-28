@@ -14,14 +14,22 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal class BleConnectionPool(
     private val scopeProvider: () -> CoroutineScope,
-    private val idleTimeoutMs: Long = 60_000L,
+    idleTimeoutMs: Long = 60_000L,
     private val sweepIntervalMs: Long = 10_000L
 ) {
     val connections = ConcurrentHashMap<String, BluetoothGatt>()
     val mtuByAddress = ConcurrentHashMap<String, Int>()
     val lastUsedAt = ConcurrentHashMap<String, Long>()
 
+    @Volatile
+    var idleTimeoutMs: Long = idleTimeoutMs
+        private set
+
     private var idleJob: Job? = null
+
+    fun setIdleTimeoutMs(ms: Long) {
+        idleTimeoutMs = ms.coerceAtLeast(5_000L)
+    }
 
     fun touch(address: String) {
         lastUsedAt[address] = System.currentTimeMillis()

@@ -16,21 +16,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Experimental Wi‑Fi Direct path: peer discovery + same-group TCP payload send.
+ * Experimental Wi‑Fi Direct path: peer discovery + same-group TCP payload send/receive.
  *
- * Honest limits (MVP):
- * - Not a full mesh / multi-hop Wi‑Fi fabric.
- * - Requires Wi‑Fi Direct support + user/system group membership.
- * - Falls back to BLE for normal messaging; this is an optional denser hop.
+ * Honest limits:
+ * - Not a full mesh / multi-hop Wi‑Fi fabric (group-local hop only).
+ * - Requires Wi‑Fi Direct support + system group membership.
+ * - Falls back to BLE when no group; label stays «экспериментально».
  *
- * TODO: integrate group formation UX, mutual auth, and DTN enqueue on RX.
+ * // Future: LoRa / VPS bridge can share the same MeshTransport contract.
  */
 class WifiDirectTransport(
     private val context: Context
@@ -51,13 +53,22 @@ class WifiDirectTransport(
     private val listening = AtomicBoolean(false)
     @Volatile private var groupOwnerAddress: String? = null
     @Volatile private var isGroupOwner: Boolean = false
+    @Volatile private var groupFormed: Boolean = false
+
+    /** Client sockets accepted by GO (for push). */
+    private val clientOut = ConcurrentHashMap<String, Socket>()
+
+    @Volatile
+    var onMeshPayload: ((ByteArray) -> Unit)? = null
 
     companion object {
         private const val TAG = "WifiDirectTx"
         const val PORT = 8988
-        // TODO: negotiate framing version with peer
         private const val MAGIC = 0x54544B31 // "TTK1"
+        private const val MAX_PAYLOAD = 512 * 1024
     }
+
+    fun isGroupReady(): Boolean = groupFormed && (isGroupOwner || !groupOwnerAddress.isNullOrBlank())
 
     override fun start() {
         val mgr = context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
@@ -71,12 +82,13 @@ class WifiDirectTransport(
         _available.value = true
         registerReceiver()
         discover()
-        // TODO: start accept loop only after group formed
     }
 
     override fun stop() {
         listening.set(false)
         unregisterReceiver()
+        clientOut.values.forEach { runCatching { it.close() } }
+        clientOut.clear()
         runCatching {
             channel?.let { ch ->
                 manager?.stopPeerDiscovery(ch, object : WifiP2pManager.ActionListener {
@@ -89,6 +101,7 @@ class WifiDirectTransport(
         _peers.value = emptyList()
         groupOwnerAddress = null
         isGroupOwner = false
+        groupFormed = false
     }
 
     fun discover() {
@@ -105,42 +118,29 @@ class WifiDirectTransport(
     }
 
     override suspend fun send(payload: ByteArray, peerId: String?, messageId: String?): Boolean {
-        if (!_available.value) return false
-        val host = groupOwnerAddress
-        if (host.isNullOrBlank() && !isGroupOwner) {
-            Log.d(TAG, "No Wi‑Fi Direct group — cannot send (fall back to BLE)")
-            return false
-        }
+        if (!_available.value || !groupFormed) return false
         return withContext(Dispatchers.IO) {
             try {
-                if (isGroupOwner) {
-                    // Owner expects clients to connect; without a known client IP we cannot push.
-                    // TODO: maintain client socket map after accept.
-                    Log.d(TAG, "Group owner push not wired yet; need client dial-in")
-                    false
+                val ok = if (isGroupOwner) {
+                    pushAsGroupOwner(payload)
                 } else {
-                    Socket().use { socket ->
-                        socket.connect(InetSocketAddress(host, PORT), 4_000)
-                        DataOutputStream(socket.getOutputStream()).use { out ->
-                            out.writeInt(MAGIC)
-                            out.writeInt(payload.size)
-                            out.write(payload)
-                            out.flush()
-                        }
-                    }
-                    Log.i(TAG, "Sent ${payload.size} bytes via Wi‑Fi Direct to $host")
+                    pushToGroupOwner(payload)
+                }
+                if (ok) {
+                    Log.i(TAG, "Sent ${payload.size} bytes via Wi‑Fi Direct")
                     com.blink.dtn.telemetry.TraceStore.stage(
                         messageId ?: "wifi_direct",
                         "WiFi.DirectSend",
                         com.blink.dtn.telemetry.detailsOf(
                             "bytes" to payload.size,
-                            "host" to host,
+                            "host" to (groupOwnerAddress ?: "go"),
+                            "asOwner" to isGroupOwner,
                             "experimental" to true
                         ),
                         visual = "📡 Wi‑Fi Direct (экспериментально)"
                     )
-                    true
                 }
+                ok
             } catch (e: Exception) {
                 Log.w(TAG, "Wi‑Fi Direct send failed: ${e.message}")
                 false
@@ -148,34 +148,136 @@ class WifiDirectTransport(
         }
     }
 
-    /** Call when this device becomes group owner to accept one framed payload (prototype). */
-    fun startAcceptLoopOnce(onPayload: (ByteArray) -> Unit) {
+    private fun pushToGroupOwner(payload: ByteArray): Boolean {
+        val host = groupOwnerAddress ?: return false
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(host, PORT), 4_000)
+            writeFramed(socket, payload)
+        }
+        return true
+    }
+
+    private fun pushAsGroupOwner(payload: ByteArray): Boolean {
+        val sockets = clientOut.values.toList()
+        if (sockets.isEmpty()) {
+            // No dialed-in clients yet — cannot push; BLE fallback.
+            Log.d(TAG, "GO has no client sockets yet")
+            return false
+        }
+        var any = false
+        for (socket in sockets) {
+            try {
+                if (socket.isClosed || !socket.isConnected) continue
+                writeFramed(socket, payload)
+                any = true
+            } catch (e: Exception) {
+                Log.w(TAG, "GO push to client failed: ${e.message}")
+                runCatching { socket.close() }
+                clientOut.entries.removeIf { it.value === socket }
+            }
+        }
+        return any
+    }
+
+    private fun writeFramed(socket: Socket, payload: ByteArray) {
+        // Do not close the socket — GO keeps clients for reverse push.
+        val out = DataOutputStream(socket.getOutputStream())
+        out.writeInt(MAGIC)
+        out.writeInt(payload.size)
+        out.write(payload)
+        out.flush()
+    }
+
+    private fun startAcceptLoop() {
         if (!listening.compareAndSet(false, true)) return
         Thread({
+            var server: ServerSocket? = null
             try {
-                ServerSocket(PORT).use { server ->
-                    server.soTimeout = 30_000
-                    val client = server.accept()
-                    client.getInputStream().use { raw ->
-                        val dis = java.io.DataInputStream(raw)
-                        val magic = dis.readInt()
-                        if (magic != MAGIC) {
-                            Log.w(TAG, "Bad magic $magic")
-                            return@use
-                        }
-                        val len = dis.readInt().coerceIn(0, 512 * 1024)
-                        val buf = ByteArray(len)
-                        dis.readFully(buf)
-                        onPayload(buf)
+                server = ServerSocket(PORT)
+                server.reuseAddress = true
+                Log.i(TAG, "Accept loop on port $PORT")
+                while (listening.get() && !Thread.currentThread().isInterrupted) {
+                    try {
+                        server.soTimeout = 15_000
+                        val client = server.accept()
+                        val remote = client.inetAddress?.hostAddress ?: "client"
+                        // Keep socket open for GO→client push; also read one or more frames.
+                        clientOut[remote] = client
+                        Thread({
+                            try {
+                                val dis = DataInputStream(client.getInputStream())
+                                while (listening.get() && !client.isClosed) {
+                                    val magic = dis.readInt()
+                                    if (magic != MAGIC) {
+                                        Log.w(TAG, "Bad magic $magic")
+                                        break
+                                    }
+                                    val len = dis.readInt().coerceIn(0, MAX_PAYLOAD)
+                                    val buf = ByteArray(len)
+                                    dis.readFully(buf)
+                                    Log.i(TAG, "RX ${buf.size} bytes on Wi‑Fi Direct from $remote")
+                                    onMeshPayload?.invoke(buf)
+                                }
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Client session end $remote: ${e.message}")
+                            } finally {
+                                clientOut.remove(remote)
+                                runCatching { client.close() }
+                            }
+                        }, "wifi-direct-client-$remote").start()
+                    } catch (_: java.net.SocketTimeoutException) {
+                        // keep looping while group is up
+                    } catch (e: Exception) {
+                        if (listening.get()) Log.w(TAG, "Accept: ${e.message}")
                     }
-                    client.close()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Accept loop: ${e.message}")
+                Log.w(TAG, "Accept loop failed: ${e.message}")
             } finally {
+                runCatching { server?.close() }
                 listening.set(false)
             }
         }, "wifi-direct-accept").start()
+    }
+
+    /**
+     * Non-GO: open a persistent session to GO so reverse push works, and so we
+     * can also receive if GO writes frames to us.
+     */
+    private fun ensureDialIn() {
+        if (isGroupOwner || groupOwnerAddress.isNullOrBlank()) return
+        if (clientOut.containsKey("go-session")) return
+        Thread({
+            try {
+                val host = groupOwnerAddress ?: return@Thread
+                val socket = Socket()
+                socket.connect(InetSocketAddress(host, PORT), 4_000)
+                clientOut["go-session"] = socket
+                // Register ourselves with a tiny hello (ignored on ingress when empty).
+                writeFramed(socket, ByteArray(0))
+                val dis = DataInputStream(socket.getInputStream())
+                while (listening.get() || groupFormed) {
+                    try {
+                        socket.soTimeout = 20_000
+                        val magic = dis.readInt()
+                        if (magic != MAGIC) break
+                        val len = dis.readInt().coerceIn(0, MAX_PAYLOAD)
+                        val buf = ByteArray(len)
+                        dis.readFully(buf)
+                        if (buf.isNotEmpty()) {
+                            Log.i(TAG, "RX ${buf.size} bytes from GO")
+                            onMeshPayload?.invoke(buf)
+                        }
+                    } catch (_: java.net.SocketTimeoutException) {
+                        if (!groupFormed) break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Dial-in session end: ${e.message}")
+            } finally {
+                clientOut.remove("go-session")?.let { runCatching { it.close() } }
+            }
+        }, "wifi-direct-dialin").start()
     }
 
     private fun registerReceiver() {
@@ -206,16 +308,20 @@ class WifiDirectTransport(
                             if (info == null || !info.groupFormed) {
                                 groupOwnerAddress = null
                                 isGroupOwner = false
+                                groupFormed = false
+                                listening.set(false)
+                                clientOut.values.forEach { runCatching { it.close() } }
+                                clientOut.clear()
                                 return@requestConnectionInfo
                             }
                             isGroupOwner = info.isGroupOwner
                             groupOwnerAddress = info.groupOwnerAddress?.hostAddress
+                            groupFormed = true
                             Log.i(TAG, "Group formed owner=$isGroupOwner go=$groupOwnerAddress")
                             if (isGroupOwner) {
-                                // Prototype RX: log only — DTN ingress wiring is TODO.
-                                startAcceptLoopOnce { bytes ->
-                                    Log.i(TAG, "RX ${bytes.size} bytes on Wi‑Fi Direct (not yet into DTN)")
-                                }
+                                startAcceptLoop()
+                            } else {
+                                ensureDialIn()
                             }
                         }
                     }

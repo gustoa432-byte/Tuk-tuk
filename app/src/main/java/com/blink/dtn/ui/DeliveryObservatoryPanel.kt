@@ -90,6 +90,14 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
             Text("Delivery Observatory", style = Typography.titleLarge, color = TextPrimary)
         }
         Text("Peers $peerCount · Queue $pending · traces ${traces.size}", color = TextSecondary, style = Typography.bodySmall)
+        val healthSummary = remember(traces.size) { DeliveryHealthSummary.fromRecentTraces() }
+        if (healthSummary.total > 0) {
+            Text(
+                "Delivery health ${healthSummary.successRatePct}% · доставлено ${healthSummary.delivered} · сбой ${healthSummary.failed}",
+                color = TextSecondary,
+                style = Typography.labelSmall
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -340,14 +348,42 @@ private fun StatsBlock(r: ObservatoryReport) {
 @Composable
 private fun DutyBlock(viewModel: BLinkViewModel) {
     val duty by com.blink.dtn.telemetry.MeshDutyTelemetry.snapshot.collectAsState()
+    val preset by com.blink.dtn.ble.MeshDutyPrefs.preset.collectAsState()
+    val health = remember(duty.writeAttempts, duty.sessionMs) {
+        DeliveryHealthSummary.fromRecentTraces()
+    }
     val budget = remember(duty.writeAttempts, duty.budgetDownshifts) {
         viewModel.bleMeshManager.writeBudgetSnapshot()
     }
+    val context = LocalContext.current
     Text("Нагрузка / батарея", style = Typography.titleMedium, color = TextPrimary)
     Text(
-        "Сессия ${(duty.sessionMs / 60_000)} мин · доказывает, что mesh не «съедает» телефон за час",
+        "Сессия ${(duty.sessionMs / 60_000)} мин · режим ${preset.labelRu}",
         color = TextSecondary,
         style = Typography.labelSmall
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Text("Пресет сети", style = Typography.labelMedium, color = TextPrimary)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        com.blink.dtn.ble.MeshDutyPreset.entries.forEach { p ->
+            Text(
+                p.labelRu,
+                color = if (preset == p) TextPrimary else TextSecondary,
+                style = Typography.labelSmall,
+                modifier = Modifier
+                    .clickable {
+                        viewModel.setDutyPreset(p)
+                        Toast.makeText(context, "Режим: ${p.labelRu}", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(4.dp)
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        "Здоровье доставки: ${health.successRatePct}% · ок ${health.delivered} · сбой ${health.failed} · в пути ${health.pending} (из ${health.total} следов)",
+        color = TextPrimary,
+        style = Typography.bodySmall
     )
     Spacer(modifier = Modifier.height(8.dp))
     val bat = duty.batterySamples.lastOrNull()

@@ -188,6 +188,13 @@ class BleMeshManager private constructor(
                     }
                 }
                 override fun defaultTtl() = DEFAULT_TTL
+                override suspend fun tryAlternateTransport(bytes: ByteArray, messageId: String): Boolean {
+                    val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
+                        ?: return false
+                    if (!wifi.isGroupReady()) return false
+                    return wifi.send(bytes, messageId = messageId)
+                }
+                override fun maxPeersPerBatch(): Int = MeshDutyPrefs.cadence().maxPeersPerBatch
             }
         )
     }
@@ -457,6 +464,7 @@ class BleMeshManager private constructor(
 
     fun startMesh() {
         try {
+            MeshDutyPrefs.init(context)
             if (!isMeshRunning.compareAndSet(false, true)) {
                 triggerRelay()
                 return
@@ -464,9 +472,13 @@ class BleMeshManager private constructor(
             if (!scope.isActive) {
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
+            val cadence = MeshDutyPrefs.cadence()
+            pool.setIdleTimeoutMs(cadence.gattIdleTimeoutMs)
+            keyExchange.setIntervalMs(cadence.keyExchangeIntervalMs)
             pool.startIdleCleanup()
             keyExchange.start()
             radio.start()
+            radio.applyCadence(cadence)
             relayEngine.start()
             enqueueProfileBroadcast()
         } catch (e: SecurityException) {
@@ -487,7 +499,29 @@ class BleMeshManager private constructor(
 
     fun attachTransportRegistry(registry: com.blink.dtn.transport.MeshTransportRegistry) {
         transportRegistry = registry
+        val wifi = registry.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
+        wifi?.onMeshPayload = { bytes ->
+            if (bytes.isNotEmpty()) {
+                try {
+                    injectEncryptedPayload(bytes)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Wi‑Fi Direct ingress failed: ${e.message}")
+                }
+            }
+        }
     }
+
+    /** Apply Economy / Norm / Max radio + pool cadence (hot). */
+    fun applyDutyPreset(preset: MeshDutyPreset) {
+        MeshDutyPrefs.set(context, preset)
+        val cadence = MeshDutyCadence.forPreset(preset)
+        radio.applyCadence(cadence)
+        pool.setIdleTimeoutMs(cadence.gattIdleTimeoutMs)
+        keyExchange.setIntervalMs(cadence.keyExchangeIntervalMs)
+        Log.i(TAG, "Duty preset → ${preset.labelRu}")
+    }
+
+    fun currentDutyPreset(): MeshDutyPreset = MeshDutyPrefs.current()
 
     fun stopMesh() {
         try {
@@ -516,6 +550,7 @@ class BleMeshManager private constructor(
     }
 
     fun injectEncryptedPayload(value: ByteArray) {
+        if (value.isEmpty()) return
         try {
             val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(value) ?: return
             val decoded = ingress.decodeWirePacket(jsonString)

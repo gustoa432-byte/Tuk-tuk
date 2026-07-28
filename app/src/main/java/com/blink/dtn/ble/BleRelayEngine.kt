@@ -37,6 +37,9 @@ internal class BleRelayEngine(
         fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null)
         fun emitTxResult(result: TxResult)
         fun defaultTtl(): Int
+        /** Prefer Wi‑Fi Direct hop when a group is up; false → fall back to BLE. */
+        suspend fun tryAlternateTransport(bytes: ByteArray, messageId: String): Boolean = false
+        fun maxPeersPerBatch(): Int = 6
     }
 
     private class TxBatch(val totalAttempts: Int) {
@@ -211,18 +214,21 @@ internal class BleRelayEngine(
         }
 
         if (peers.isEmpty()) {
-            // DTN: wait for devices, do not fail the message.
-            return
-        }
-
-        deps.trace(
-            message.id,
-            com.blink.dtn.telemetry.TraceStages.BLE_PEERS,
-            com.blink.dtn.telemetry.detailsOf(
-                "peersCount" to peers.size,
-                "nearbyDevices" to peers.joinToString(",") { it.address }
+            deps.trace(
+                message.id,
+                com.blink.dtn.telemetry.TraceStages.BLE_PEERS,
+                com.blink.dtn.telemetry.detailsOf("peersCount" to 0, "nearbyDevices" to "")
             )
-        )
+        } else {
+            deps.trace(
+                message.id,
+                com.blink.dtn.telemetry.TraceStages.BLE_PEERS,
+                com.blink.dtn.telemetry.detailsOf(
+                    "peersCount" to peers.size,
+                    "nearbyDevices" to peers.joinToString(",") { it.address }
+                )
+            )
+        }
 
         var networkMessage = message
         if (networkMessage.type == "PRIVATE" &&
@@ -310,9 +316,36 @@ internal class BleRelayEngine(
             return
         }
 
+        // Prefer denser Wi‑Fi Direct hop when a group exists; BLE remains fallback.
+        // Works even with zero BLE peers (group-only hop).
+        if (deps.tryAlternateTransport(bytes, message.id)) {
+            if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
+                deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
+            }
+            deps.trace(
+                message.id,
+                com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
+                com.blink.dtn.telemetry.detailsOf(
+                    "successes" to 1,
+                    "failures" to 0,
+                    "result" to "Success",
+                    "transport" to "wifi_direct"
+                ),
+                visual = "📡 Ушло по Wi‑Fi Direct"
+            )
+            deps.emitTxResult(TxResult.Success(message.id))
+            return
+        }
+
+        if (peers.isEmpty()) {
+            // DTN: wait for devices, do not fail the message.
+            messageBackoffMap[message.id] = now + 8_000L
+            return
+        }
+
         val validDevices = peers.filter { device ->
             now >= deps.peerBackoffUntil(device.address)
-        }
+        }.take(deps.maxPeersPerBatch().coerceAtLeast(1))
 
         Log.i(
             "ROUTE",
@@ -320,6 +353,10 @@ internal class BleRelayEngine(
         )
 
         if (validDevices.isEmpty()) {
+            // Keep PENDING so UI stays "отправляется" until neighbors appear or retries exhaust.
+            if (message.status == Message.STATUS_FAILED) {
+                deps.updateMessage(message.copy(status = Message.STATUS_PENDING))
+            }
             messageBackoffMap[message.id] = now + 5_000L
             return
         }
@@ -327,7 +364,10 @@ internal class BleRelayEngine(
         val batch = TxBatch(validDevices.size)
         activeBatches[message.id] = batch
         // Surface "у соседей" in chat UI while GATT writes are in progress.
-        if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
+        if (message.status == Message.STATUS_PENDING ||
+            message.status == Message.STATUS_FAILED ||
+            message.status == Message.STATUS_PENDING_KEY
+        ) {
             deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
         }
         batch.watchdogJob = scopeProvider().launch {

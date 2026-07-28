@@ -303,6 +303,7 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                         val timeString = if (dialog.lastTimestamp > 0) formatter.format(java.util.Date(dialog.lastTimestamp)) else ""
                         val title = peerListTitle(profile, dialog.displayName)
                         val isStranger = profile?.isStranger == true
+                        val trustBadge = profile?.trustBadgeRu()
 
                         Row(
                             modifier = Modifier
@@ -325,10 +326,10 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    if (isStranger) {
+                                    if (trustBadge != null) {
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "незнакомец",
+                                            text = trustBadge,
                                             color = TextSecondary,
                                             style = Typography.labelSmall,
                                             modifier = Modifier
@@ -337,6 +338,12 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                                         )
                                     }
                                 }
+                                Text(
+                                    text = "id ${profile?.shortId() ?: dialog.conversationId.take(8)}",
+                                    color = TextSecondary,
+                                    style = Typography.labelSmall,
+                                    maxLines = 1
+                                )
                                 if (!dialog.lastMessage.isNullOrEmpty()) {
                                     Text(
                                         text = dialog.lastMessage,
@@ -445,12 +452,36 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     val displayName = peerListTitle(profile, fallbackName)
     val isStranger = profile?.isStranger == true
     val isContact = profile == null || profile?.isContact == true
+    val needsQrVerify = profile?.isVerified != true
     var messageText by remember { mutableStateOf("") }
     var showRename by remember { mutableStateOf(false) }
     var renameDraft by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+
+    val verifyScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val scanned = result.contents
+        if (scanned != null && scanned.isNotBlank()) {
+            val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
+            val pk = json?.optString("pk", "")
+            if (json != null && !pk.isNullOrEmpty()) {
+                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
+                val claimedId = json.optString("id", "")
+                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
+                    Toast.makeText(context, "Неверный QR: ключ не совпадает с id", Toast.LENGTH_LONG).show()
+                } else if (derivedId != contactId) {
+                    Toast.makeText(context, "QR другого человека — не этого диалога", Toast.LENGTH_LONG).show()
+                } else {
+                    val nick = json.optString("n", "")
+                    viewModel.addScannedContact(derivedId, nick, pk)
+                    Toast.makeText(context, "Контакт проверен по QR", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "Нужен QR контакта TukTuk (с ключом)", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
         if (messages.isNotEmpty()) {
@@ -532,8 +563,21 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
-                if (isStranger) {
-                    Text("Запрос сообщения · незнакомец", style = Typography.labelSmall, color = TextSecondary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = profile?.trustBadgeRu() ?: "из сети",
+                        style = Typography.labelSmall,
+                        color = TextSecondary,
+                        modifier = Modifier
+                            .background(DividerColor, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "id ${(profile?.shortId() ?: contactId.take(8))}",
+                        style = Typography.labelSmall,
+                        color = TextSecondary
+                    )
                 }
             }
             Box {
@@ -598,7 +642,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     .padding(12.dp)
             ) {
                 Text(
-                    "Этот человек ещё не в контактах. Сообщения приходят, но вы можете принять или игнорировать запрос.",
+                    "Запрос сообщения от незнакомца. Ник — просто метка; смотрите id. Примите, игнорируйте или сверьте QR.",
                     color = TextSecondary,
                     style = Typography.bodySmall
                 )
@@ -612,6 +656,33 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     }) {
                         Text("Игнорировать", color = DangerColor, style = Typography.labelMedium)
                     }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        } else if (needsQrVerify) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceDark)
+                    .padding(12.dp)
+            ) {
+                Text(
+                    "Контакт из сети. Для семьи и близких сверьте QR — так вы закрепите ключ («проверен»).",
+                    color = TextSecondary,
+                    style = Typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                TukTukButton(onClick = {
+                    val options = ScanOptions()
+                    options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    options.setCameraId(0)
+                    options.setBeepEnabled(false)
+                    options.setBarcodeImageEnabled(true)
+                    options.setCaptureActivity(CustomScannerActivity::class.java)
+                    verifyScanLauncher.launch(options)
+                }) {
+                    Text("Сверить QR", color = TextPrimary, style = Typography.labelMedium)
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -632,7 +703,8 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                         msg = msg,
                         myNodeId = viewModel.myNodeId,
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
-                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
+                        onRetrySend = { viewModel.retryOutgoingMessage(msg.id) }
                     )
                 }
             }
@@ -666,6 +738,12 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Text(
+            "Общий чат — открытый мегафон: соседние узлы видят текст. Без группового шифрования.",
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+        )
 
         if (messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -684,7 +762,8 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
                         showSender = true,
                         onSenderClick = onPrivateChatRequested,
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
-                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
+                        onRetrySend = { viewModel.retryOutgoingMessage(msg.id) }
                     )
                 }
             }
@@ -754,7 +833,8 @@ fun MessageBubble(
     showSender: Boolean = false,
     onSenderClick: ((String) -> Unit)? = null,
     onDeleteLocal: (() -> Unit)? = null,
-    onCancelSend: (() -> Unit)? = null
+    onCancelSend: (() -> Unit)? = null,
+    onRetrySend: (() -> Unit)? = null
 ) {
     val isMine = msg.senderId == myNodeId || msg.isMine
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -769,7 +849,11 @@ fun MessageBubble(
         )
 
     if (showVoyage) {
-        MessageVoyageDialog(msg = msg, onDismiss = { showVoyage = false })
+        MessageVoyageDialog(
+            msg = msg,
+            onDismiss = { showVoyage = false },
+            onRetry = if (msg.status == Message.STATUS_FAILED) onRetrySend else null
+        )
     }
 
     if (showActions) {
@@ -916,7 +1000,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                 val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
                 val claimedId = json.optString("id", "")
                 if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
-                    Toast.makeText(context, "Invalid QR: key does not match ID", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Неверный QR: ключ не совпадает с id", Toast.LENGTH_LONG).show()
                 } else {
                     val nick = json.optString("n", "")
                     viewModel.addScannedContact(derivedId, nick, pk)
@@ -1072,6 +1156,50 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             Text("Сканировать QR", color = TextPrimary, style = Typography.titleMedium)
         }
 
+        Spacer(modifier = Modifier.height(28.dp))
+        Text("Режим сети (батарея)", style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        val dutyPreset by com.blink.dtn.ble.MeshDutyPrefs.preset.collectAsState()
+        LaunchedEffect(Unit) {
+            com.blink.dtn.ble.MeshDutyPrefs.init(context)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            com.blink.dtn.ble.MeshDutyPreset.entries.forEach { p ->
+                val selected = dutyPreset == p
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) DividerColor else SurfaceDark)
+                        .bounceClick {
+                            viewModel.setDutyPreset(p)
+                            Toast.makeText(context, "Режим: ${p.labelRu}", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        p.labelRu,
+                        color = if (selected) TextPrimary else TextSecondary,
+                        style = Typography.labelSmall
+                    )
+                }
+            }
+        }
+        Text(
+            when (dutyPreset) {
+                com.blink.dtn.ble.MeshDutyPreset.ECONOMY -> "Редкий скан — сеть живёт, телефон не садится за час."
+                com.blink.dtn.ble.MeshDutyPreset.MAX -> "Плотный скан — быстрее соседи, выше расход."
+                else -> "Баланс обнаружения и батареи."
+            },
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+
         Spacer(modifier = Modifier.weight(1f))
         Text("Язык", style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
@@ -1223,8 +1351,11 @@ fun InfoContent(compact: Boolean = false) {
         Text("Конфиденциальность (кратко)", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Диалоги — личные, с шифрованием на устройстве. Общий чат — открытый «мегафон»: его видят соседи по сети. " +
-                "Ник — просто метка, не уникальный id. Доверие к контакту — через QR. Подробнее: docs/THREAT_MODEL.md в исходниках.",
+            "• Диалоги — личные: шифрование на устройстве, ACK от адресата.\n" +
+                "• Общий чат — открытый мегафон: его читают соседи по сети.\n" +
+                "• Ник — метка, не уникальный id (смотрите короткий id).\n" +
+                "• Для семьи сверяйте QR — так контакт станет «проверен».\n" +
+                "Подробнее: docs/THREAT_MODEL.md в исходниках.",
             style = quietStyle,
             color = TextSecondary
         )
