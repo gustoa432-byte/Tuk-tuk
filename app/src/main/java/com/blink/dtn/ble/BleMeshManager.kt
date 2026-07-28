@@ -1,35 +1,39 @@
 package com.blink.dtn.ble
 
-import kotlinx.coroutines.flow.receiveAsFlow
 import android.annotation.SuppressLint
-import android.bluetooth.*
-import android.bluetooth.le.*
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.content.Context
-import android.os.Build
-import android.os.ParcelUuid
 import android.util.Log
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.Message
 import com.blink.dtn.db.SeenPacket
-import com.blink.dtn.db.BlockedUser
-import com.blink.dtn.security.SecurityConfig
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
-sealed class TxResult {
-    data class Success(val msgId: String) : TxResult()
-    data class Failure(val msgId: String, val failedMacs: List<String> = emptyList()) : TxResult()
-}
-
-@SuppressLint("MissingPermission") // Suppressed because permissions are checked before calling
+/**
+ * Facade over the BLE mesh transport stack.
+ *
+ * Layers (bottom → top):
+ * 1. Radio / discovery — [BleRadioFront] (GATT server, advertise, scan)
+ * 2. Peer table + GATT pool — [BlePeerTable], [BleConnectionPool]
+ * 3. Wire framing — [BleChunkCodec], [BleChunkReassembler], [BleWriteBudget], [BleGattTxQueue]
+ * 4. Client TX — [BleGattClientTx]
+ * 5. Relay / store-and-forward — [BleRelayEngine]
+ * 6. Ingress / policy — [BleIngressHandler] (dedup, ACK flood vs consume, identity)
+ * 7. Maintenance — [BleKeyExchangeMaintenance]
+ *
+ * This class owns lifecycle, UI toasts/notifications, DB enqueue, and wiring only.
+ */
+@SuppressLint("MissingPermission") // Permissions are checked before calling into the mesh
 class BleMeshManager private constructor(
     private val context: Context,
     private val dao: BLinkDao,
@@ -53,155 +57,23 @@ class BleMeshManager private constructor(
         )
     )
 
-    private data class DecodedWirePacket(
-        val message: Message,
-        val dedupKey: String
+    private val _txResults = kotlinx.coroutines.channels.Channel<TxResult>(
+        kotlinx.coroutines.channels.Channel.UNLIMITED
     )
-
-    private class TxBatch(val totalAttempts: Int) {
-        val successes = java.util.concurrent.atomic.AtomicInteger(0)
-        val failures = java.util.concurrent.atomic.AtomicInteger(0)
-        val failedMacs = java.util.concurrent.ConcurrentLinkedQueue<String>()
-        val isResolved = java.util.concurrent.atomic.AtomicBoolean(false)
-        var watchdogJob: kotlinx.coroutines.Job? = null
-    }
-    private val messageBackoffMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val activeGattConnections = java.util.concurrent.ConcurrentHashMap<String, BluetoothGatt>()
-    private val activeMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
-    private val connectionLastUsedMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private var idleCleanupJob: Job? = null
-    private var keyRequestRetryJob: Job? = null
-    private val identityRequestBackoffMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val relayTrigger = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
-
-    fun triggerRelay() {
-        relayTrigger.trySend(Unit)
-    }
-    private val activeBatches = ConcurrentHashMap<String, TxBatch>()
-
-
-    private fun safeEmitResult(result: TxResult) {
-        if (result is TxResult.Success) {
-            android.util.Log.i("ROUTE", "Message ${result.msgId} TxResult: Success")
-        } else if (result is TxResult.Failure) {
-            android.util.Log.e("ROUTE", "Message ${result.msgId} TxResult: Failure. Failed MACs: ${result.failedMacs}")
-        }
-        val channelResult = _txResults.trySend(result)
-        if (channelResult.isClosed) {
-            val exception = channelResult.exceptionOrNull()
-
-            Log.w("DTN", "Channel closed, dropped result: $result, exception: ${exception?.message}")
-        }
-    }
-
-    private fun handleOperationResult(messageId: String, mac: String?, success: Boolean, softRetry: Boolean = false) {
-        if (mac != null && !success) {
-            setPeerBackoff(mac, if (softRetry) 500L else 10_000L)
-        }
-        val batch = activeBatches[messageId]
-        if (batch == null) {
-            if (success) {
-                safeEmitResult(TxResult.Success(messageId))
-            } else {
-                messageBackoffMap[messageId] = System.currentTimeMillis() + if (softRetry) 500L else 10_000L
-                safeEmitResult(TxResult.Failure(messageId, if (mac != null) listOf(mac) else emptyList()))
-            }
-            return
-        }
-        
-        if (success) {
-            batch.successes.incrementAndGet()
-        } else {
-            batch.failures.incrementAndGet()
-            if (mac != null) {
-                batch.failedMacs.add(mac)
-            }
-        }
-        
-        val s = batch.successes.get()
-        val f = batch.failures.get()
-        if (s + f >= batch.totalAttempts) {
-            if (batch.isResolved.compareAndSet(false, true)) {
-                batch.watchdogJob?.cancel()
-                activeBatches.remove(messageId)
-                if (s > 0) {
-                    trace(
-                        messageId,
-                        com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
-                        com.blink.dtn.telemetry.detailsOf(
-                            "successes" to s,
-                            "failures" to f,
-                            "result" to "Success"
-                        ),
-                        visual = "📤 Передано соседям"
-                    )
-                    safeEmitResult(TxResult.Success(messageId))
-                } else {
-                    trace(
-                        messageId,
-                        com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
-                        com.blink.dtn.telemetry.detailsOf(
-                            "successes" to s,
-                            "failures" to f,
-                            "failedMacs" to batch.failedMacs.joinToString(","),
-                            "result" to "Failure"
-                        )
-                    )
-                    messageBackoffMap[messageId] = System.currentTimeMillis() + 10_000L
-                    safeEmitResult(TxResult.Failure(messageId, batch.failedMacs.toList()))
-                }
-            }
-        }
-    }
-
-    private val _txResults = kotlinx.coroutines.channels.Channel<TxResult>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     val txResults = _txResults.receiveAsFlow()
 
-    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    
-    private var gattServer: BluetoothGattServer? = null
-    private var advertiser: BluetoothLeAdvertiser? = null
-    private var scanner: BluetoothLeScanner? = null
-    
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var scanJob: Job? = null
-    private var relayJob: Job? = null
-    private val isMeshRunning = java.util.concurrent.atomic.AtomicBoolean(false)
-    
-    // The relay queue
-        private val txBackoffMap = ConcurrentHashMap<String, Long>()
-    private val connectedGattClients = ConcurrentHashMap.newKeySet<BluetoothDevice>()
-    private val discoveredDevices = ConcurrentHashMap.newKeySet<BluetoothDevice>()
+    private val isMeshRunning = AtomicBoolean(false)
 
-    private data class ChunkBufferEntry(
-        val timestamp: Long,
-        val chunks: MutableMap<Int, ByteArray>,
-        var watchdogJob: kotlinx.coroutines.Job? = null,
-        val isReassembled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
-    )
-    private val chunkBuffers = ConcurrentHashMap<Int, ChunkBufferEntry>()
-    private val activeRxBuffers = java.util.concurrent.atomic.AtomicInteger(0)
-    private val evictionQueue = java.util.concurrent.ConcurrentLinkedQueue<Int>()
+    private val peers = BlePeerTable()
+    val peerCount: StateFlow<Int> = peers.peerCount
+    val activePeers: StateFlow<List<String>> = peers.activePeers
 
+    private val pool = BleConnectionPool(scopeProvider = { scope })
 
-
-    private fun cleanupEvictionQueue() {
-        while (true) {
-            val peekedId = evictionQueue.peek() ?: break
-            if (!chunkBuffers.containsKey(peekedId)) {
-                evictionQueue.remove(peekedId)
-            } else {
-                break
-            }
-        }
-    }
-
-    private fun showToast(msg: String) {
-        scope.launch(Dispatchers.Main) {
-            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
+    private var currentNick: String = "User"
+    private var currentIsVip: Boolean = false
+    private val notificationAdapter = MeshNotificationAdapter(context)
 
     private val writeBudget = BleWriteBudget()
     private val txQueue = BleGattTxQueue(
@@ -236,76 +108,166 @@ class BleMeshManager private constructor(
                     com.blink.dtn.telemetry.detailsOf(*pairs)
                 )
                 com.blink.dtn.telemetry.PeerDirectory.noteError(address)
-                // Peer cap lives in writeBudget; next encodeMtu() uses it automatically.
             }
 
             override fun onPeerWriteResult(messageId: String, address: String, success: Boolean, softRetry: Boolean) {
-                handleOperationResult(messageId, address, success, softRetry)
+                relayEngine.onPeerWriteResult(messageId, address, success, softRetry)
             }
 
             override fun disconnectGatt(gatt: BluetoothGatt) {
-                this@BleMeshManager.disconnectGatt(gatt)
+                pool.disconnect(gatt)
             }
         }
     )
 
-    private fun clearPendingOperationsForDevice(address: String) {
-        txQueue.clearDevice(address)
+    private val reassembler = BleChunkReassembler(scopeProvider = { scope })
+
+    private val gattClientTx: BleGattClientTx by lazy {
+        BleGattClientTx(
+            context = context,
+            writeBudget = writeBudget,
+            txQueue = txQueue,
+            deps = object : BleGattClientTx.Deps {
+                override fun activeGatt() = pool.connections
+                override fun activeMtu() = pool.mtuByAddress
+                override fun connectionLastUsed() = pool.lastUsedAt
+                override fun onPeerDisconnected(address: String) {
+                    peers.noteDisconnected(address)
+                }
+                override fun clearPendingOps(address: String) = txQueue.clearDevice(address)
+                override fun disconnectGatt(gatt: BluetoothGatt) = pool.disconnect(gatt)
+                override fun onWriteResult(messageId: String, address: String, success: Boolean, softRetry: Boolean) {
+                    relayEngine.onPeerWriteResult(messageId, address, success, softRetry)
+                }
+                override fun trace(messageId: String, stage: String, details: Map<String, String>, visual: String?) {
+                    this@BleMeshManager.trace(messageId, stage, details, visual)
+                }
+                override fun serviceUuid() = SERVICE_UUID
+                override fun characteristicUuid() = CHARACTERISTIC_UUID
+            }
+        )
     }
 
-    private fun resetTransportState() {
-        activeBatches.values.forEach { it.watchdogJob?.cancel() }
-        activeBatches.clear()
-        messageBackoffMap.clear()
-        txBackoffMap.clear()
-
-        activeGattConnections.values.toList().forEach { disconnectGatt(it) }
-        activeGattConnections.clear()
-        activeMtuMap.clear()
-        connectionLastUsedMap.clear()
-
-        txQueue.clearAll()
-        writeBudget.clearAll()
-        connectedGattClients.clear()
-        discoveredDevices.clear()
-        _peerCount.value = 0
-        _activePeers.value = emptyList()
-
-        chunkBuffers.values.forEach { it.watchdogJob?.cancel() }
-        chunkBuffers.clear()
-        activeRxBuffers.set(0)
-        evictionQueue.clear()
+    private val relayEngine: BleRelayEngine by lazy {
+        BleRelayEngine(
+            scopeProvider = { scope },
+            deps = object : BleRelayEngine.Deps {
+                override suspend fun queuedMessages() = dao.getQueuedMessages()
+                override fun peerDevices() = peers.snapshot()
+                override fun peerBackoffUntil(mac: String) = peers.backoffUntil(mac)
+                override fun myNodeId() = myUniqueNodeId
+                override fun currentNick() = currentNick
+                override suspend fun profile(targetId: String) = dao.getProfileById(targetId)
+                override suspend fun updateMessage(msg: Message) { dao.updateMessageInternal(msg) }
+                override fun enqueueMessage(msg: Message) { this@BleMeshManager.enqueueMessage(msg) }
+                override fun sendPayload(device: BluetoothDevice, bytes: ByteArray, messageId: String) {
+                    gattClientTx.send(device, bytes, messageId)
+                }
+                override fun setPeerBackoff(mac: String, durationMs: Long) {
+                    peers.setBackoff(mac, durationMs)
+                }
+                override fun trace(messageId: String, stage: String, details: Map<String, String>, visual: String?) {
+                    this@BleMeshManager.trace(messageId, stage, details, visual)
+                }
+                override fun emitTxResult(result: TxResult) {
+                    when (result) {
+                        is TxResult.Success ->
+                            Log.i("ROUTE", "Message ${result.msgId} TxResult: Success")
+                        is TxResult.Failure ->
+                            Log.e("ROUTE", "Message ${result.msgId} TxResult: Failure. Failed MACs: ${result.failedMacs}")
+                    }
+                    val channelResult = _txResults.trySend(result)
+                    if (channelResult.isClosed) {
+                        Log.w("DTN", "Channel closed, dropped result: $result, exception: ${channelResult.exceptionOrNull()?.message}")
+                    }
+                }
+                override fun defaultTtl() = DEFAULT_TTL
+            }
+        )
     }
 
-    private fun disconnectGatt(gatt: BluetoothGatt) {
-        try {
-            val address = gatt.device.address
-            activeGattConnections.remove(address)
-            // Keep writeBudget for this MAC — OEM attribute caps survive reconnect.
-            activeMtuMap.remove(address)
-            gatt.disconnect()
-            gatt.close()
-        } catch (e: Exception) {
-            // ignore
+    private val ingress: BleIngressHandler by lazy {
+        BleIngressHandler(
+            dao = dao,
+            myNodeId = myUniqueNodeId,
+            scopeProvider = { scope },
+            deps = object : BleIngressHandler.Deps {
+                override fun currentNick() = currentNick
+                override fun enqueueMessage(msg: Message) = this@BleMeshManager.enqueueMessage(msg)
+                override fun enqueueProfileBroadcast() = this@BleMeshManager.enqueueProfileBroadcast()
+                override fun notifyIncoming(packet: Message) = triggerNotification(packet)
+                override fun ensureTrace(messageId: String, type: String?, senderId: String?, targetId: String?) {
+                    this@BleMeshManager.ensureTrace(messageId, type, senderId, targetId)
+                }
+                override fun trace(messageId: String, stage: String, details: Map<String, String>, visual: String?) {
+                    this@BleMeshManager.trace(messageId, stage, details, visual)
+                }
+                override fun markSeen(dedupKey: String): Boolean = recentSeenIds.add(dedupKey)
+            }
+        )
+    }
+
+    private val radio = BleRadioFront(
+        context = context,
+        scopeProvider = { scope },
+        deps = object : BleRadioFront.Deps {
+            override fun serviceUuid() = SERVICE_UUID
+            override fun characteristicUuid() = CHARACTERISTIC_UUID
+            override fun noteDiscovered(device: BluetoothDevice) = peers.noteDiscovered(device)
+            override fun noteGattClientConnected(device: BluetoothDevice) =
+                peers.noteGattClientConnected(device)
+            override fun noteGattClientDisconnected(device: BluetoothDevice) {
+                peers.noteDisconnected(device.address)
+            }
+            override fun onNewPeerFromScan(device: BluetoothDevice) {
+                triggerRelay()
+                enqueueProfileBroadcast()
+            }
+            override fun onNewPeerFromGatt(device: BluetoothDevice) {
+                triggerRelay()
+            }
+            override fun onWriteValue(device: BluetoothDevice, value: ByteArray) {
+                handleIncomingWrite(device, value)
+            }
+            override fun showToast(msg: String) = this@BleMeshManager.showToast(msg)
+        }
+    )
+
+    private val keyExchange = BleKeyExchangeMaintenance(
+        dao = dao,
+        myNodeId = myUniqueNodeId,
+        scopeProvider = { scope },
+        deps = object : BleKeyExchangeMaintenance.Deps {
+            override fun currentNick() = currentNick
+            override fun defaultTtl() = DEFAULT_TTL
+            override fun enqueueMessage(msg: Message) = this@BleMeshManager.enqueueMessage(msg)
+        }
+    )
+
+    fun triggerRelay() {
+        relayEngine.trigger()
+    }
+
+    fun setPeerBackoff(mac: String, durationMs: Long) {
+        peers.setBackoff(mac, durationMs)
+    }
+
+    fun isPeerBackedOff(mac: String): Boolean = peers.isBackedOff(mac)
+
+    private fun showToast(msg: String) {
+        scope.launch(Dispatchers.Main) {
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
-    private val _peerCount = MutableStateFlow(0)
-    fun setPeerBackoff(mac: String, durationMs: Long) {
-        txBackoffMap[mac] = System.currentTimeMillis() + durationMs
+    private fun resetTransportState() {
+        relayEngine.clear()
+        pool.clear()
+        txQueue.clearAll()
+        writeBudget.clearAll()
+        reassembler.clear()
+        peers.clear()
     }
-
-    fun isPeerBackedOff(mac: String): Boolean {
-        val retryTime = txBackoffMap[mac] ?: 0L
-        return System.currentTimeMillis() < retryTime
-    }
-
-    private val _activePeers = MutableStateFlow<List<String>>(emptyList())
-    val activePeers: StateFlow<List<String>> = _activePeers.asStateFlow()
-    val peerCount: StateFlow<Int> = _peerCount.asStateFlow()
-    private var currentNick: String = "User"
-    private var currentIsVip: Boolean = false
-    private val notificationAdapter = MeshNotificationAdapter(context)
 
     fun updateMyProfile(nick: String, isVip: Boolean) {
         currentNick = nick
@@ -342,18 +304,23 @@ class BleMeshManager private constructor(
         const val DEFAULT_TTL = 7
         val SERVICE_UUID: UUID = BleMeshUuids.SERVICE
         val CHARACTERISTIC_UUID: UUID = BleMeshUuids.CHARACTERISTIC
-        
+
         @Volatile
         private var INSTANCE: BleMeshManager? = null
-        
+
         fun getInstance(context: Context, dao: BLinkDao, myUniqueNodeId: String): BleMeshManager {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: BleMeshManager(context.applicationContext, dao, myUniqueNodeId).also { INSTANCE = it }
             }
         }
     }
-    
-    private fun ensureTrace(messageId: String, type: String? = null, senderId: String? = null, targetId: String? = null) {
+
+    private fun ensureTrace(
+        messageId: String,
+        type: String? = null,
+        senderId: String? = null,
+        targetId: String? = null
+    ) {
         if (com.blink.dtn.telemetry.TraceStore.getByMessageId(messageId) != null) return
         com.blink.dtn.telemetry.TraceStore.begin(
             messageId = messageId,
@@ -363,7 +330,12 @@ class BleMeshManager private constructor(
         )
     }
 
-    private fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null) {
+    private fun trace(
+        messageId: String,
+        stage: String,
+        details: Map<String, String> = emptyMap(),
+        visual: String? = null
+    ) {
         ensureTrace(messageId)
         com.blink.dtn.telemetry.TraceStore.stage(messageId, stage, details, visual)
     }
@@ -379,7 +351,7 @@ class BleMeshManager private constructor(
             if (message.senderId == myUniqueNodeId) {
                 dao.insertSeenPacket(SeenPacket(message.id, System.currentTimeMillis()))
             }
-            val updatedMsg = message.copy(status = com.blink.dtn.db.Message.STATUS_PENDING)
+            val updatedMsg = message.copy(status = Message.STATUS_PENDING)
             val existing = dao.getMessageById(updatedMsg.id)
             if (existing == null) {
                 if (shouldStoreAsRelayPacket(updatedMsg)) {
@@ -394,7 +366,7 @@ class BleMeshManager private constructor(
                     dao.updateMessageInternal(
                         existing.copy(
                             ttl = updatedMsg.ttl,
-                            status = com.blink.dtn.db.Message.STATUS_PENDING
+                            status = Message.STATUS_PENDING
                         )
                     )
                 } else if (userVisible &&
@@ -426,7 +398,7 @@ class BleMeshManager private constructor(
                 ),
                 visual = if (updatedMsg.senderId == myUniqueNodeId) "📤 В очереди на отправку" else "🌫 В relay-очереди"
             )
-            android.util.Log.d("BLE_QUEUE", "MessageId=${updatedMsg.id} Type=${updatedMsg.type} Receiver=${updatedMsg.targetId ?: "null"} RetryCount=${updatedMsg.retryCount}")
+            Log.d("BLE_QUEUE", "MessageId=${updatedMsg.id} Type=${updatedMsg.type} Receiver=${updatedMsg.targetId ?: "null"} RetryCount=${updatedMsg.retryCount}")
             triggerRelay()
         }
     }
@@ -445,9 +417,7 @@ class BleMeshManager private constructor(
             msg.status == Message.STATUS_FAILED
         if (!cancellable) return false
 
-        activeBatches[messageId]?.watchdogJob?.cancel()
-        activeBatches.remove(messageId)
-        messageBackoffMap.remove(messageId)
+        relayEngine.dropBatch(messageId)
 
         txQueue.forEachQueue { queue ->
             val it = queue.iterator()
@@ -468,71 +438,15 @@ class BleMeshManager private constructor(
 
     private fun shouldStoreAsRelayPacket(message: Message): Boolean {
         if (message.isAck || message.type == "ACK") return true
-        if (message.type == "IDENTITY_ANNOUNCEMENT" || message.type == "IDENTITY_REQUEST" || message.type == "SYSTEM_PROFILE") return true
+        if (message.type == "IDENTITY_ANNOUNCEMENT" ||
+            message.type == "IDENTITY_REQUEST" ||
+            message.type == "SYSTEM_PROFILE"
+        ) {
+            return true
+        }
         return message.type == "PRIVATE" &&
             message.senderId != myUniqueNodeId &&
             message.targetId != myUniqueNodeId
-    }
-
-    private fun startIdleCleanupLoop() {
-        idleCleanupJob?.cancel()
-        idleCleanupJob = scope.launch {
-            while (isActive) {
-                delay(10000)
-                val now = System.currentTimeMillis()
-                val timeoutMs = 60_000L
-                for ((address, lastUsed) in connectionLastUsedMap.entries) {
-                    if (now - lastUsed > timeoutMs) {
-                        Log.d("BLE_TX", "GATT Idle timeout for $address")
-                        val gatt = activeGattConnections[address]
-                        if (gatt != null) {
-                            disconnectGatt(gatt)
-                        }
-                        connectionLastUsedMap.remove(address)
-                    }
-                }
-            }
-        }
-    }
-
-    // Messages stored with STATUS_PENDING_KEY are not picked up by the relay TX queue
-    // (which selects status IN (0,1)); they only revive when an IDENTITY_ANNOUNCEMENT for
-    // the target arrives. Since the initial IDENTITY_REQUEST is sent once and BLE flooding
-    // is lossy, periodically re-request the identity for any peer we still lack a key for.
-    private fun startKeyRequestRetryLoop() {
-        keyRequestRetryJob?.cancel()
-        keyRequestRetryJob = scope.launch {
-            while (isActive) {
-                delay(20000)
-                try {
-                    val targets = dao.getPendingKeyTargets()
-                    val now = System.currentTimeMillis()
-                    for (targetId in targets) {
-                        val profile = dao.getProfileById(targetId)
-                        if (profile != null && profile.publicKey.isNotEmpty()) continue
-
-                        val lastRequest = identityRequestBackoffMap[targetId] ?: 0L
-                        if (now - lastRequest < 20000) continue
-                        identityRequestBackoffMap[targetId] = now
-
-                        val req = com.blink.dtn.db.Message(
-                            id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
-                            type = "IDENTITY_REQUEST",
-                            senderId = myUniqueNodeId,
-                            senderNick = currentNick,
-                            targetId = targetId,
-                            text = "",
-                            room = "system",
-                            timestamp = System.currentTimeMillis(),
-                            ttl = DEFAULT_TTL
-                        )
-                        enqueueMessage(req)
-                    }
-                } catch (e: Exception) {
-                    Log.e("DTN", "Key request retry loop error: ${e.message}")
-                }
-            }
-        }
     }
 
     fun startMesh() {
@@ -544,12 +458,10 @@ class BleMeshManager private constructor(
             if (!scope.isActive) {
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
-            startIdleCleanupLoop()
-            startKeyRequestRetryLoop()
-            startGattServer()
-            startAdvertising()
-            startScanningCycle()
-            startRelayLoop()
+            pool.startIdleCleanup()
+            keyExchange.start()
+            radio.start()
+            relayEngine.start()
             enqueueProfileBroadcast()
         } catch (e: SecurityException) {
             isMeshRunning.set(false)
@@ -559,20 +471,14 @@ class BleMeshManager private constructor(
             Log.e("DTN", "Exception starting mesh: ${e.message}")
         }
     }
-    
+
     fun stopMesh() {
         try {
             isMeshRunning.set(false)
-            scanJob?.cancel()
-            relayJob?.cancel()
-            idleCleanupJob?.cancel()
-            keyRequestRetryJob?.cancel()
-            scanner?.stopScan(scanCallback)
-            advertiser?.stopAdvertising(advertiseCallback)
-            gattServer?.close()
-            gattServer = null
-            advertiser = null
-            scanner = null
+            radio.stop()
+            relayEngine.stop()
+            pool.stopIdleCleanup()
+            keyExchange.stop()
             resetTransportState()
             scope.cancel()
         } catch (e: SecurityException) {
@@ -580,919 +486,25 @@ class BleMeshManager private constructor(
         }
     }
 
-    private fun startGattServer() {
-        try {
-            gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
-            val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-            val characteristic = BluetoothGattCharacteristic(
-                CHARACTERISTIC_UUID,
-                BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
-                BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
-            )
-            service.addCharacteristic(characteristic)
-            gattServer?.addService(service)
-        } catch (e: SecurityException) {
-            Log.e("DTN", "SecurityException in startGattServer: ${e.message}")
-        }
-    }
-
-    private fun startAdvertising() {
-        advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-            .setConnectable(true)
-            .setTimeout(0)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-            .build()
-            
-        val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
-            
-        try {
-            advertiser?.startAdvertising(settings, data, advertiseCallback)
-        } catch (e: SecurityException) {
-            Log.e("DTN", "SecurityException in startAdvertising: ${e.message}")
-        }
-    }
-
-    private fun startScanningCycle() {
-        scanner = bluetoothAdapter?.bluetoothLeScanner
-        scanJob?.cancel()
-        scanJob = scope.launch {
-            val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
-            val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
-            
-            while (isActive) {
-                try {
-                    scanner?.startScan(filters, settings, scanCallback)
-                } catch (e: SecurityException) {
-                    Log.e("DTN", "SecurityException in startScanning: ${e.message}")
-                }
-                
-                delay(10000) // Scan for 10 seconds
-                
-                try {
-                    scanner?.stopScan(scanCallback)
-                } catch (e: SecurityException) {
-                    Log.e("DTN", "SecurityException in stopScanning: ${e.message}")
-                }
-                
-                // Optional: clear stale devices occasionally
-                // discoveredDevices.clear()
-                
-                delay(20000) // Sleep for 20 seconds
-            }
-        }
-    }
-
-    private fun startRelayLoop() {
-        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
-            Log.e("ROUTE", "Exception in relay loop: ${exception.message}")
-        }
-
-        relayJob?.cancel()
-        relayJob = scope.launch(exceptionHandler) {
-            while (isActive) {
-                val messages = dao.getQueuedMessages()
-                val now = System.currentTimeMillis()
-                var selectedMessage: com.blink.dtn.db.Message? = null
-                var nextWakeTime = Long.MAX_VALUE
-                
-                for (msg in messages) {
-                    if (activeBatches.containsKey(msg.id)) continue
-                    val backoff = messageBackoffMap[msg.id] ?: 0L
-                    if (now >= backoff) {
-                        selectedMessage = msg
-                        break
-                    } else if (backoff < nextWakeTime) {
-                        nextWakeTime = backoff
-                    }
-                }
-                
-                val message = selectedMessage
-                if (message == null) {
-                    // Calculate wait time
-                    var waitTime = 15000L // default fallback
-                    if (nextWakeTime != Long.MAX_VALUE) {
-                        waitTime = (nextWakeTime - now).coerceIn(100L, 15000L)
-                    }
-                    kotlinx.coroutines.withTimeoutOrNull(waitTime) {
-                        relayTrigger.receive()
-                    }
-                    delay(200) // debounce
-                    continue
-                }
-                
-                Log.d("ROUTE", "Processing message ${message.id} type=${message.type}")
-
-                trace(
-                    message.id,
-                    com.blink.dtn.telemetry.TraceStages.RELAY_PROCESS,
-                    com.blink.dtn.telemetry.detailsOf(
-                        "type" to message.type,
-                        "ttl" to message.ttl,
-                        "retryCount" to message.retryCount,
-                        "peersCount" to discoveredDevices.size
-                    ),
-                    visual = "🌫 Распыляется по сети"
-                )
-
-                val messageTtlMs = 48 * 60 * 60 * 1000L
-                if (System.currentTimeMillis() - message.timestamp > messageTtlMs || message.ttl <= 0) {
-                    Log.w("ROUTE", "Message ${message.id} expired or TTL <= 0")
-                    com.blink.dtn.telemetry.TraceStore.finish(
-                        message.id,
-                        "Expired",
-                        com.blink.dtn.telemetry.detailsOf("ttl" to message.ttl, "ageMs" to (System.currentTimeMillis() - message.timestamp))
-                    )
-                    safeEmitResult(TxResult.Failure(message.id, emptyList()))
-                    continue
-                }
-                
-                if (discoveredDevices.isEmpty()) {
-                    // DTN: Just wait for devices, do not fail
-                    continue
-                }
-
-                trace(
-                    message.id,
-                    com.blink.dtn.telemetry.TraceStages.BLE_PEERS,
-                    com.blink.dtn.telemetry.detailsOf(
-                        "peersCount" to discoveredDevices.size,
-                        "nearbyDevices" to discoveredDevices.joinToString(",") { it.address }
-                    )
-                )
-                
-                var networkMessage = message
-                if (networkMessage.type == "PRIVATE" && networkMessage.senderId == myUniqueNodeId && networkMessage.text.isNotEmpty()) {
-                    val targetId = networkMessage.targetId
-                    if (targetId != null) {
-                        val profile = dao.getProfileById(targetId)
-                        if (profile != null && profile.publicKey.isNotEmpty()) {
-                            val encStart = System.currentTimeMillis()
-                            trace(
-                                networkMessage.id,
-                                com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_START,
-                                com.blink.dtn.telemetry.detailsOf(
-                                    "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(profile.publicKey),
-                                    "plainUtf8Bytes" to networkMessage.text.toByteArray(Charsets.UTF_8).size
-                                ),
-                                visual = "🔐 Шифрование"
-                            )
-                            val encryptedText = com.blink.dtn.crypto.RsaUtils.encryptAsymmetric(networkMessage.text, profile.publicKey)
-                            if (encryptedText.isEmpty()) {
-                                Log.e("ROUTE", "Private encryption failed for ${networkMessage.id}; backing off")
-                                trace(
-                                    networkMessage.id,
-                                    com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_FAIL,
-                                    com.blink.dtn.telemetry.detailsOf(
-                                        "durationMs" to (System.currentTimeMillis() - encStart),
-                                        "error" to "encryptAsymmetric returned empty"
-                                    )
-                                )
-                                messageBackoffMap[networkMessage.id] = System.currentTimeMillis() + calculateBackoff(networkMessage.retryCount)
-                                continue
-                            }
-                            trace(
-                                networkMessage.id,
-                                com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_DONE,
-                                com.blink.dtn.telemetry.detailsOf(
-                                    "cipherLength" to encryptedText.length,
-                                    "encryptionDurationMs" to (System.currentTimeMillis() - encStart)
-                                ),
-                                visual = "🔐 Зашифровано"
-                            )
-                            networkMessage = networkMessage.copy(text = encryptedText)
-                        } else {
-                            val updatedMsg = networkMessage.copy(status = com.blink.dtn.db.Message.STATUS_PENDING_KEY)
-                            dao.updateMessageInternal(updatedMsg)
-
-                            trace(
-                                networkMessage.id,
-                                com.blink.dtn.telemetry.TraceStages.RSA_MISSING_KEY,
-                                com.blink.dtn.telemetry.detailsOf("reason" to "key_missing_at_relay_time", "queuedIdentityRequest" to true),
-                                visual = "🔑 Ключ пропал — IDENTITY_REQUEST"
-                            )
-                            
-                            val req = com.blink.dtn.db.Message(
-                                id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
-                                type = "IDENTITY_REQUEST",
-                                senderId = myUniqueNodeId,
-                                senderNick = currentNick,
-                                targetId = targetId,
-                                text = "",
-                                room = "system",
-                                timestamp = System.currentTimeMillis(),
-                                ttl = DEFAULT_TTL
-                            )
-                            enqueueMessage(req)
-                            
-                            continue
-                        }
-                    }
-                }
-                
-                val bytes: ByteArray
-                try {
-                    val wirePacket = NetworkPacket.fromMessage(networkMessage)
-                    val jsonPayload = Json.encodeToString(wirePacket)
-                    bytes = com.blink.dtn.crypto.CryptoUtils.encrypt(jsonPayload)
-                } catch (e: Exception) {
-                    // Finding #2 hardening: a serialization/encryption failure on one message
-                    // must not escape the while-loop and permanently kill the relay engine.
-                    Log.e("ROUTE", "Relay encode/encrypt failed for ${message.id}: ${e.message}")
-                    messageBackoffMap[message.id] = System.currentTimeMillis() + calculateBackoff(message.retryCount)
-                    continue
-                }
-                
-                val targetDevices = discoveredDevices.toList()
-                val validDevices = mutableListOf<android.bluetooth.BluetoothDevice>()
-                
-                for (device in targetDevices) {
-                    val retryTime = txBackoffMap[device.address] ?: 0L
-                    if (now >= retryTime) {
-                        validDevices.add(device)
-                    }
-                }
-                
-                Log.i("ROUTE", "Processing message ${message.id} attempt=${message.retryCount} to ${validDevices.size} valid devices")
-                
-                if (validDevices.isEmpty()) {
-                    // Peers are backed off. Do not fail the message, just back off the message itself slightly
-                    messageBackoffMap[message.id] = now + 5000L
-                    continue
-                } else {
-                    val batch = TxBatch(validDevices.size)
-                    activeBatches[message.id] = batch
-                    
-                    batch.watchdogJob = scope.launch {
-                        kotlinx.coroutines.delay(45_000L)
-                        if (batch.isResolved.compareAndSet(false, true)) {
-                            activeBatches.remove(message.id)
-                            Log.w("BLE_TX", "Watchdog timeout for message ${message.id}")
-                            messageBackoffMap[message.id] = System.currentTimeMillis() + calculateBackoff(message.retryCount)
-                            safeEmitResult(TxResult.Failure(message.id, batch.failedMacs.toList()))
-                        }
-                    }
-
-                    for (device in validDevices) {
-                        sendPayloadToDevice(device, bytes, message.id)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun calculateBackoff(retryCount: Int): Long {
-        val baseMs = 5000L
-        return baseMs * (1 shl minOf(retryCount, 6)) // max backoff ~ 320s
-    }
-
-    private fun enqueuePayloadChunks(
-        gatt: BluetoothGatt,
-        characteristic: BluetoothGattCharacteristic,
-        mtu: Int,
-        payload: ByteArray,
-        chunkMessageId: Int,
-        messageId: String
-    ): Boolean {
-        return try {
-            val address = gatt.device.address
-            val encodeMtu = writeBudget.encodeMtu(address, mtu)
-            val chunkStart = System.currentTimeMillis()
-            val chunks = BleChunkCodec.encode(payload, encodeMtu, chunkMessageId)
-            trace(
-                messageId,
-                com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,
-                com.blink.dtn.telemetry.detailsOf(
-                    "originalPayloadBytes" to payload.size,
-                    "chunksCount" to chunks.size,
-                    "chunkSizes" to chunks.joinToString(",") { it.size.toString() },
-                    "mtu" to mtu,
-                    "encodeMtu" to encodeMtu,
-                    "maxWrite" to writeBudget.maxWriteBytes(address, mtu),
-                    "chunkCreationDurationMs" to (System.currentTimeMillis() - chunkStart),
-                    "peer" to address
-                ),
-                visual = "📚 Разделено на ${chunks.size} чанков"
-            )
-            for (chunkBytes in chunks) {
-                txQueue.enqueue(
-                    BleGattTxQueue.Op(gatt, characteristic, chunkBytes, chunkMessageId, messageId)
-                )
-            }
-            true
-        } catch (e: IllegalArgumentException) {
-            Log.e("BLE_TX", "Cannot chunk message $messageId: ${e.message}")
-            trace(
-                messageId,
-                com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,
-                com.blink.dtn.telemetry.detailsOf("error" to e.message)
-            )
-            false
-        }
-    }
-
-    private fun sendPayloadToDevice(device: BluetoothDevice, payload: ByteArray, messageId: String) {
-        val msgId = BleChunkCodec.newChunkMessageId()
-        val existingGatt = activeGattConnections[device.address]
-        
-        if (existingGatt != null) {
-            Log.d("BLE_TX", "Reusing existing GATT connection for ${device.address}")
-            connectionLastUsedMap[device.address] = System.currentTimeMillis()
-            trace(
-                messageId,
-                com.blink.dtn.telemetry.TraceStages.GATT_READY,
-                com.blink.dtn.telemetry.detailsOf("peer" to device.address, "reuseGatt" to true),
-                visual = "🚶 Несёт ${device.name ?: device.address}"
-            )
-            val service = existingGatt.getService(SERVICE_UUID)
-            val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
-            if (characteristic != null) {
-                val currentMtu = activeMtuMap[device.address] ?: 20
-                val enqueued = enqueuePayloadChunks(existingGatt, characteristic, currentMtu, payload, msgId, messageId)
-                if (!enqueued) {
-                    handleOperationResult(messageId, device.address, false)
-                    disconnectGatt(existingGatt)
-                }
-            } else {
-                disconnectGatt(existingGatt)
-                handleOperationResult(messageId, device.address, false)
-                // Let the next iteration retry by establishing a new connection
-            }
-            return
-        }
-
-        try {
-            device.connectGatt(context, false, object : BluetoothGattCallback() {
-                var currentMtu = 20 // Default BLE MTU
-
-                override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        try {
-                            gatt.requestMtu(512)
-                        } catch (e: SecurityException) {
-                            Log.e("BLE_TX", "SecurityException requesting MTU: ${e.message}")
-                            handleOperationResult(messageId, gatt.device.address, false)
-                            disconnectGatt(gatt)
-                        }
-                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        val address = gatt.device.address
-                        activeGattConnections.remove(address)
-                        activeMtuMap.remove(address)
-                        connectionLastUsedMap.remove(address)
-                        discoveredDevices.removeIf { it.address == address }
-                        connectedGattClients.removeIf { it.address == address }
-                        _peerCount.value = discoveredDevices.size
-                        _activePeers.value = discoveredDevices.map { it.address }
-                        clearPendingOperationsForDevice(address)
-                        disconnectGatt(gatt)
-                    }
-                }
-
-                override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        currentMtu = mtu
-                        try {
-                            gatt.discoverServices()
-                        } catch (e: SecurityException) {
-                            handleOperationResult(messageId, gatt.device.address, false)
-                            disconnectGatt(gatt)
-                        }
-                    } else {
-                        try {
-                            gatt.discoverServices()
-                        } catch (e: SecurityException) {
-                            handleOperationResult(messageId, gatt.device.address, false)
-                            disconnectGatt(gatt)
-                        }
-                    }
-                }
-
-                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        val address = gatt.device.address
-                        activeGattConnections[address] = gatt
-                        activeMtuMap[address] = currentMtu
-                        connectionLastUsedMap[address] = System.currentTimeMillis()
-                        
-                        val service = gatt.getService(SERVICE_UUID)
-                        val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
-                        if (characteristic != null) {
-                            val enqueued = enqueuePayloadChunks(gatt, characteristic, currentMtu, payload, msgId, messageId)
-                            if (!enqueued) {
-                                handleOperationResult(messageId, gatt.device.address, false)
-                                disconnectGatt(gatt)
-                            }
-                        } else {
-                            handleOperationResult(messageId, gatt.device.address, false)
-                            disconnectGatt(gatt)
-                        }
-                    } else {
-                        handleOperationResult(messageId, gatt.device.address, false)
-                        disconnectGatt(gatt)
-                    }
-                }
-
-                override fun onCharacteristicWrite(
-                    gatt: BluetoothGatt,
-                    characteristic: BluetoothGattCharacteristic,
-                    status: Int
-                ) {
-                    val address = gatt.device.address
-                    val op = txQueue.peek(address)
-
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        Log.e("BLE_WRITE_FAIL", "MessageId=${op?.messageId} status=false gattStatus=$status")
-                        // 0x0D = GATT_INVALID_ATTRIBUTE_LENGTH
-                        if (status == 0x0D && op != null) {
-                            writeBudget.noteOversizedWrite(address, op.payload.size)
-                        }
-                        if (op != null) {
-                            txQueue.complete(address, op, success = false)
-                            handleOperationResult(op.messageId, address, false)
-                        }
-                        disconnectGatt(gatt)
-                    } else {
-                        if (op != null) {
-                            Log.d("BLE_WRITE_OK", "MessageId=${op.messageId} DeviceMAC=$address")
-                            txQueue.complete(address, op, success = true)
-                            if (!txQueue.hasMoreOfMessage(address, op.messageId)) {
-                                handleOperationResult(op.messageId, address, true)
-                            }
-                        }
-                        // Pool modification: do not disconnect GATT here, connection stays alive!
-                    }
-                }
-            })
-            Log.d("BLE_TX", "Attempting to send to ${device.address} messageId=$messageId")
-        } catch (e: Exception) {
-            Log.e("BLE_TX", "Exception connecting GATT client: ${e.message}")
-            handleOperationResult(messageId, device.address, false)
-        }
-    }
-
-    // GATT Server Callback for handling incoming packets
-    private val gattServerCallback = object : BluetoothGattServerCallback() {
-        override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-            super.onConnectionStateChange(device, status, newState)
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connectedGattClients.add(device)
-                if (discoveredDevices.add(device)) {
-                    _peerCount.value = discoveredDevices.size
-                        _activePeers.value = discoveredDevices.map { it.address }
-                    triggerRelay()
-                }
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                connectedGattClients.remove(device)
-                discoveredDevices.remove(device)
-                _peerCount.value = discoveredDevices.size
-                _activePeers.value = discoveredDevices.map { it.address }
-            }
-        }
-
-        override fun onCharacteristicWriteRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            characteristic: BluetoothGattCharacteristic,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray
-        ) {
-            super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
-            if (characteristic.uuid == CHARACTERISTIC_UUID) {
-                try {
-                    if (responseNeeded) {
-                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                    }
-
-                    var assembledValue = value
-                    val chunk = BleChunkCodec.decode(value)
-                    if (chunk != null) {
-                        val msgId = chunk.messageId
-                        val index = chunk.index
-                        val total = chunk.total
-                        val chunkData = chunk.payload
-                        
-                        var entry = chunkBuffers[msgId]
-                        if (entry == null) {
-                            // Global RX Concurrency Limit / High-Water Mark to prevent OOM DDoS
-                            if (activeRxBuffers.incrementAndGet() > 30) {
-                                // Preemptive Eviction Strategy - O(1)
-                                var evicted = false
-                                while (true) {
-                                    val oldestMsgId = evictionQueue.poll() ?: break
-                                    val removedEntry = chunkBuffers.remove(oldestMsgId)
-                                    if (removedEntry != null) {
-                                        removedEntry.watchdogJob?.cancel()
-                                        activeRxBuffers.decrementAndGet()
-                                        evicted = true
-                                        break
-                                    }
-                                }
-                                
-                                if (!evicted && activeRxBuffers.get() > 30) {
-                                    activeRxBuffers.decrementAndGet()
-                                    return
-                                }
-                            }
-                            
-                            val newEntry = ChunkBufferEntry(System.currentTimeMillis(), java.util.concurrent.ConcurrentHashMap())
-                            val existing = chunkBuffers.putIfAbsent(msgId, newEntry)
-                            if (existing == null) {
-                                entry = newEntry
-                                evictionQueue.offer(msgId)
-                                entry.watchdogJob = scope.launch {
-                                    kotlinx.coroutines.delay(60_000L) // 60 seconds absolute TTL from first chunk
-                                    if (chunkBuffers.remove(msgId) != null) {
-                                        activeRxBuffers.decrementAndGet()
-                                        cleanupEvictionQueue()
-                                    }
-                                }
-                            } else {
-                                activeRxBuffers.decrementAndGet() // It was already put by another thread, revert increment
-                                entry = existing
-                            }
-                        }
-                        
-                        val safeEntry = entry
-                        
-                        // Immutable First-Arrival: Do not overwrite clean chunks with corrupted duplicates
-                        safeEntry.chunks.putIfAbsent(index, chunkData)
-                        
-                        // Completion Check
-                        if (safeEntry.chunks.size == total) {
-                            // Atomic lock to prevent duplicate reassembly if multiple threads finish simultaneously
-                            if (safeEntry.isReassembled.compareAndSet(false, true)) {
-                                val stream = java.io.ByteArrayOutputStream()
-                                // Strict index ordering 0 to total - 1
-                                var isValid = true
-                                for (i in 0 until total) {
-                                    val bufferedChunk = safeEntry.chunks[i]
-                                    if (bufferedChunk == null) {
-                                        isValid = false
-                                        break
-                                    }
-                                    stream.write(bufferedChunk)
-                                }
-                                
-                                if (!isValid) {
-                                    // Safety fallback if map state is somehow corrupted
-                                    safeEntry.isReassembled.set(false)
-                                    return
-                                }
-                                
-                                safeEntry.watchdogJob?.cancel()
-                                if (chunkBuffers.remove(msgId) != null) {
-                                    activeRxBuffers.decrementAndGet()
-                                    cleanupEvictionQueue()
-                                }
-                                assembledValue = stream.toByteArray()
-                            } else {
-                                return
-                            }
-                        } else {
-                            return
-                        }
-                    }
-
-                    val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: throw Exception("Decryption returned null")
-                    val decoded = decodeWirePacket(jsonString)
-                    val message = decoded.message
-                    Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
-                    Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
-                    Log.d("BLE_PROCESS", "MessageId=${message.id} Type=${message.type}")
-                    handleIncomingPacket(message, decoded.dedupKey)
-                } catch (e: SecurityException) {
-                    Log.e("DTN", "SecurityException in write request: ${e.message}")
-                    showToast("Security Exception: ${e.message}")
-                } catch (e: Exception) {
-                    Log.e("DTN", "Error decoding message: ${e.message}")
-                    showToast("BLE Rx Error: ${e.message}")
-                }
-            }
-        }
+    private fun handleIncomingWrite(device: BluetoothDevice, value: ByteArray) {
+        val assembledValue = reassembler.ingest(value) ?: return
+        val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue)
+            ?: throw Exception("Decryption returned null")
+        val decoded = ingress.decodeWirePacket(jsonString)
+        val message = decoded.message
+        Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
+        Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
+        Log.d("BLE_PROCESS", "MessageId=${message.id} Type=${message.type}")
+        ingress.handle(message, decoded.dedupKey)
     }
 
     fun injectEncryptedPayload(value: ByteArray) {
         try {
             val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(value) ?: return
-            val decoded = decodeWirePacket(jsonString)
-            handleIncomingPacket(decoded.message, decoded.dedupKey)
+            val decoded = ingress.decodeWirePacket(jsonString)
+            ingress.handle(decoded.message, decoded.dedupKey)
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-    }
-
-    /**
-     * Decode an on-wire JSON payload into a local [Message]. Prefer the explicit
-     * [NetworkPacket] format; fall back to legacy direct-[Message] JSON for peers
-     * that have not upgraded yet.
-     */
-    private fun decodeWirePacket(jsonString: String): DecodedWirePacket {
-        return try {
-            val packet = Json.decodeFromString<NetworkPacket>(jsonString)
-            DecodedWirePacket(
-                message = packet.toMessage(),
-                dedupKey = packet.packetId.ifEmpty { packet.messageId }
-            )
-        } catch (_: Exception) {
-            val legacyMessage = Json.decodeFromString<Message>(jsonString)
-            DecodedWirePacket(
-                message = legacyMessage,
-                dedupKey = legacyMessage.id
-            )
-        }
-    }
-
-    private fun handleIncomingPacket(packet: Message, dedupKey: String = packet.id) {
-        Log.d("DTN", "Received packet: id=${packet.id} type=${packet.type} from=${packet.senderNick} ttl=${packet.ttl}")
-        scope.launch {
-            // Echo suppression: never process/relay our own non-ACK packets that
-            // the mesh flooded back to us. Kept as the very first check, before the
-            // seen logic, so we do not record our own echoes as seen.
-            if (packet.senderId == myUniqueNodeId && !packet.isAck) {
-                return@launch
-            }
-
-            val now = System.currentTimeMillis()
-
-            // Ingress de-dup on the STABLE end-to-end id, up front and uniformly:
-            // if we have already seen this id (in the fast in-memory LRU or the
-            // durable DB table) drop it immediately — do NOT process, do NOT
-            // forward. Otherwise mark it seen once, here, before any processing,
-            // so every type-branch below is naturally idempotent.
-            // Atomic in-memory gate: add() returns false if the id was already
-            // present, so two concurrent duplicate arrivals can never both pass.
-            if (!recentSeenIds.add(dedupKey)) {
-                return@launch
-            }
-            // Cross-restart backstop: the in-memory LRU is empty after a process
-            // restart, but the durable table still remembers the id.
-            if (dao.hasSeenPacket(dedupKey)) {
-                return@launch
-            }
-            dao.insertSeenPacket(SeenPacket(dedupKey, now))
-
-            // Drop expired packets to prevent resurrection of dead data across the mesh
-            val messageTtlMs = 48 * 60 * 60 * 1000L
-            if (now - packet.timestamp > messageTtlMs) {
-                return@launch
-            }
-
-            if (packet.type == "SYSTEM_ANNOUNCEMENT") {
-                val isValid = withContext(Dispatchers.Default) {
-                    SecurityConfig.verifySignature(packet.text, packet.authorSignature)
-                }
-                if (!isValid) {
-                    dao.blockUser(BlockedUser(packet.senderNick, System.currentTimeMillis()))
-                    return@launch
-                }
-            }
-            
-            if (packet.isAck) {
-                // ACK-triggered purge: when an end-to-end ACK for data message X
-                // passes through, drop any relay-queued copy of X and make sure
-                // late-arriving copies of X are dropped by ingress de-dup.
-                //  - TRANSIT nodes (targetId != me): purge the relay copy row.
-                //  - ORIGIN (targetId == me): do NOT delete — X is the user's own
-                //    visible sent row; only mark it delivered below. Adding X's id
-                //    to seen is harmless (our own echoes are dropped anyway).
-                packet.originalMessageId?.takeIf { it.isNotEmpty() }?.let { ackedId ->
-                    recentSeenIds.add(ackedId)
-                    dao.insertSeenPacket(SeenPacket(ackedId, now))
-                    if (packet.targetId != myUniqueNodeId) {
-                        dao.deleteMessageById(ackedId)
-                    }
-                }
-                if (packet.targetId == myUniqueNodeId) {
-                    val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
-                        ?: packet.text.takeIf { it.isNotEmpty() }
-                        ?: return@launch
-                    val ackedMsg = dao.getMessageById(ackedMessageId)
-                    val status = if (ackedMsg?.type == "PRIVATE") {
-                        com.blink.dtn.db.Message.STATUS_DELIVERED
-                    } else {
-                        com.blink.dtn.db.Message.STATUS_SENT
-                    }
-                    dao.updateMessageStatus(ackedMessageId, status)
-                    val latency = ackedMsg?.let { System.currentTimeMillis() - it.timestamp }
-                    trace(
-                        ackedMessageId,
-                        com.blink.dtn.telemetry.TraceStages.ACK_RECEIVED,
-                        com.blink.dtn.telemetry.detailsOf(
-                            "ackFrom" to packet.senderId,
-                            "latencyMs" to latency,
-                            "status" to status
-                        ),
-                        visual = "✅ Доставлено"
-                    )
-                    com.blink.dtn.telemetry.TraceStore.finish(
-                        ackedMessageId,
-                        if (status == com.blink.dtn.db.Message.STATUS_DELIVERED) "Delivered" else "Sent",
-                        com.blink.dtn.telemetry.detailsOf("ackLatencyMs" to latency)
-                    )
-                    return@launch
-                }
-            } else if (packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE") {
-                val parts = packet.text.split("|")
-                if (parts.size >= 2) {
-                    val nick = parts[0]
-                    val isVip = parts[1].toBoolean()
-                    val pubKey = if (parts.size >= 3) parts[2] else ""
-
-                    // Self-certifying id: the sender's node id MUST equal the hash of the key
-                    // it announces. This makes impersonating another node's id require a
-                    // ~2^80 hash preimage, so reject any announcement whose id does not match
-                    // its key. (Empty-key announcements carry no key to verify — let the
-                    // existing empty-key handling deal with them.)
-                    if (pubKey.isNotEmpty()) {
-                        val expectedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pubKey)
-                        if (expectedId.isEmpty() || expectedId != packet.senderId) {
-                            Log.w("DTN", "Rejected IDENTITY spoof: senderId=${packet.senderId} does not match key hash=$expectedId")
-                            return@launch
-                        }
-                    }
-
-                    val existingProfile = dao.getProfileById(packet.senderId)
-                    // A genuine rekey: we already had a non-empty key for this peer
-                    // and the incoming non-empty key differs (the TOFU else-branch).
-                    val keyChanged = pubKey.isNotEmpty() &&
-                        !existingProfile?.publicKey.isNullOrEmpty() &&
-                        existingProfile!!.publicKey != pubKey
-                    val trustedPublicKey = when {
-                        pubKey.isEmpty() -> existingProfile?.publicKey ?: ""
-                        existingProfile?.publicKey.isNullOrEmpty() -> pubKey
-                        existingProfile?.publicKey == pubKey -> pubKey
-                        else -> {
-                            // Small local mesh: AndroidKeyStore keys are regenerated on
-                            // reinstall/clear-data, so a differing announcement is treated
-                            // as a legitimate rekey rather than pinned forever.
-                            Log.w("DTN", "Public key CHANGED for Node: ${packet.senderId}, accepting new key")
-                            pubKey
-                        }
-                    }
-                    dao.insertOrUpdateProfile(com.blink.dtn.db.UserProfile(packet.senderId, nick, System.currentTimeMillis(), isVip, trustedPublicKey))
-                    Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
-                    if (trustedPublicKey.isNotEmpty()) {
-                        ensureTrace(packet.id, "IDENTITY_ANNOUNCEMENT", packet.senderId, null)
-                        com.blink.dtn.telemetry.PeerDirectory.noteNode(packet.senderId, nick)
-                        trace(
-                            packet.id,
-                            com.blink.dtn.telemetry.TraceStages.ID_STORED,
-                            com.blink.dtn.telemetry.detailsOf(
-                                "nodeId" to packet.senderId,
-                                "nick" to nick,
-                                "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(trustedPublicKey),
-                                "keyChanged" to keyChanged
-                            ),
-                            visual = "🔑 Ключ сохранён"
-                        )
-                    }
-
-                    // Peer rekeyed: any of our own private messages already SENT/FAILED
-                    // to this peer were encrypted with the OLD key and can never be
-                    // decrypted. Resend them with a NEW stable id (same id would be
-                    // dropped by relays that already saw the old one). The relay loop
-                    // re-encrypts from the locally-stored plaintext with the new key.
-                    if (keyChanged) {
-                        val undelivered = dao.getUndeliveredPrivateToPeer(packet.senderId, myUniqueNodeId)
-                        for (old in undelivered) {
-                            val resend = old.copy(
-                                id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
-                                status = com.blink.dtn.db.Message.STATUS_PENDING,
-                                retryCount = 0,
-                                timestamp = System.currentTimeMillis()
-                            )
-                            dao.deleteMessageById(old.id)
-                            dao.insertMessageWithConversation(resend)
-                            enqueueMessage(resend)
-                        }
-                    }
-
-                    if (existingProfile == null || existingProfile.publicKey.isEmpty()) {
-                        enqueueProfileBroadcast()
-                    }
-                    
-                    if (trustedPublicKey.isNotEmpty()) {
-                        val pendingMsgs = dao.getMessagesPendingKeyForUser(packet.senderId)
-                        for (msg in pendingMsgs) {
-                            enqueueMessage(msg)
-                        }
-                    }
-                }
-            } else if (packet.type == "IDENTITY_REQUEST") {
-                if (packet.targetId == myUniqueNodeId) {
-                    enqueueProfileBroadcast()
-                } else {
-                    dao.deleteTransitMessage(packet.id, myUniqueNodeId)
-                    dao.insertRelayPacket(packet)
-                }
-            } else if (packet.type == "PUBLIC" || packet.type == "SYSTEM_ANNOUNCEMENT") {
-                dao.insertMessageWithConversation(packet)
-                triggerNotification(packet)
-            } else if (packet.type == "PRIVATE") {
-                if (packet.targetId == myUniqueNodeId) {
-                    ensureTrace(packet.id, "PRIVATE", packet.senderId, packet.targetId)
-                    trace(
-                        packet.id,
-                        com.blink.dtn.telemetry.TraceStages.RX_PACKET,
-                        com.blink.dtn.telemetry.detailsOf(
-                            "from" to packet.senderId,
-                            "ttl" to packet.ttl,
-                            "cipherLen" to packet.text.length
-                        ),
-                        visual = "📍 Получено устройством"
-                    )
-                    val decStart = System.currentTimeMillis()
-                    trace(packet.id, com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_START)
-                    val plainText = com.blink.dtn.crypto.RsaUtils.decryptAsymmetric(packet.text)
-                    if (plainText.isEmpty()) {
-                        // A private message addressed to me is decrypted with MY
-                        // own private key, which always exists; failure means the
-                        // sender used a STALE public key of mine. Retrying the same
-                        // ciphertext can never succeed, so re-announce my identity
-                        // to make the sender re-encrypt a FRESH message (new stable
-                        // id). This packet was already marked seen up front, so it
-                        // is dropped and will not be reprocessed.
-                        Log.e("DTN", "Private decrypt failed for message ${packet.id}; dropping without ACK")
-                        trace(
-                            packet.id,
-                            com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_FAIL,
-                            com.blink.dtn.telemetry.detailsOf(
-                                "durationMs" to (System.currentTimeMillis() - decStart),
-                                "failureReason" to "empty_plaintext_stale_or_wrong_key"
-                            )
-                        )
-                        com.blink.dtn.telemetry.TraceStore.finish(packet.id, "Dropped", com.blink.dtn.telemetry.detailsOf("reason" to "decrypt_failed"))
-                        enqueueProfileBroadcast()
-                        return@launch
-                    }
-                    trace(
-                        packet.id,
-                        com.blink.dtn.telemetry.TraceStages.RSA_DECRYPT_DONE,
-                        com.blink.dtn.telemetry.detailsOf(
-                            "durationMs" to (System.currentTimeMillis() - decStart),
-                            "plainLen" to plainText.length
-                        ),
-                        visual = "🔓 Расшифровано"
-                    )
-                    val convStart = System.currentTimeMillis()
-                    val finalMsg = packet.copy(text = plainText)
-                    dao.insertMessageWithConversation(finalMsg)
-                    trace(
-                        packet.id,
-                        com.blink.dtn.telemetry.TraceStages.RX_CONVERSATION,
-                        com.blink.dtn.telemetry.detailsOf("insertDurationMs" to (System.currentTimeMillis() - convStart))
-                    )
-                    triggerNotification(finalMsg)
-                    
-                    // Generate and enqueue ACK
-                    val ack = Message(
-                        id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
-                        type = "ACK",
-                        senderId = myUniqueNodeId,
-                        senderNick = currentNick,
-                        targetId = packet.senderId,
-                        text = "",
-                        originalMessageId = packet.id,
-                        timestamp = System.currentTimeMillis(),
-                        ttl = 7,
-                        isAck = true
-                    )
-                    trace(
-                        packet.id,
-                        com.blink.dtn.telemetry.TraceStages.ACK_GENERATED,
-                        com.blink.dtn.telemetry.detailsOf("ackId" to ack.id, "to" to packet.senderId)
-                    )
-                    enqueueMessage(ack)
-                    trace(packet.id, com.blink.dtn.telemetry.TraceStages.ACK_QUEUED, com.blink.dtn.telemetry.detailsOf("ackId" to ack.id))
-                    return@launch
-                } else {
-                    dao.insertRelayPacket(packet) // Save silently as relay payload
-                    trace(
-                        packet.id,
-                        com.blink.dtn.telemetry.TraceStages.MESH_RELAY_STORE,
-                        com.blink.dtn.telemetry.detailsOf("ttl" to packet.ttl, "from" to packet.senderId, "to" to packet.targetId),
-                        visual = "🚲 Relay дальше"
-                    )
-                }
-            }
-            
-            packet.ttl = packet.ttl - 1
-            if (packet.ttl > 0) {
-                trace(
-                    packet.id,
-                    com.blink.dtn.telemetry.TraceStages.MESH_FORWARD,
-                    com.blink.dtn.telemetry.detailsOf("ttlAfter" to packet.ttl, "viaNode" to myUniqueNodeId)
-                )
-                enqueueMessage(packet)
-            } else {
-                trace(packet.id, com.blink.dtn.telemetry.TraceStages.MESH_SKIP, com.blink.dtn.telemetry.detailsOf("reason" to "ttl_exhausted"))
-            }
         }
     }
 
@@ -1503,33 +515,5 @@ class BleMeshManager private constructor(
             senderNick = packet.senderNick,
             body = packet.text
         )
-    }
-
-    private val advertiseCallback = object : AdvertiseCallback() {
-        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            Log.d("DTN", "Advertise started successfully")
-        }
-
-        override fun onStartFailure(errorCode: Int) {
-            Log.e("DTN", "Advertise failed: $errorCode")
-        }
-    }
-
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            // Cache discovered device
-            com.blink.dtn.telemetry.PeerDirectory.noteBleDevice(result.device, result.rssi)
-            if (discoveredDevices.add(result.device)) {
-                _peerCount.value = discoveredDevices.size
-                        _activePeers.value = discoveredDevices.map { it.address }
-                triggerRelay()
-                // New node detected, handshake profile
-                enqueueProfileBroadcast()
-            }
-        }
-
-        override fun onScanFailed(errorCode: Int) {
-            Log.e("DTN", "Scan failed: $errorCode")
-        }
     }
 }
