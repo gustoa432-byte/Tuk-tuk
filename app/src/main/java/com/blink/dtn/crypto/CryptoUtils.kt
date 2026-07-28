@@ -12,7 +12,10 @@ object CryptoUtils {
     private const val TAG_LENGTH_BIT = 128
     private const val IV_LENGTH_BYTE = 12
 
-    // Hardcoded static passphrase for the mesh network
+    // TEMPORARY mesh-wide transport key: encrypts the outer BLE JSON envelope for
+    // all nodes sharing this APK. This is NOT end-to-end security — PRIVATE
+    // payloads are additionally wrapped with per-peer RSA. Replace with a
+    // negotiated group key before production deployment.
     private const val PASSPHRASE = "BlinkSurvivalMeshNetwork2026!@#"
 
     private val secretKey: SecretKeySpec by lazy {

@@ -24,7 +24,8 @@ import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.BLinkViewModelFactory
 import com.blink.dtn.ui.MainScreen
 import com.blink.dtn.ui.theme.BLinkTheme
-import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
 
@@ -40,14 +41,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Retrieve or generate unique ID and Nickname from SharedPreferences
-        val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
-        var myNodeId = prefs.getString("node_id", null)
-        if (myNodeId == null) {
-            myNodeId = UUID.randomUUID().toString().substring(0, 8).uppercase()
-            prefs.edit().putString("node_id", myNodeId).apply()
+        com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
+
+        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
+        runBlocking(Dispatchers.IO) {
+            com.blink.dtn.utils.LegacyIdMigration.runIfNeeded(this@MainActivity, dao)
         }
+
+        // Self-certifying node id: derived from our RSA public key (see NodeIdentity),
+        // not a random value, so the id cryptographically binds to the key. RsaUtils
+        // (called above and inside myNodeId()) guarantees the keypair exists first.
+        val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
+        val myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
+        prefs.edit().putString("node_id", myNodeId).apply()
         
         var myNick = prefs.getString("nick", null)
         if (myNick == null) {
@@ -55,7 +61,6 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putString("nick", myNick).apply()
         }
         
-        val dao = BLinkDatabase.getDatabase(this).bLinkDao()
         val conversationDao = BLinkDatabase.getDatabase(this).conversationDao()
         val bleManager = BleMeshManager.getInstance(this, dao, myNodeId)
         val factory = BLinkViewModelFactory(application, dao, conversationDao, bleManager, myNodeId, myNick)

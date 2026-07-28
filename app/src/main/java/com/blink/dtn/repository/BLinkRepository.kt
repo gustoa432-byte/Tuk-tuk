@@ -4,8 +4,8 @@ import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.Conversation
 import com.blink.dtn.db.ConversationDao
 import com.blink.dtn.db.Message
+import com.blink.dtn.utils.MeshIdGenerator
 import kotlinx.coroutines.flow.Flow
-import java.util.UUID
 
 class BLinkRepository(
     private val bLinkDao: BLinkDao,
@@ -27,7 +27,7 @@ class BLinkRepository(
 
     suspend fun createAndSavePublicMessage(text: String, room: String = "general"): Message {
         val msg = Message(
-            id = UUID.randomUUID().toString(),
+            id = MeshIdGenerator.next(myNodeId),
             type = "PUBLIC",
             senderId = myNodeId,
             senderNick = myNick,
@@ -44,7 +44,7 @@ class BLinkRepository(
 
     suspend fun createAndSavePrivateMessage(text: String, targetId: String, isPendingKey: Boolean = false, encryptedText: String? = null): Pair<Message, Message?> {
         val localMsg = Message(
-            id = UUID.randomUUID().toString(),
+            id = MeshIdGenerator.next(myNodeId),
             type = "PRIVATE",
             senderId = myNodeId,
             senderNick = myNick,

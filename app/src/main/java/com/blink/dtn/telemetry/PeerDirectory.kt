@@ -1,0 +1,147 @@
+package com.blink.dtn.telemetry
+
+import android.bluetooth.BluetoothDevice
+import android.content.Context
+import android.os.Build
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Persistent sightings of mesh peers (MAC / node id → human label).
+ * Fed from BLE discovery and identity announcements; used by route/mesh UI.
+ */
+object PeerDirectory {
+    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
+    private val peers = ConcurrentHashMap<String, DeviceHistoryEntry>()
+    private var file: File? = null
+
+    fun init(context: Context) {
+        if (file != null) return
+        val dir = File(context.applicationContext.filesDir, "traces").also { it.mkdirs() }
+        file = File(dir, "peer_directory.json")
+        load()
+    }
+
+    fun labelFor(id: String): String = get(id)?.displayName ?: if (id.length <= 8) "Node $id" else "Node ${id.takeLast(4)}"
+
+    fun get(id: String): DeviceHistoryEntry? = peers[id]
+
+    fun snapshot(): List<DeviceHistoryEntry> = peers.values.sortedByDescending { it.lastSeen }
+
+    fun noteBleDevice(device: BluetoothDevice, rssi: Int? = null) {
+        val id = device.address
+        val name = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) device.alias ?: device.name else device.name
+        } catch (_: SecurityException) {
+            device.name
+        } ?: id
+        upsert(
+            id = id,
+            device = name,
+            manufacturer = null,
+            android = null,
+            rssi = rssi,
+            forwarded = false
+        )
+    }
+
+    fun noteNode(nodeId: String, nick: String?, modelHint: String? = null) {
+        upsert(
+            id = nodeId,
+            device = modelHint ?: nick ?: short(nodeId),
+            manufacturer = null,
+            android = null,
+            rssi = null,
+            forwarded = false
+        )
+    }
+
+    fun noteForward(id: String, delayMs: Long? = null) {
+        val now = System.currentTimeMillis()
+        val existing = peers[id]
+        if (existing == null) {
+            peers[id] = DeviceHistoryEntry(
+                nodeId = id,
+                device = short(id),
+                firstSeen = now,
+                lastSeen = now,
+                packetsForwarded = 1,
+                averageDelayMs = delayMs
+            )
+        } else {
+            val n = existing.packetsForwarded + 1
+            val avg = when {
+                delayMs == null -> existing.averageDelayMs
+                existing.averageDelayMs == null -> delayMs
+                else -> (existing.averageDelayMs * (n - 1) + delayMs) / n
+            }
+            peers[id] = existing.copy(
+                lastSeen = now,
+                packetsForwarded = n,
+                averageDelayMs = avg
+            )
+        }
+        persist()
+    }
+
+    fun noteError(id: String) {
+        val now = System.currentTimeMillis()
+        val existing = peers[id]
+        peers[id] = (existing ?: DeviceHistoryEntry(id, short(id), firstSeen = now, lastSeen = now))
+            .copy(lastSeen = now, errorCount = (existing?.errorCount ?: 0) + 1)
+        persist()
+    }
+
+    private fun upsert(
+        id: String,
+        device: String,
+        manufacturer: String?,
+        android: String?,
+        rssi: Int?,
+        forwarded: Boolean
+    ) {
+        val now = System.currentTimeMillis()
+        val existing = peers[id]
+        peers[id] = if (existing == null) {
+            DeviceHistoryEntry(
+                nodeId = id,
+                device = device,
+                manufacturer = manufacturer,
+                android = android,
+                lastRssi = rssi,
+                firstSeen = now,
+                lastSeen = now,
+                packetsForwarded = if (forwarded) 1 else 0
+            )
+        } else {
+            existing.copy(
+                device = if (device != short(id)) device else existing.device,
+                manufacturer = manufacturer ?: existing.manufacturer,
+                android = android ?: existing.android,
+                lastRssi = rssi ?: existing.lastRssi,
+                lastSeen = now,
+                packetsForwarded = existing.packetsForwarded + if (forwarded) 1 else 0
+            )
+        }
+        persist()
+    }
+
+    private fun short(id: String) = if (id.length <= 8) "Node $id" else "Node ${id.takeLast(4)}"
+
+    private fun load() {
+        val f = file ?: return
+        if (!f.exists()) return
+        runCatching {
+            val list = json.decodeFromString<List<DeviceHistoryEntry>>(f.readText())
+            list.forEach { peers[it.nodeId] = it }
+        }
+    }
+
+    private fun persist() {
+        val f = file ?: return
+        runCatching { f.writeText(json.encodeToString(peers.values.toList())) }
+    }
+}

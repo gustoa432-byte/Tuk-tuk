@@ -51,6 +51,15 @@ android {
             )
         }
     }
+    packaging {
+        // Prefer stable APK entry order for FOSS verification (see docs/REPRODUCIBLE_BUILDS.md).
+        jniLibs {
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -64,6 +73,14 @@ android {
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8" // Forced rewrite
+    }
+
+    // Friendly install name: assembleDebug → app/build/outputs/apk/debug/Tuktuk.apk
+    applicationVariants.configureEach {
+        outputs.configureEach {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                .outputFileName = "Tuktuk.apk"
+        }
     }
 }
 

@@ -16,10 +16,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.material.icons.filled.Check
 
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -125,7 +124,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val isConnected = vkActive || peerCount > 0
 
     if (showDevPanel) {
-        DeveloperPanel(viewModel = viewModel, onClose = { showDevPanel = false })
+        DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
         return
     }
 
@@ -181,11 +180,11 @@ fun MainScreen(viewModel: BLinkViewModel) {
             when (selectedTab) {
                 0 -> PrivateTab(viewModel)
                 1 -> PublicTab(viewModel) { contactId ->
+                    viewModel.ensureContact(contactId)
                     viewModel.setCurrentDialog(contactId)
                     selectedTab = 0
                 }
-                2 -> InfoTab()
-                3 -> ProfileTab(viewModel, { selectedTab = 0 })
+                2 -> ProfileTab(viewModel, { selectedTab = 0 })
             }
         }
     }
@@ -207,8 +206,7 @@ fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
         ) {
             BottomBarItem(Icons.Default.Person, "Диалоги", selectedTab == 0) { onTabSelected(0) }
             BottomBarItem(Icons.Default.Email, "Общий чат", selectedTab == 1) { onTabSelected(1) }
-            BottomBarItem(Icons.Default.Info, "Информация", selectedTab == 2) { onTabSelected(2) }
-            BottomBarItem(Icons.Default.Person, "Профиль", selectedTab == 3) { onTabSelected(3) }
+            BottomBarItem(Icons.Default.Person, "Профиль", selectedTab == 2) { onTabSelected(2) }
         }
     }
 }
@@ -300,8 +298,11 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
             } else {
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(privateDialogs) { dialog ->
+                        val profile by viewModel.getProfileFlow(dialog.conversationId).collectAsState(initial = null)
                         val formatter = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
                         val timeString = if (dialog.lastTimestamp > 0) formatter.format(java.util.Date(dialog.lastTimestamp)) else ""
+                        val title = peerListTitle(profile, dialog.displayName)
+                        val isStranger = profile?.isStranger == true
 
                         Row(
                             modifier = Modifier
@@ -315,17 +316,31 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = dialog.displayName ?: "Неизвестный контакт", 
-                                    color = TextPrimary, 
-                                    style = Typography.bodyLarge,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = title,
+                                        color = TextPrimary,
+                                        style = Typography.bodyLarge,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (isStranger) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "незнакомец",
+                                            color = TextSecondary,
+                                            style = Typography.labelSmall,
+                                            modifier = Modifier
+                                                .background(DividerColor, RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                                 if (!dialog.lastMessage.isNullOrEmpty()) {
                                     Text(
-                                        text = dialog.lastMessage, 
-                                        color = TextSecondary, 
+                                        text = dialog.lastMessage,
+                                        color = TextSecondary,
                                         style = Typography.bodyMedium,
                                         maxLines = 1,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -406,7 +421,8 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                             modifier = Modifier
                                 .bounceClick {
                                     if (searchId.isNotBlank()) {
-                                        viewModel.setCurrentDialog(searchId)
+                                        viewModel.ensureContact(searchId.trim())
+                                        viewModel.setCurrentDialog(searchId.trim())
                                         showSearch = false
                                         searchId = ""
                                     }
@@ -424,8 +440,75 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
 fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () -> Unit) {
     val messages by viewModel.currentDialogMessages.collectAsState()
     val dialogs by viewModel.dialogs.collectAsState()
-    val displayName = dialogs.find { it.conversationId == contactId }?.displayName ?: "Неизвестный контакт"
+    val profile by viewModel.getProfileFlow(contactId).collectAsState(initial = null)
+    val fallbackName = dialogs.find { it.conversationId == contactId }?.displayName
+    val displayName = peerListTitle(profile, fallbackName)
+    val isStranger = profile?.isStranger == true
+    val isContact = profile == null || profile?.isContact == true
     var messageText by remember { mutableStateOf("") }
+    var showRename by remember { mutableStateOf(false) }
+    var renameDraft by remember { mutableStateOf("") }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val context = LocalContext.current
+
+    LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
+
+    if (showRename) {
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text("Имя в диалогах", color = TextPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "Локальная подпись только на этом устройстве. Сетевой ник собеседника не меняется (ник — просто метка, не уникальный id).",
+                        color = TextSecondary,
+                        style = Typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    BasicTextField(
+                        value = renameDraft,
+                        onValueChange = { if (it.length <= 32) renameDraft = it },
+                        textStyle = Typography.bodyLarge.copy(color = TextPrimary),
+                        cursorBrush = SolidColor(TextPrimary),
+                        decorationBox = { inner ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(DividerColor, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                if (renameDraft.isEmpty()) {
+                                    Text("Например, Вася с работы", color = TextSecondary, style = Typography.bodyLarge)
+                                }
+                                inner()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.setLocalAlias(contactId, renameDraft)
+                    showRename = false
+                    Toast.makeText(context, "Имя сохранено", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("Сохранить", color = TextPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRename = false }) {
+                    Text("Отмена", color = TextSecondary)
+                }
+            },
+            containerColor = SurfaceDark
+        )
+    }
     
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(
@@ -441,18 +524,116 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 CustomBackIcon()
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Text(text = displayName, style = Typography.titleMedium, color = TextPrimary)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = displayName,
+                    style = Typography.titleMedium,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                if (isStranger) {
+                    Text("Запрос сообщения · незнакомец", style = Typography.labelSmall, color = TextSecondary)
+                }
+            }
+            Box {
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = "Меню",
+                    tint = TextPrimary,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .bounceClick { menuExpanded = true }
+                        .padding(8.dp)
+                        .size(22.dp)
+                )
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    if (isContact || profile?.localAlias?.isNotBlank() == true) {
+                        DropdownMenuItem(
+                            text = { Text("Изменить имя", color = TextPrimary) },
+                            onClick = {
+                                menuExpanded = false
+                                renameDraft = profile?.localAlias.orEmpty()
+                                showRename = true
+                            }
+                        )
+                    }
+                    if (isStranger) {
+                        DropdownMenuItem(
+                            text = { Text("В контакты", color = TextPrimary) },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.acceptContact(contactId)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Игнорировать", color = DangerColor) },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
+                            }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text("Игнорировать", color = DangerColor) },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
+                            }
+                        )
+                    }
+                }
+            }
         }
-        
+
+        if (isStranger) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceDark)
+                    .padding(12.dp)
+            ) {
+                Text(
+                    "Этот человек ещё не в контактах. Сообщения приходят, но вы можете принять или игнорировать запрос.",
+                    color = TextSecondary,
+                    style = Typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TukTukButton(onClick = { viewModel.acceptContact(contactId) }) {
+                        Text("Принять", color = TextPrimary, style = Typography.labelMedium)
+                    }
+                    TukTukButton(onClick = {
+                        viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
+                    }) {
+                        Text("Игнорировать", color = DangerColor, style = Typography.labelMedium)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         if (messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("Здесь пока нет сообщений.", color = TextSecondary, style = Typography.bodyMedium)
             }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f), reverseLayout = true) {
-                items(messages.reversed()) { msg ->
-                    MessageBubble(msg, viewModel.myNodeId)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                reverseLayout = false
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        msg = msg,
+                        myNodeId = viewModel.myNodeId,
+                        onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                    )
                 }
             }
         }
@@ -476,6 +657,13 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
 fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Unit) {
     val messages by viewModel.publicMessages.collectAsState()
     var messageText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
 
@@ -484,9 +672,20 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
                 Text("В общем чате пока тихо.\nНапишите что-нибудь!", color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f), reverseLayout = true) {
-                items(messages.reversed()) { msg ->
-                    MessageBubble(msg, viewModel.myNodeId, showSender = true, onSenderClick = onPrivateChatRequested)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                reverseLayout = false
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        msg = msg,
+                        myNodeId = viewModel.myNodeId,
+                        showSender = true,
+                        onSenderClick = onPrivateChatRequested,
+                        onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
+                        onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) }
+                    )
                 }
             }
         }
@@ -549,13 +748,83 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
 }
 
 @Composable
-fun MessageBubble(msg: Message, myNodeId: String, showSender: Boolean = false, onSenderClick: ((String) -> Unit)? = null) {
+fun MessageBubble(
+    msg: Message,
+    myNodeId: String,
+    showSender: Boolean = false,
+    onSenderClick: ((String) -> Unit)? = null,
+    onDeleteLocal: (() -> Unit)? = null,
+    onCancelSend: (() -> Unit)? = null
+) {
     val isMine = msg.senderId == myNodeId || msg.isMine
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = formatter.format(Date(msg.timestamp))
+    var showActions by remember { mutableStateOf(false) }
+    var showVoyage by remember { mutableStateOf(false) }
+    val canCancel = isMine && (
+        msg.status == Message.STATUS_PENDING ||
+            msg.status == Message.STATUS_IN_FLIGHT ||
+            msg.status == Message.STATUS_PENDING_KEY ||
+            msg.status == Message.STATUS_FAILED
+        )
+
+    if (showVoyage) {
+        MessageVoyageDialog(msg = msg, onDismiss = { showVoyage = false })
+    }
+
+    if (showActions) {
+        AlertDialog(
+            onDismissRequest = { showActions = false },
+            title = { Text("Сообщение", color = TextPrimary) },
+            text = {
+                Text(
+                    if (canCancel) {
+                        "Удалить только у себя или отменить отправку (пока не ушло в сеть)."
+                    } else {
+                        "Удалить сообщение только на этом устройстве. У других оно останется."
+                    },
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showActions = false
+                    onDeleteLocal?.invoke()
+                }) {
+                    Text("Удалить у себя", color = DangerColor)
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (canCancel) {
+                        TextButton(onClick = {
+                            showActions = false
+                            onCancelSend?.invoke()
+                        }) {
+                            Text("Отменить отправку", color = TextPrimary)
+                        }
+                    }
+                    TextButton(onClick = { showActions = false }) {
+                        Text("Закрыть", color = TextSecondary)
+                    }
+                }
+            },
+            containerColor = SurfaceDark
+        )
+    }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .pointerInput(msg.id) {
+                detectTapGestures(
+                    onLongPress = { showActions = true },
+                    onTap = {
+                        if (isMine) showVoyage = true
+                    }
+                )
+            },
         horizontalAlignment = if (isMine) Alignment.End else Alignment.Start
     ) {
         if (showSender && !isMine) {
@@ -590,13 +859,15 @@ fun MessageBubble(msg: Message, myNodeId: String, showSender: Boolean = false, o
                 ) {
                     Text(text = timeString, style = Typography.labelSmall, color = TextSecondary)
                     if (isMine) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        val statusColor = when (msg.status) {
-                            Message.STATUS_SENT -> TextSecondary
-                            Message.STATUS_FAILED -> DangerColor
-                            else -> DividerColor
-                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val statusColor = DeliveryVoyageLabels.color(msg)
                         Box(modifier = Modifier.size(6.dp).background(statusColor, CircleShape))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = DeliveryVoyageLabels.label(msg),
+                            style = Typography.labelSmall,
+                            color = statusColor
+                        )
                     }
                 }
             }
@@ -629,22 +900,73 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var nickname by remember { mutableStateOf(viewModel.myNick) }
+    var savedNick by remember { mutableStateOf(viewModel.myNick) }
+    var language by remember { mutableStateOf("Русский") }
+    var showInfo by remember { mutableStateOf(false) }
+    val nickDirty = nickname.trim() != savedNick.trim()
     
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        if (result.contents != null) {
-            val scannedId = result.contents
-            if (scannedId.isNotBlank()) {
-                viewModel.setCurrentDialog(scannedId)
+        val scanned = result.contents
+        if (scanned != null && scanned.isNotBlank()) {
+            // Try the self-certifying contact payload first (pins the public key).
+            // Fall back to treating the scan as a bare node id for legacy/manual entry.
+            val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
+            val pk = json?.optString("pk", "")
+            if (json != null && !pk.isNullOrEmpty()) {
+                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
+                val claimedId = json.optString("id", "")
+                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
+                    Toast.makeText(context, "Invalid QR: key does not match ID", Toast.LENGTH_LONG).show()
+                } else {
+                    val nick = json.optString("n", "")
+                    viewModel.addScannedContact(derivedId, nick, pk)
+                    onScanSuccess()
+                }
+            } else {
+                viewModel.ensureContact(scanned)
+                viewModel.setCurrentDialog(scanned)
                 onScanSuccess()
             }
         }
+    }
+
+    if (showInfo) {
+        AlertDialog(
+            onDismissRequest = { showInfo = false },
+            title = { Text("О TukTuk", color = TextPrimary) },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    InfoContent(compact = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showInfo = false }) {
+                    Text("Закрыть", color = TextPrimary)
+                }
+            },
+            containerColor = SurfaceDark
+        )
     }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(SurfaceDark)
+                    .bounceClick { showInfo = true }
+                    .padding(12.dp)
+            ) {
+                Icon(Icons.Default.Info, contentDescription = "Информация", tint = TextPrimary)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
             Box(
                 modifier = Modifier
                     .clip(CircleShape)
@@ -661,7 +983,6 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             onValueChange = {
                 if (it.length <= 15) {
                     nickname = it
-                    viewModel.updateMyProfile(it, false)
                 }
             },
             textStyle = Typography.titleLarge.copy(color = TextPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
@@ -674,9 +995,32 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
         )
+        Spacer(modifier = Modifier.height(12.dp))
+        TukTukButton(
+            onClick = {
+                val trimmed = nickname.trim()
+                if (trimmed.isEmpty()) {
+                    Toast.makeText(context, "Введите имя", Toast.LENGTH_SHORT).show()
+                    return@TukTukButton
+                }
+                nickname = trimmed
+                viewModel.updateMyProfile(trimmed, false)
+                savedNick = trimmed
+                Toast.makeText(context, "Имя сохранено", Toast.LENGTH_SHORT).show()
+            }
+        ) {
+            Text(
+                if (nickDirty) "Сохранить" else "Сохранено",
+                color = if (nickDirty) TextPrimary else TextSecondary,
+                style = Typography.labelMedium
+            )
+        }
         Spacer(modifier = Modifier.height(32.dp))
-        val qrBitmap = remember(viewModel.myNodeId) {
-            generateQrCode(viewModel.myNodeId, 512)?.asImageBitmap()
+        // QR encodes the full contact payload (id + public key + nick) so a scan
+        // pins the key out-of-band. The human-readable id below stays as-is.
+        val contactQr = viewModel.myContactQr
+        val qrBitmap = remember(contactQr) {
+            generateQrCode(contactQr, 512)?.asImageBitmap()
         }
         
         if (qrBitmap != null) {
@@ -727,6 +1071,29 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             Spacer(modifier = Modifier.width(8.dp))
             Text("Сканировать QR", color = TextPrimary, style = Typography.titleMedium)
         }
+
+        Spacer(modifier = Modifier.weight(1f))
+        Text("Язык", style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Русский",
+                color = if (language == "Русский") TextPrimary else TextSecondary,
+                style = Typography.bodyMedium,
+                modifier = Modifier.bounceClick { language = "Русский" }.padding(8.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                "English",
+                color = if (language == "English") TextPrimary else TextSecondary,
+                style = Typography.bodyMedium,
+                modifier = Modifier.bounceClick { language = "English" }.padding(8.dp)
+            )
+        }
     }
 }
 
@@ -752,112 +1119,212 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
     }
 }
 
+private const val AUTHOR_TELEGRAM = "b6dmachine"
+private const val OFFICIAL_CHANNEL = "tuk_tuk_official"
+private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
+
+private fun openTelegramLink(context: Context, pathOrUsername: String) {
+    val web = if (pathOrUsername.startsWith("http")) pathOrUsername else "https://t.me/$pathOrUsername"
+    val domain = pathOrUsername.removePrefix("https://t.me/").removePrefix("http://t.me/")
+    val appIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("tg://resolve?domain=$domain"))
+    val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(web))
+    try {
+        context.startActivity(appIntent)
+    } catch (_: Exception) {
+        try {
+            context.startActivity(webIntent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "Не удалось открыть Telegram", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun openAuthorTelegram(context: Context) {
+    openTelegramLink(context, AUTHOR_TELEGRAM)
+}
+
+private fun openOfficialChannel(context: Context) {
+    openTelegramLink(context, OFFICIAL_CHANNEL)
+}
+
+private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: String?): String {
+    if (profile != null) {
+        val alias = profile.localAlias.trim()
+        if (alias.isNotEmpty()) return alias
+        val nick = profile.nickname.trim()
+        if (profile.isStranger) {
+            return nick.ifEmpty { "Незнакомец" }
+        }
+        if (nick.isNotEmpty()) return nick
+        return profile.userId
+    }
+    return fallback?.takeIf { it.isNotBlank() } ?: "Неизвестный контакт"
+}
+
 @Composable
-fun InfoTab() {
+fun InfoContent(compact: Boolean = false) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val uriHandler = LocalUriHandler.current
-    var language by remember { mutableStateOf("Русский") }
+    val storyStyle = Typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
+    val quietStyle = Typography.bodySmall.copy(lineHeight = 15.sp)
+    val helpItems = listOf(
+        "покупать оборудование для тестов",
+        "разрабатывать маршрутизацию",
+        "тестировать сеть в реальных условиях",
+        "развивать дальнюю связь",
+        "выпускать новые версии"
+    )
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.Start
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .then(if (compact) Modifier else Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp))
     ) {
-        Text("Что такое Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
+        if (!compact) {
+            Text("О проекте", style = Typography.labelSmall, color = TextSecondary)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text("TukTuk", style = Typography.titleLarge, color = TextPrimary)
+            Spacer(modifier = Modifier.height(4.dp))
+        }
         Text(
-            "Tuk-Tuk — простой мессенджер, который работает без интернета.",
-            style = Typography.bodyMedium,
+            "Мессенджер, который помогает оставаться на связи, когда пропадает интернет.",
+            style = quietStyle,
             color = TextSecondary
         )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Возможности", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
-        val features = listOf("Общий чат", "Личные сообщения", "Передача через BLE Mesh", "Работает без интернета")
-        features.forEach { feature ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(feature, style = Typography.bodyMedium, color = TextSecondary)
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Поддержка проекта", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("Почему появился TukTuk?", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Поддержка помогает тестировать приложение, развивать BLE Mesh и в будущем добавить поддержку LoRa.",
-            style = Typography.bodyMedium,
+            "Во время отключения света я не смог сообщить родному человеку, что со мной всё в порядке. " +
+                "Пришлось ехать через весь город только ради одной фразы: «Со мной всё хорошо».",
+            style = storyStyle,
+            color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "После этого я решил создать TukTuk, чтобы люди могли оставаться на связи даже тогда, " +
+                "когда привычный интернет недоступен.",
+            style = storyStyle,
+            color = TextPrimary
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text("Как помогает", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Общий чат рядом · Личные сообщения · Работает без интернета · Связь через телефоны вокруг",
+            style = quietStyle,
             color = TextSecondary
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = { uriHandler.openUri("https://boosty.to/tuktuk") }) {
-            Text("Поддержать автора", color = TextPrimary, style = Typography.titleMedium)
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text("Конфиденциальность (кратко)", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Диалоги — личные, с шифрованием на устройстве. Общий чат — открытый «мегафон»: его видят соседи по сети. " +
+                "Ник — просто метка, не уникальный id. Доверие к контакту — через QR. Подробнее: docs/THREAT_MODEL.md в исходниках.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Сообщить об уязвимости: $FEEDBACK_EMAIL (см. docs/SECURITY.md).",
+            style = quietStyle,
+            color = TextSecondary
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text("Официальный канал", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Новости и обновления TukTuk.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = { openOfficialChannel(context) }) {
+            Text("t.me/$OFFICIAL_CHANNEL", color = TextPrimary, style = Typography.labelMedium)
         }
-        
-        Spacer(modifier = Modifier.height(24.dp))
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text("Поддержать развитие", style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Если TukTuk оказался полезным, вы можете помочь развитию сети.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("Ваша поддержка помогает:", style = quietStyle, color = TextSecondary)
+        helpItems.forEach { item ->
+            Text("✔  $item", style = quietStyle, color = TextSecondary)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        TukTukButton(onClick = { openAuthorTelegram(context) }) {
+            Text("❤️ Стать участником сети", color = TextPrimary, style = Typography.labelMedium)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = { openAuthorTelegram(context) }) {
+            Text("☕ Угостить автора кофе", color = TextPrimary, style = Typography.labelMedium)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         Text("Обратная связь", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Telegram",
-            style = Typography.bodyMedium,
+            "Нашли ошибку? Есть идея? Хотите помочь проекту? Напишите — письма приходят на почту проекта.",
+            style = quietStyle,
             color = TextSecondary
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = { 
-            clipboardManager.setText(AnnotatedString("@tuktuk_dev"))
-            Toast.makeText(context, "Ник скопирован", Toast.LENGTH_SHORT).show()
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(FEEDBACK_EMAIL, style = Typography.bodyMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(6.dp))
+        TukTukButton(onClick = {
+            com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
+                context,
+                subject = "TukTuk feedback",
+                body = "Опишите ошибку или идею:\n\n"
+            )
         }) {
-            Text("@tuktuk_dev (Скопировать)", color = TextPrimary, style = Typography.titleMedium)
+            Text("Написать", color = TextPrimary, style = Typography.labelMedium)
         }
-        
-        Spacer(modifier = Modifier.height(48.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Русский", 
-                color = if (language == "Русский") TextPrimary else TextSecondary, 
-                style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "Русский" }.padding(8.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                "English", 
-                color = if (language == "English") TextPrimary else TextSecondary, 
-                style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "English" }.padding(8.dp)
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(100.dp))
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Я читаю все сообщения, но могу отвечать не сразу.",
+            style = quietStyle,
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "Личный Telegram автора: @$AUTHOR_TELEGRAM",
+            style = quietStyle,
+            color = TextSecondary,
+            modifier = Modifier.clickable { openAuthorTelegram(context) }
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            "TukTuk остаётся бесплатным для всех.\nСпасибо каждому, кто помогает делать сеть лучше.",
+            style = quietStyle,
+            color = TextSecondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
     }
 }
 
 @Composable
+fun InfoTab() {
+    InfoContent(compact = false)
+}
+
+@Composable
 fun DeveloperPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
-    val peerCount by viewModel.peerCount.collectAsState()
-    val pending by viewModel.pendingCount.collectAsState(0)
-    Column(modifier = Modifier.fillMaxSize().background(BackgroundDark).padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = TextPrimary)
-            }
-            Text("Developer Panel", style = Typography.titleLarge, color = TextPrimary)
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("BLE Devices (Active Peers): $peerCount", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Pending Messages (Queue): $pending", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Routing Mode: BLE DTN Mesh", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("InFlight: Managed by TxBatch", color = TextSecondary, style = Typography.bodyLarge)
-        Spacer(modifier = Modifier.height(24.dp))
-        TukTukButton(onClick = { /* Export mock */ }) {
-            Text("Export Logs", color = TextPrimary)
-        }
-    }
+    // Kept as alias — Delivery Observatory is the Phase-2 black-box UI.
+    DeliveryObservatoryPanel(viewModel, onClose)
 }

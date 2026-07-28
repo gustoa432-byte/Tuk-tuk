@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-cache-path name="apk_share" path="." />
+    <cache-path name="trace_export" path="." />
+    <files-path name="traces" path="traces/" />
+    <files-path name="traces_pending" path="traces_pending_upload/" />
 </paths>
