@@ -11,13 +11,18 @@ data class BleChunk(
 
 object BleChunkCodec {
     private const val MAGIC = 0xAB.toByte()
-    private const val HEADER_SIZE = 7
+    const val HEADER_SIZE = 7
     private const val MAX_CHUNKS = 255
 
     fun newChunkMessageId(): Int = UUID.randomUUID().hashCode()
 
+    /**
+     * Split [payload] into GATT write values.
+     * [mtu] is the *encode* MTU (typically from [BleWriteBudget.encodeMtu]):
+     * each written value is at most `min(mtu - 3, 512)` bytes including header.
+     */
     fun encode(payload: ByteArray, mtu: Int, messageId: Int): List<ByteArray> {
-        val safeChunkSize = safeChunkSize(mtu)
+        val safeChunkSize = safePayloadSize(mtu)
         val chunks = payload.toList().chunked(safeChunkSize)
         require(chunks.size <= MAX_CHUNKS) {
             "Payload requires ${chunks.size} BLE chunks, max supported is $MAX_CHUNKS"
@@ -43,7 +48,11 @@ object BleChunkCodec {
         return BleChunk(messageId, index, total, value.copyOfRange(HEADER_SIZE, value.size))
     }
 
-    private fun safeChunkSize(mtu: Int): Int = (mtu - 10).coerceAtLeast(10)
+    /** Payload bytes per chunk (excludes 7-byte header). */
+    fun safePayloadSize(mtu: Int): Int {
+        val maxWrite = minOf(mtu - 3, BleWriteBudget.ANDROID_MAX_ATTR_BYTES).coerceAtLeast(HEADER_SIZE + 10)
+        return (maxWrite - HEADER_SIZE).coerceAtLeast(10)
+    }
 
     private fun header(messageId: Int, index: Int, total: Int): ByteArray {
         return byteArrayOf(

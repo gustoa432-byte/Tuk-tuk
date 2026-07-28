@@ -94,16 +94,16 @@ class BleMeshManager private constructor(
         }
     }
 
-    private fun handleOperationResult(messageId: String, mac: String?, success: Boolean) {
+    private fun handleOperationResult(messageId: String, mac: String?, success: Boolean, softRetry: Boolean = false) {
         if (mac != null && !success) {
-            setPeerBackoff(mac, 10_000L)
+            setPeerBackoff(mac, if (softRetry) 500L else 10_000L)
         }
         val batch = activeBatches[messageId]
         if (batch == null) {
             if (success) {
                 safeEmitResult(TxResult.Success(messageId))
             } else {
-                messageBackoffMap[messageId] = System.currentTimeMillis() + 10_000L
+                messageBackoffMap[messageId] = System.currentTimeMillis() + if (softRetry) 500L else 10_000L
                 safeEmitResult(TxResult.Failure(messageId, if (mac != null) listOf(mac) else emptyList()))
             }
             return
@@ -203,67 +203,54 @@ class BleMeshManager private constructor(
         }
     }
 
-    private data class BleOperation(
-        val gatt: BluetoothGatt,
-        val characteristic: BluetoothGattCharacteristic,
-        val payload: ByteArray,
-        val msgId: Int,
-        val messageId: String,
-        val isHandled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val writeBudget = BleWriteBudget()
+    private val txQueue = BleGattTxQueue(
+        scopeProvider = { scope },
+        writeBudget = writeBudget,
+        hooks = object : BleGattTxQueue.Hooks {
+            override fun onWriteStart(messageId: String, address: String, bytes: Int, chunkMsgId: Int) {
+                trace(
+                    messageId,
+                    com.blink.dtn.telemetry.TraceStages.GATT_WRITE_START,
+                    com.blink.dtn.telemetry.detailsOf(
+                        "peer" to address,
+                        "bytes" to bytes,
+                        "chunkMsgId" to chunkMsgId
+                    )
+                )
+            }
+
+            override fun onWriteDone(messageId: String, address: String, bytes: Int) {
+                trace(
+                    messageId,
+                    com.blink.dtn.telemetry.TraceStages.GATT_WRITE_DONE,
+                    com.blink.dtn.telemetry.detailsOf("peer" to address, "bytes" to bytes)
+                )
+            }
+
+            override fun onWriteFail(messageId: String, address: String, details: Map<String, Any?>) {
+                val pairs = details.entries.map { it.key to (it.value?.toString() ?: "") }.toTypedArray()
+                trace(
+                    messageId,
+                    com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
+                    com.blink.dtn.telemetry.detailsOf(*pairs)
+                )
+                com.blink.dtn.telemetry.PeerDirectory.noteError(address)
+                // Peer cap lives in writeBudget; next encodeMtu() uses it automatically.
+            }
+
+            override fun onPeerWriteResult(messageId: String, address: String, success: Boolean, softRetry: Boolean) {
+                handleOperationResult(messageId, address, success, softRetry)
+            }
+
+            override fun disconnectGatt(gatt: BluetoothGatt) {
+                this@BleMeshManager.disconnectGatt(gatt)
+            }
+        }
     )
-    private val deviceQueues = ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<BleOperation>>()
-    private val isOperationInProgress = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
-
-    private fun enqueueOperation(op: BleOperation) {
-        val address = op.gatt.device.address
-        val queue = deviceQueues.getOrPut(address) { java.util.concurrent.ConcurrentLinkedQueue() }
-        queue.offer(op)
-        processNextOperation(address)
-    }
-
-    private fun processNextOperation(address: String) {
-        val queue = deviceQueues[address] ?: return
-        val isWriting = isOperationInProgress.getOrPut(address) { java.util.concurrent.atomic.AtomicBoolean(false) }
-        
-        if (isWriting.compareAndSet(false, true)) {
-            val op = queue.peek()
-            if (op == null) {
-                isWriting.set(false)
-                if (queue.isNotEmpty()) {
-                    processNextOperation(address)
-                }
-                return
-            }
-            executeWrite(op, address)
-        }
-    }
-
-    private fun completeOperation(address: String, op: BleOperation, success: Boolean = true) {
-        if (op.isHandled.compareAndSet(false, true)) {
-            val queue = deviceQueues[address] ?: return
-            queue.remove(op)
-            
-            if (!success) {
-                // Cascade Cancellation: Purge all remaining operations with the same msgId
-                val iterator = queue.iterator()
-                while (iterator.hasNext()) {
-                    val pendingOp = iterator.next()
-                    if (pendingOp.msgId == op.msgId) {
-                        iterator.remove()
-                        Log.d("DTN", "Cascade cancelled chunk for msgId: ${op.msgId}")
-                    }
-                }
-            }
-            
-            val isWriting = isOperationInProgress.getOrPut(address) { java.util.concurrent.atomic.AtomicBoolean(false) }
-            isWriting.set(false)
-            processNextOperation(address)
-        }
-    }
 
     private fun clearPendingOperationsForDevice(address: String) {
-        deviceQueues.remove(address)
-        isOperationInProgress.remove(address)
+        txQueue.clearDevice(address)
     }
 
     private fun resetTransportState() {
@@ -277,8 +264,8 @@ class BleMeshManager private constructor(
         activeMtuMap.clear()
         connectionLastUsedMap.clear()
 
-        deviceQueues.clear()
-        isOperationInProgress.clear()
+        txQueue.clearAll()
+        writeBudget.clearAll()
         connectedGattClients.clear()
         discoveredDevices.clear()
         _peerCount.value = 0
@@ -290,91 +277,11 @@ class BleMeshManager private constructor(
         evictionQueue.clear()
     }
 
-    private fun executeWrite(op: BleOperation, address: String) {
-        try {
-            android.util.Log.d("BLE_TX", "MessageId=${op.messageId} DeviceMAC=${address} PayloadSize=${op.payload.size}")
-            trace(
-                op.messageId,
-                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_START,
-                com.blink.dtn.telemetry.detailsOf(
-                    "peer" to address,
-                    "bytes" to op.payload.size,
-                    "chunkMsgId" to op.msgId
-                )
-            )
-            var successFlag = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val success = op.gatt.writeCharacteristic(op.characteristic, op.payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-                if (success != android.bluetooth.BluetoothStatusCodes.SUCCESS) {
-                    Log.e("DTN", "writeCharacteristic failed with status: $success. Payload size: ${op.payload.size}")
-            trace(
-                op.messageId,
-                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
-                com.blink.dtn.telemetry.detailsOf("peer" to address, "status" to success)
-            )
-            com.blink.dtn.telemetry.PeerDirectory.noteError(address)
-                    completeOperation(address, op, success = false)
-                    handleOperationResult(op.messageId, address, false)
-                    disconnectGatt(op.gatt)
-                } else {
-                    successFlag = true
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                op.characteristic.value = op.payload
-                @Suppress("DEPRECATION")
-                op.characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                @Suppress("DEPRECATION")
-                val success = op.gatt.writeCharacteristic(op.characteristic)
-                if (!success) {
-                    Log.e("BLE_TX", "writeCharacteristic failed (legacy). Payload size: ${op.payload.size}")
-                    trace(
-                        op.messageId,
-                        com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
-                        com.blink.dtn.telemetry.detailsOf("peer" to address, "legacy" to true)
-                    )
-                    completeOperation(address, op, success = false)
-                    handleOperationResult(op.messageId, address, false)
-                    disconnectGatt(op.gatt)
-                } else {
-                    successFlag = true
-                }
-            }
-            if (successFlag) {
-                trace(
-                    op.messageId,
-                    com.blink.dtn.telemetry.TraceStages.GATT_WRITE_DONE,
-                    com.blink.dtn.telemetry.detailsOf("peer" to address, "bytes" to op.payload.size)
-                )
-                scope.launch {
-                    delay(3000)
-                    // Finding #3 hardening: only treat as a failure if the write callback
-                    // hasn't already resolved this op. Prevents spurious TxResult.Failure and
-                    // cascade-cancelling the remaining chunks of an already-delivered message.
-                    if (!op.isHandled.get()) {
-                        completeOperation(address, op, success = false)
-                        handleOperationResult(op.messageId, address, false)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("BLE_TX", "Exception writing characteristic: ${e.message}")
-            trace(
-                op.messageId,
-                com.blink.dtn.telemetry.TraceStages.GATT_WRITE_FAIL,
-                com.blink.dtn.telemetry.detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(800))
-            )
-            completeOperation(address, op, success = false)
-            handleOperationResult(op.messageId, address, false)
-            disconnectGatt(op.gatt)
-        }
-    }
-
-
     private fun disconnectGatt(gatt: BluetoothGatt) {
         try {
             val address = gatt.device.address
             activeGattConnections.remove(address)
+            // Keep writeBudget for this MAC — OEM attribute caps survive reconnect.
             activeMtuMap.remove(address)
             gatt.disconnect()
             gatt.close()
@@ -433,8 +340,8 @@ class BleMeshManager private constructor(
         // the same value as data (PRIVATE/PUBLIC) so keys can propagate as far as
         // the data they unlock; otherwise peers >3 hops away could never get keys.
         const val DEFAULT_TTL = 7
-        val SERVICE_UUID: UUID = UUID.fromString("0000b111-0000-1000-8000-00805f9b34fb")
-        val CHARACTERISTIC_UUID: UUID = UUID.fromString("0000b112-0000-1000-8000-00805f9b34fb")
+        val SERVICE_UUID: UUID = BleMeshUuids.SERVICE
+        val CHARACTERISTIC_UUID: UUID = BleMeshUuids.CHARACTERISTIC
         
         @Volatile
         private var INSTANCE: BleMeshManager? = null
@@ -542,7 +449,7 @@ class BleMeshManager private constructor(
         activeBatches.remove(messageId)
         messageBackoffMap.remove(messageId)
 
-        for ((_, queue) in deviceQueues) {
+        txQueue.forEachQueue { queue ->
             val it = queue.iterator()
             while (it.hasNext()) {
                 if (it.next().messageId == messageId) it.remove()
@@ -952,8 +859,10 @@ class BleMeshManager private constructor(
         messageId: String
     ): Boolean {
         return try {
+            val address = gatt.device.address
+            val encodeMtu = writeBudget.encodeMtu(address, mtu)
             val chunkStart = System.currentTimeMillis()
-            val chunks = BleChunkCodec.encode(payload, mtu, chunkMessageId)
+            val chunks = BleChunkCodec.encode(payload, encodeMtu, chunkMessageId)
             trace(
                 messageId,
                 com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,
@@ -962,13 +871,17 @@ class BleMeshManager private constructor(
                     "chunksCount" to chunks.size,
                     "chunkSizes" to chunks.joinToString(",") { it.size.toString() },
                     "mtu" to mtu,
+                    "encodeMtu" to encodeMtu,
+                    "maxWrite" to writeBudget.maxWriteBytes(address, mtu),
                     "chunkCreationDurationMs" to (System.currentTimeMillis() - chunkStart),
-                    "peer" to gatt.device.address
+                    "peer" to address
                 ),
                 visual = "📚 Разделено на ${chunks.size} чанков"
             )
             for (chunkBytes in chunks) {
-                enqueueOperation(BleOperation(gatt, characteristic, chunkBytes, chunkMessageId, messageId))
+                txQueue.enqueue(
+                    BleGattTxQueue.Op(gatt, characteristic, chunkBytes, chunkMessageId, messageId)
+                )
             }
             true
         } catch (e: IllegalArgumentException) {
@@ -1089,23 +1002,24 @@ class BleMeshManager private constructor(
                     status: Int
                 ) {
                     val address = gatt.device.address
-                    val queue = deviceQueues[address]
-                    val op = queue?.peek()
-                    
+                    val op = txQueue.peek(address)
+
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         Log.e("BLE_WRITE_FAIL", "MessageId=${op?.messageId} status=false gattStatus=$status")
+                        // 0x0D = GATT_INVALID_ATTRIBUTE_LENGTH
+                        if (status == 0x0D && op != null) {
+                            writeBudget.noteOversizedWrite(address, op.payload.size)
+                        }
                         if (op != null) {
-                            completeOperation(address, op, success = false)
+                            txQueue.complete(address, op, success = false)
                             handleOperationResult(op.messageId, address, false)
                         }
                         disconnectGatt(gatt)
                     } else {
                         if (op != null) {
                             Log.d("BLE_WRITE_OK", "MessageId=${op.messageId} DeviceMAC=$address")
-                            completeOperation(address, op, success = true)
-                            val queueAfter = deviceQueues[address]
-                            val hasMoreOfSameMessage = queueAfter?.any { it.messageId == op.messageId } == true
-                            if (!hasMoreOfSameMessage) {
+                            txQueue.complete(address, op, success = true)
+                            if (!txQueue.hasMoreOfMessage(address, op.messageId)) {
                                 handleOperationResult(op.messageId, address, true)
                             }
                         }
