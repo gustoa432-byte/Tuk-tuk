@@ -54,6 +54,23 @@ class BLinkMeshService : Service() {
         }
         bleMeshManager = BleMeshManager.getInstance(this, dao, myNodeId)
 
+        com.blink.dtn.telemetry.MeshDutyTelemetry.init(this)
+        com.blink.dtn.telemetry.MeshDutyTelemetry.startBatteryReceiver(this)
+
+        runCatching {
+            val wifiDirect = com.blink.dtn.transport.WifiDirectTransport(applicationContext)
+            val registry = com.blink.dtn.transport.MeshTransportRegistry(
+                listOf(
+                    com.blink.dtn.transport.BleMeshTransport(bleMeshManager),
+                    wifiDirect
+                )
+            )
+            bleMeshManager.attachTransportRegistry(registry)
+            registry.startAll()
+        }.onFailure {
+            android.util.Log.w("MeshService", "Transport registry init: ${it.message}")
+        }
+
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "mesh_channel")
             .setContentTitle("TukTuk Network")
@@ -103,13 +120,20 @@ class BLinkMeshService : Service() {
                     when (result) {
                         is com.blink.dtn.ble.TxResult.Success -> {
                             val currentMsg = dao.getMessageById(result.msgId)
-                            if (currentMsg?.status != com.blink.dtn.db.Message.STATUS_SENT) {
+                            // Don't clobber end-to-end DELIVERED; SENT means "у соседей" / "в пути".
+                            if (currentMsg != null &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_SENT &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED
+                            ) {
                                 dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_SENT)
                             }
                         }
                         is com.blink.dtn.ble.TxResult.Failure -> {
                             val currentMsg = dao.getMessageById(result.msgId)
-                            if (currentMsg != null && currentMsg.status != com.blink.dtn.db.Message.STATUS_SENT) {
+                            if (currentMsg != null &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_SENT &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED
+                            ) {
                                 val newRetry = currentMsg.retryCount + 1
                                 if (newRetry >= 10) {
                                     dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_FAILED)
@@ -195,7 +219,9 @@ class BLinkMeshService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         vkRelayJob?.cancel()
-                txResultJob?.cancel()
+        txResultJob?.cancel()
+        bleMeshManager.transportRegistry?.stopAll()
+        com.blink.dtn.telemetry.MeshDutyTelemetry.stopBatteryReceiver()
         bleMeshManager.stopMesh()
     }
 

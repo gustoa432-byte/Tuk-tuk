@@ -326,6 +326,10 @@ internal class BleRelayEngine(
 
         val batch = TxBatch(validDevices.size)
         activeBatches[message.id] = batch
+        // Surface "у соседей" in chat UI while GATT writes are in progress.
+        if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
+            deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
+        }
         batch.watchdogJob = scopeProvider().launch {
             delay(45_000L)
             if (batch.isResolved.compareAndSet(false, true)) {

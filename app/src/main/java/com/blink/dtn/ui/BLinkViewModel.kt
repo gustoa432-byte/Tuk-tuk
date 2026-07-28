@@ -30,7 +30,7 @@ class BLinkViewModel(
     private val dao: BLinkDao,
     private val conversationDao: ConversationDao,
     private val repository: BLinkRepository,
-    private val bleMeshManager: BleMeshManager,
+    val bleMeshManager: BleMeshManager,
     val myNodeId: String,
     var myNick: String
 ) : AndroidViewModel(application) {
@@ -52,6 +52,7 @@ class BLinkViewModel(
     init {
         MeshIdGenerator.init(application)
         TraceStore.init(application)
+        com.blink.dtn.telemetry.MeshDutyTelemetry.init(application)
         bleMeshManager.updateMyProfile(myNick, false)
         
         // Execute background cleanup periodically while the app is alive
@@ -154,21 +155,116 @@ class BLinkViewModel(
             put("n", myNick)
         }.toString()
 
+    /**
+     * Ensure a peer profile exists and is a CONTACT (QR, manual ID, or user-initiated chat).
+     * Does not downgrade BLOCKED / overwrite localAlias.
+     */
+    fun ensureContact(peerId: String, nick: String = "") {
+        if (peerId.isBlank() || peerId == myNodeId) return
+        viewModelScope.launch(Dispatchers.IO) {
+            upsertPeerAsContact(peerId, nick)
+        }
+    }
+
+    private suspend fun upsertPeerAsContact(peerId: String, nick: String = "", pubKeyBase64: String? = null) {
+        val existing = dao.getProfileById(peerId)
+        if (existing?.isBlocked == true) return
+        val resolvedNick = nick.ifBlank { existing?.nickname.orEmpty() }.ifBlank { peerId }
+        val profile = if (existing != null) {
+            existing.copy(
+                nickname = if (nick.isNotBlank()) nick else existing.nickname,
+                lastSeen = System.currentTimeMillis(),
+                publicKey = pubKeyBase64?.takeIf { it.isNotEmpty() } ?: existing.publicKey,
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+            )
+        } else {
+            com.blink.dtn.db.UserProfile(
+                userId = peerId,
+                nickname = resolvedNick,
+                lastSeen = System.currentTimeMillis(),
+                isVip = false,
+                publicKey = pubKeyBase64.orEmpty(),
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+            )
+        }
+        dao.insertOrUpdateProfile(profile)
+        syncConversationDisplayName(peerId, profile)
+    }
+
+    private suspend fun syncConversationDisplayName(peerId: String, profile: com.blink.dtn.db.UserProfile) {
+        val conv = conversationDao.getConversationById(peerId) ?: return
+        val label = profile.displayLabel(conv.displayName)
+        if (conv.displayName != label) {
+            dao.updateConversationDisplayName(peerId, label)
+        }
+    }
+
+    /** Local-only rename for a contact. Does not change their network nick. */
+    fun setLocalAlias(peerId: String, alias: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = dao.getProfileById(peerId)
+            val trimmed = alias.trim()
+            if (existing != null) {
+                dao.updateLocalAlias(peerId, trimmed)
+                val updated = existing.copy(localAlias = trimmed)
+                syncConversationDisplayName(peerId, updated)
+            } else {
+                val profile = com.blink.dtn.db.UserProfile(
+                    userId = peerId,
+                    nickname = peerId,
+                    lastSeen = System.currentTimeMillis(),
+                    isVip = false,
+                    localAlias = trimmed,
+                    trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                )
+                dao.insertOrUpdateProfile(profile)
+                syncConversationDisplayName(peerId, profile)
+            }
+        }
+    }
+
+    /** Promote a stranger (message request) to a normal contact. */
+    fun acceptContact(peerId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            upsertPeerAsContact(peerId)
+        }
+    }
+
+    /**
+     * Ignore / block a peer: drop future private ingress locally and remove the dialog.
+     * Uses nodeId trustStatus (nick is not a unique id).
+     */
+    fun ignorePeer(peerId: String, nick: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = dao.getProfileById(peerId)
+            val profile = (existing ?: com.blink.dtn.db.UserProfile(
+                userId = peerId,
+                nickname = nick.ifBlank { peerId },
+                lastSeen = System.currentTimeMillis(),
+                isVip = false
+            )).copy(trustStatus = com.blink.dtn.db.UserProfile.TRUST_BLOCKED)
+            dao.insertOrUpdateProfile(profile)
+            val blockNick = nick.ifBlank { existing?.nickname.orEmpty() }
+            if (blockNick.isNotBlank()) {
+                dao.blockUser(BlockedUser(blockNick, System.currentTimeMillis()))
+            }
+            dao.deleteMessagesInConversation(peerId)
+            dao.deleteConversationById(peerId)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                if (currentDialogId.value == peerId) {
+                    currentDialogId.value = null
+                }
+            }
+        }
+    }
+
     // Persist a QR-scanned contact with its pinned public key. The id is the
     // self-certifying hash of pubKeyBase64, so this can only ever pin the one
     // key that matches the id (a later BLE announcement must carry the same key
     // or it is rejected at ingress).
     fun addScannedContact(id: String, nick: String, pubKeyBase64: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.insertOrUpdateProfile(
-                com.blink.dtn.db.UserProfile(
-                    id,
-                    nick.ifEmpty { id },
-                    System.currentTimeMillis(),
-                    false,
-                    pubKeyBase64
-                )
-            )
+            upsertPeerAsContact(id, nick, pubKeyBase64)
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 setCurrentDialog(id)
             }
@@ -225,6 +321,9 @@ class BLinkViewModel(
 
     fun sendPrivateMessage(text: String, targetId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            // Outbound private = user-initiated → contact (not a stranger request).
+            upsertPeerAsContact(targetId)
+
             val trace = TraceStore.begin(
                 kind = TraceKind.MESSAGE,
                 conversationId = targetId,

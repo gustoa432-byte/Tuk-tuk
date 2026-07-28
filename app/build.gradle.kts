@@ -51,6 +51,15 @@ android {
             )
         }
     }
+    packaging {
+        // Prefer stable APK entry order for FOSS verification (see docs/REPRODUCIBLE_BUILDS.md).
+        jniLibs {
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

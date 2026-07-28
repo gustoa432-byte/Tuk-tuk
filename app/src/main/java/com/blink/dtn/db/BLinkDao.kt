@@ -186,6 +186,15 @@ abstract class BLinkDao {
     @Query("SELECT * FROM user_profiles WHERE userId = :userId LIMIT 1")
     abstract fun getProfileByIdFlow(userId: String): Flow<UserProfile?>
 
+    @Query("UPDATE user_profiles SET localAlias = :alias WHERE userId = :userId")
+    abstract suspend fun updateLocalAlias(userId: String, alias: String)
+
+    @Query("UPDATE user_profiles SET trustStatus = :trustStatus WHERE userId = :userId")
+    abstract suspend fun updateTrustStatus(userId: String, trustStatus: String)
+
+    @Query("UPDATE conversations SET displayName = :displayName WHERE conversationId = :conversationId")
+    abstract suspend fun updateConversationDisplayName(conversationId: String, displayName: String)
+
     @Query("DELETE FROM user_profiles WHERE lastSeen < :threshold")
     abstract suspend fun deleteOldProfiles(threshold: Long)
 

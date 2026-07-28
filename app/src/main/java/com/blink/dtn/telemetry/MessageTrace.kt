@@ -109,6 +109,7 @@ object TraceStages {
     const val GATT_WRITE_START = "GATT.WriteStart"
     const val GATT_WRITE_DONE = "GATT.WriteDone"
     const val GATT_WRITE_FAIL = "GATT.WriteFail"
+    const val GATT_WRITE_BUDGET = "GATT.WriteBudgetDownshift"
     // TX complete
     const val TX_ALL_CHUNKS = "TX.AllChunksSent"
     const val TX_BATCH_RESULT = "TX.BatchResult"

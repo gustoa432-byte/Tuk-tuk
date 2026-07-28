@@ -56,6 +56,7 @@ object TraceStore {
             appContext = context.applicationContext
             tracesDir = File(context.applicationContext.filesDir, "traces").also { it.mkdirs() }
             PeerDirectory.init(context)
+            MeshDutyTelemetry.init(context)
         }
     }
 
@@ -181,6 +182,7 @@ object TraceStore {
                     put("heatmap.json", json.encodeToString(latest.heatmap))
                 }
                 put("observatory_all.json", json.encodeToString(reports))
+                put("duty.json", json.encodeToString(MeshDutyTelemetry.current()))
                 traces.forEach { t ->
                     put("traces/${t.traceId}.json", json.encodeToString(t))
                 }

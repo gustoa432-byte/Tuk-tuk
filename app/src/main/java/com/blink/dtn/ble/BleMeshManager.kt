@@ -81,6 +81,7 @@ class BleMeshManager private constructor(
         writeBudget = writeBudget,
         hooks = object : BleGattTxQueue.Hooks {
             override fun onWriteStart(messageId: String, address: String, bytes: Int, chunkMsgId: Int) {
+                com.blink.dtn.telemetry.MeshDutyTelemetry.noteWriteAttempt(bytes)
                 trace(
                     messageId,
                     com.blink.dtn.telemetry.TraceStages.GATT_WRITE_START,
@@ -93,6 +94,7 @@ class BleMeshManager private constructor(
             }
 
             override fun onWriteDone(messageId: String, address: String, bytes: Int) {
+                com.blink.dtn.telemetry.MeshDutyTelemetry.noteWriteSuccess(bytes)
                 trace(
                     messageId,
                     com.blink.dtn.telemetry.TraceStages.GATT_WRITE_DONE,
@@ -101,6 +103,10 @@ class BleMeshManager private constructor(
             }
 
             override fun onWriteFail(messageId: String, address: String, details: Map<String, Any?>) {
+                val b = (details["bytes"] as? Number)?.toInt()
+                    ?: details["bytes"]?.toString()?.toIntOrNull()
+                    ?: 0
+                com.blink.dtn.telemetry.MeshDutyTelemetry.noteWriteFailure(b)
                 val pairs = details.entries.map { it.key to (it.value?.toString() ?: "") }.toTypedArray()
                 trace(
                     messageId,
@@ -470,6 +476,17 @@ class BleMeshManager private constructor(
             isMeshRunning.set(false)
             Log.e("DTN", "Exception starting mesh: ${e.message}")
         }
+    }
+
+    fun writeBudgetSnapshot(): WriteBudgetSnapshot = writeBudget.snapshot()
+
+    /** Optional multi-transport registry (BLE + experimental Wi‑Fi Direct). */
+    @Volatile
+    var transportRegistry: com.blink.dtn.transport.MeshTransportRegistry? = null
+        private set
+
+    fun attachTransportRegistry(registry: com.blink.dtn.transport.MeshTransportRegistry) {
+        transportRegistry = registry
     }
 
     fun stopMesh() {

@@ -65,11 +65,23 @@ internal class BleGattClientTx(
         }
 
         try {
+            com.blink.dtn.telemetry.MeshDutyTelemetry.noteGattConnectStart()
+            deps.trace(
+                messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_CONNECT_START,
+                com.blink.dtn.telemetry.detailsOf("peer" to device.address)
+            )
             device.connectGatt(context, false, object : BluetoothGattCallback() {
                 var currentMtu = 20
 
                 override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        com.blink.dtn.telemetry.MeshDutyTelemetry.noteGattConnectOk()
+                        deps.trace(
+                            messageId,
+                            com.blink.dtn.telemetry.TraceStages.GATT_CONNECT_OK,
+                            com.blink.dtn.telemetry.detailsOf("peer" to gatt.device.address, "status" to status)
+                        )
                         try {
                             gatt.requestMtu(512)
                         } catch (e: SecurityException) {
@@ -78,6 +90,9 @@ internal class BleGattClientTx(
                             deps.disconnectGatt(gatt)
                         }
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        if (status != BluetoothGatt.GATT_SUCCESS) {
+                            com.blink.dtn.telemetry.MeshDutyTelemetry.noteGattConnectFail()
+                        }
                         val address = gatt.device.address
                         deps.activeGatt().remove(address)
                         deps.activeMtu().remove(address)

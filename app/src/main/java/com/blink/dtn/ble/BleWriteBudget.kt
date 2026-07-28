@@ -1,7 +1,9 @@
 package com.blink.dtn.ble
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
+import kotlinx.serialization.Serializable
 
 /**
  * Per-peer write budget for GATT characteristic values.
@@ -19,6 +21,7 @@ class BleWriteBudget {
 
     /** Optional peer-specific max attribute value length (bytes), learned from failures. */
     private val peerMaxWrite = ConcurrentHashMap<String, Int>()
+    private val downshiftCount = AtomicInteger(0)
 
     fun maxWriteBytes(address: String?, negotiatedMtu: Int): Int {
         val fromMtu = (negotiatedMtu - 3).coerceAtLeast(20)
@@ -37,10 +40,21 @@ class BleWriteBudget {
      * After an oversized-write rejection, lower the peer ceiling to the next
      * step strictly below the failed attempt (or 23 as floor).
      */
-    fun noteOversizedWrite(address: String, attemptedBytes: Int): Int {
+    fun noteOversizedWrite(address: String, attemptedBytes: Int, reason: String = "oversized"): Int {
+        val prev = peerMaxWrite[address] ?: ANDROID_MAX_ATTR_BYTES
         val next = DOWNSTEPS.firstOrNull { it < attemptedBytes } ?: 23
         peerMaxWrite.merge(address, next) { a, b -> min(a, b) }
-        return peerMaxWrite[address] ?: next
+        val applied = peerMaxWrite[address] ?: next
+        if (applied < prev) {
+            downshiftCount.incrementAndGet()
+            com.blink.dtn.telemetry.MeshDutyTelemetry.noteBudgetDownshift(
+                address = address,
+                fromBytes = prev,
+                toBytes = applied,
+                reason = reason
+            )
+        }
+        return applied
     }
 
     fun isOversizedError(message: String?): Boolean {
@@ -58,4 +72,16 @@ class BleWriteBudget {
     fun clearAll() {
         peerMaxWrite.clear()
     }
+
+    fun snapshot(): WriteBudgetSnapshot =
+        WriteBudgetSnapshot(
+            downshiftCount = downshiftCount.get(),
+            peerCaps = peerMaxWrite.mapValues { it.value }
+        )
 }
+
+@Serializable
+data class WriteBudgetSnapshot(
+    val downshiftCount: Int,
+    val peerCaps: Map<String, Int>
+)

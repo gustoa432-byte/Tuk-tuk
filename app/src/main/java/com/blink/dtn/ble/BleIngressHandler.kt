@@ -206,13 +206,23 @@ internal class BleIngressHandler(
                 pubKey
             }
         }
+        // Preserve local alias, trust, and gifts — identity packets only refresh nick/key.
         dao.insertOrUpdateProfile(
             com.blink.dtn.db.UserProfile(
-                packet.senderId,
-                nick,
-                System.currentTimeMillis(),
-                isVip,
-                trustedPublicKey
+                userId = packet.senderId,
+                nickname = nick,
+                lastSeen = System.currentTimeMillis(),
+                isVip = isVip,
+                publicKey = trustedPublicKey,
+                giftRoses = existingProfile?.giftRoses ?: 0,
+                giftBears = existingProfile?.giftBears ?: 0,
+                giftDiamonds = existingProfile?.giftDiamonds ?: 0,
+                giftCoffee = existingProfile?.giftCoffee ?: 0,
+                giftRockets = existingProfile?.giftRockets ?: 0,
+                giftCrowns = existingProfile?.giftCrowns ?: 0,
+                localAlias = existingProfile?.localAlias ?: "",
+                trustStatus = existingProfile?.trustStatus
+                    ?: com.blink.dtn.db.UserProfile.TRUST_STRANGER
             )
         )
         Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
@@ -269,6 +279,33 @@ internal class BleIngressHandler(
     }
 
     private suspend fun handlePrivateForMe(packet: Message) {
+        val existing = dao.getProfileById(packet.senderId)
+        if (existing?.isBlocked == true || dao.isUserBlocked(packet.senderNick)) {
+            Log.i("DTN", "Dropping private from blocked peer ${packet.senderId}")
+            return
+        }
+
+        // First inbound private from an unknown peer → stranger (message request).
+        // Do not escalate trust here; Accept in UI promotes to CONTACT.
+        if (existing == null) {
+            dao.insertOrUpdateProfile(
+                com.blink.dtn.db.UserProfile(
+                    userId = packet.senderId,
+                    nickname = packet.senderNick.ifBlank { packet.senderId },
+                    lastSeen = System.currentTimeMillis(),
+                    isVip = false,
+                    trustStatus = com.blink.dtn.db.UserProfile.TRUST_STRANGER
+                )
+            )
+        } else if (packet.senderNick.isNotBlank() && existing.nickname != packet.senderNick) {
+            dao.insertOrUpdateProfile(
+                existing.copy(
+                    nickname = packet.senderNick,
+                    lastSeen = System.currentTimeMillis()
+                )
+            )
+        }
+
         deps.ensureTrace(packet.id, "PRIVATE", packet.senderId, packet.targetId)
         deps.trace(
             packet.id,

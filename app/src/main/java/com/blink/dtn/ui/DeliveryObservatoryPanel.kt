@@ -93,7 +93,7 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
 
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Journey", "Tree", "Route", "Timeline", "Mesh", "Heat", "Stats").forEach { name ->
+            listOf("Journey", "Tree", "Route", "Timeline", "Mesh", "Heat", "Stats", "Duty").forEach { name ->
                 Text(
                     name,
                     color = if (tab == name) TextPrimary else TextSecondary,
@@ -145,9 +145,10 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
                 "Tree" -> TreeBlock(r.tree)
                 "Route" -> RouteBlock(r)
                 "Timeline" -> TimelineBlock(r)
-                "Mesh" -> MeshBlock(r)
+                "Mesh" -> MeshBlock(r, viewModel)
                 "Heat" -> HeatBlock(r)
                 "Stats" -> StatsBlock(r)
+                "Duty" -> DutyBlock(viewModel)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -162,6 +163,15 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
                     Toast.makeText(context, "Отчёт → tuktukfb@internet.ru", Toast.LENGTH_SHORT).show()
                 }) { Text("Export ZIP", color = TextPrimary, style = Typography.labelMedium) }
             }
+        }
+        if (report == null && tab == "Duty") {
+            Spacer(modifier = Modifier.height(12.dp))
+            DutyBlock(viewModel)
+            Spacer(modifier = Modifier.height(12.dp))
+            TukTukButton(onClick = {
+                TraceStore.shareExport(context, peerCount, peers)
+                Toast.makeText(context, "Отчёт → tuktukfb@internet.ru", Toast.LENGTH_SHORT).show()
+            }) { Text("Export ZIP", color = TextPrimary, style = Typography.labelMedium) }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -271,9 +281,20 @@ private fun TimelineBlock(r: ObservatoryReport) {
 }
 
 @Composable
-private fun MeshBlock(r: ObservatoryReport) {
+private fun MeshBlock(r: ObservatoryReport, viewModel: BLinkViewModel) {
     Text("Mesh Explorer", style = Typography.titleMedium, color = TextPrimary)
-    Text("Готово к LoRa / VK / Wi‑Fi — сейчас BLE", color = TextSecondary, style = Typography.labelSmall)
+    Text("BLE — основной транспорт. Wi‑Fi Direct — экспериментально.", color = TextSecondary, style = Typography.labelSmall)
+    Spacer(modifier = Modifier.height(6.dp))
+    val registry = remember { viewModel.bleMeshManager.transportRegistry }
+    registry?.all()?.forEach { t ->
+        val peers by t.discoveredPeers.collectAsState()
+        val avail by t.isAvailable.collectAsState()
+        Text(
+            "• ${t.displayNameRu}: ${if (avail) "доступен" else "нет"} · peers=${peers.size}",
+            color = TextPrimary,
+            style = Typography.bodySmall
+        )
+    }
     Spacer(modifier = Modifier.height(6.dp))
     r.mesh.nodes.forEach { n ->
         Text("• [${n.kind}/${n.transport}] ${n.label}", color = TextPrimary, style = Typography.bodySmall)
@@ -313,5 +334,73 @@ private fun StatsBlock(r: ObservatoryReport) {
         "ACK latency" to s.ackLatencyMs
     ).forEach { (k, v) ->
         Text("$k: ${v ?: "—"}", color = TextSecondary, style = Typography.bodySmall)
+    }
+}
+
+@Composable
+private fun DutyBlock(viewModel: BLinkViewModel) {
+    val duty by com.blink.dtn.telemetry.MeshDutyTelemetry.snapshot.collectAsState()
+    val budget = remember(duty.writeAttempts, duty.budgetDownshifts) {
+        viewModel.bleMeshManager.writeBudgetSnapshot()
+    }
+    Text("Нагрузка / батарея", style = Typography.titleMedium, color = TextPrimary)
+    Text(
+        "Сессия ${(duty.sessionMs / 60_000)} мин · доказывает, что mesh не «съедает» телефон за час",
+        color = TextSecondary,
+        style = Typography.labelSmall
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    val bat = duty.batterySamples.lastOrNull()
+    Text(
+        "Батарея: ${bat?.pct?.let { "$it%" } ?: "—"}" +
+            (if (bat?.charging == true) " (зарядка)" else "") +
+            (duty.batteryDrainPct?.let { " · спад сессии −$it%" } ?: ""),
+        color = TextPrimary,
+        style = Typography.bodyMedium
+    )
+    if (duty.batterySamples.size >= 2) {
+        val spark = duty.batterySamples.takeLast(24).joinToString("") { s ->
+            when {
+                s.pct >= 80 -> "█"
+                s.pct >= 60 -> "▇"
+                s.pct >= 40 -> "▅"
+                s.pct >= 20 -> "▃"
+                else -> "▁"
+            }
+        }
+        Text("Заряд: $spark", color = TextSecondary, style = Typography.labelSmall)
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    listOf(
+        "GATT write попыток" to duty.writeAttempts,
+        "успешных" to duty.writeSuccesses,
+        "ошибок" to duty.writeFailures,
+        "байт (успех)" to duty.bytesSucceeded,
+        "байт/мин" to "%.0f".format(duty.bytesPerMinute()),
+        "GATT connect start/ok/fail" to "${duty.gattConnectStarts}/${duty.gattConnectOk}/${duty.gattConnectFail}",
+        "бюджет downshift" to duty.budgetDownshifts,
+        "успех write %" to "%.0f%%".format(duty.writeSuccessRate() * 100)
+    ).forEach { (k, v) ->
+        Text("$k: $v", color = TextSecondary, style = Typography.bodySmall)
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text("BleWriteBudget peer caps", style = Typography.labelMedium, color = TextPrimary)
+    if (budget.peerCaps.isEmpty()) {
+        Text("Пока без downshift (все peers на MTU/512).", color = TextSecondary, style = Typography.labelSmall)
+    } else {
+        budget.peerCaps.entries.take(12).forEach { (mac, cap) ->
+            Text("$mac → max $cap B", color = TextSecondary, style = Typography.labelSmall)
+        }
+    }
+    if (duty.recentDownshifts.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text("Недавние downshift", style = Typography.labelMedium, color = TextPrimary)
+        duty.recentDownshifts.takeLast(6).forEach { e ->
+            Text(
+                "${e.address.takeLast(8)} ${e.fromBytes}→${e.toBytes} (${e.reason})",
+                color = TextSecondary,
+                style = Typography.labelSmall
+            )
+        }
     }
 }
