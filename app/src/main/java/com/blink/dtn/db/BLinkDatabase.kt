@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 13, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 14, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -143,6 +143,18 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // Peer app version gossip (IDENTITY_ANNOUNCEMENT vc|vn).
+        val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `appVersionCode` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `appVersionName` TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -150,9 +162,15 @@ abstract class BLinkDatabase : RoomDatabase() {
                     BLinkDatabase::class.java,
                     "blink_database"
                 )
-                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                    MIGRATION_11_12,
+                    MIGRATION_12_13,
+                    MIGRATION_13_14
+                )
                 // Do NOT wipe user data on every unknown schema change. Real
-                // migrations are provided for 9->10->11->12->13; destructive fallback is
+                // migrations are provided for 9->10->…->14; destructive fallback is
                 // deliberately limited to legacy pre-9 schemas (which never had a
                 // migration path) and to downgrades. Any future forgotten
                 // migration will now surface as a crash in debug instead of

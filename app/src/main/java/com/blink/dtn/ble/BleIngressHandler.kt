@@ -36,6 +36,8 @@ internal class BleIngressHandler(
         fun ensureTrace(messageId: String, type: String? = null, senderId: String? = null, targetId: String? = null)
         fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null)
         fun markSeen(dedupKey: String): Boolean
+        /** Peer asked us to push our installed APK over Wi‑Fi Direct (experimental). */
+        fun onApkUpdateRequest(fromPeerId: String) {}
     }
 
     fun decodeWirePacket(jsonString: String): DecodedWirePacket {
@@ -76,11 +78,12 @@ internal class BleIngressHandler(
                 return@launch
             }
 
-            if (packet.type == "SYSTEM_ANNOUNCEMENT") {
+            if (com.blink.dtn.security.SecurityConfig.requiresAuthorSignature(packet.type)) {
                 val isValid = withContext(Dispatchers.Default) {
                     SecurityConfig.verifySignature(packet.text, packet.authorSignature)
                 }
                 if (!isValid) {
+                    Log.w("DTN", "Rejected unsigned/invalid ${packet.type} from ${packet.senderNick}")
                     dao.blockUser(BlockedUser(packet.senderNick, System.currentTimeMillis()))
                     return@launch
                 }
@@ -92,7 +95,12 @@ internal class BleIngressHandler(
             } else when (packet.type) {
                 "IDENTITY_ANNOUNCEMENT", "SYSTEM_PROFILE" -> handleIdentity(packet)
                 "IDENTITY_REQUEST" -> handleIdentityRequest(packet)
-                "PUBLIC", "SYSTEM_ANNOUNCEMENT" -> {
+                "UPDATE_REQUEST" -> {
+                    if (packet.targetId == null || packet.targetId == myNodeId) {
+                        deps.onApkUpdateRequest(packet.senderId)
+                    }
+                }
+                "PUBLIC", "SYSTEM_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT" -> {
                     dao.insertMessageWithConversation(packet)
                     deps.notifyIncoming(packet)
                 }
@@ -181,6 +189,8 @@ internal class BleIngressHandler(
         val nick = parts[0]
         val isVip = parts[1].toBoolean()
         val pubKey = if (parts.size >= 3) parts[2] else ""
+        val appVersionCode = parts.getOrNull(3)?.toLongOrNull() ?: 0L
+        val appVersionName = parts.getOrNull(4)?.takeIf { it.isNotBlank() } ?: ""
 
         if (pubKey.isNotEmpty()) {
             val expectedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pubKey)
@@ -206,7 +216,7 @@ internal class BleIngressHandler(
                 pubKey
             }
         }
-        // Preserve local alias, trust, and gifts — identity packets only refresh nick/key.
+        // Preserve local alias, trust, and gifts — identity packets only refresh nick/key/version.
         dao.insertOrUpdateProfile(
             com.blink.dtn.db.UserProfile(
                 userId = packet.senderId,
@@ -222,10 +232,24 @@ internal class BleIngressHandler(
                 giftCrowns = existingProfile?.giftCrowns ?: 0,
                 localAlias = existingProfile?.localAlias ?: "",
                 trustStatus = existingProfile?.trustStatus
-                    ?: com.blink.dtn.db.UserProfile.TRUST_STRANGER
+                    ?: com.blink.dtn.db.UserProfile.TRUST_STRANGER,
+                verifiedOutOfBand = existingProfile?.verifiedOutOfBand ?: false,
+                appVersionCode = if (appVersionCode > 0) appVersionCode
+                else existingProfile?.appVersionCode ?: 0L,
+                appVersionName = appVersionName.ifBlank {
+                    existingProfile?.appVersionName.orEmpty()
+                }
             )
         )
         Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")
+        if (appVersionCode > 0) {
+            com.blink.dtn.update.VersionGossip.notePeerVersionFromProfile(
+                packet.senderId,
+                nick,
+                appVersionCode,
+                appVersionName
+            )
+        }
         if (trustedPublicKey.isNotEmpty()) {
             deps.ensureTrace(packet.id, "IDENTITY_ANNOUNCEMENT", packet.senderId, null)
             com.blink.dtn.telemetry.PeerDirectory.noteNode(packet.senderId, nick)
@@ -236,7 +260,9 @@ internal class BleIngressHandler(
                     "nodeId" to packet.senderId,
                     "nick" to nick,
                     "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(trustedPublicKey),
-                    "keyChanged" to keyChanged
+                    "keyChanged" to keyChanged,
+                    "appVersionCode" to appVersionCode,
+                    "appVersionName" to appVersionName
                 ),
                 visual = "🔑 Ключ сохранён"
             )

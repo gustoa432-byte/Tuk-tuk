@@ -60,7 +60,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
 // 1. Custom bounceClick modifier
 fun Modifier.bounceClick(onClick: () -> Unit) = composed {
     var isPressed by remember { mutableStateOf(false) }
@@ -121,6 +120,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val peerCount by viewModel.peerCount.collectAsState()
     val vkActive by viewModel.vkActive.collectAsState()
     val relayActive by viewModel.relayActive.collectAsState()
+    val nearbyUpdate by viewModel.nearbyUpdate.collectAsState()
     val isConnected = vkActive || peerCount > 0
 
     if (showDevPanel) {
@@ -176,16 +176,68 @@ fun MainScreen(viewModel: BLinkViewModel) {
             CustomBottomBar(selectedTab) { selectedTab = it }
         }
     ) { paddingValues ->
-        Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-            when (selectedTab) {
-                0 -> PrivateTab(viewModel)
-                1 -> PublicTab(viewModel) { contactId ->
-                    viewModel.ensureContact(contactId)
-                    viewModel.setCurrentDialog(contactId)
-                    selectedTab = 0
-                }
-                2 -> ProfileTab(viewModel, { selectedTab = 0 })
+        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+            nearbyUpdate?.let { offer ->
+                NearbyUpdateBanner(
+                    versionName = offer.versionName,
+                    peerNick = offer.peerNick,
+                    onRequest = { viewModel.requestNearbyApkUpdate(offer.peerId) },
+                    onDismiss = { viewModel.dismissNearbyUpdate() }
+                )
             }
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (selectedTab) {
+                    0 -> PrivateTab(viewModel)
+                    1 -> PublicTab(viewModel) { contactId ->
+                        viewModel.ensureContact(contactId)
+                        viewModel.setCurrentDialog(contactId)
+                        selectedTab = 0
+                    }
+                    2 -> ProfileTab(viewModel, { selectedTab = 0 })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyUpdateBanner(
+    versionName: String,
+    peerNick: String,
+    onRequest: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .background(SurfaceDark, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Text(
+            "Доступна версия $versionName рядом",
+            color = TextPrimary,
+            style = Typography.labelLarge
+        )
+        Text(
+            "У $peerNick · быстрая передача по Wi‑Fi Direct (экспериментально)",
+            color = TextSecondary,
+            style = Typography.labelSmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Получить",
+                color = TextPrimary,
+                style = Typography.labelMedium,
+                modifier = Modifier.bounceClick { onRequest() }
+            )
+            Text(
+                "Скрыть",
+                color = TextSecondary,
+                style = Typography.labelMedium,
+                modifier = Modifier.bounceClick { onDismiss() }
+            )
         }
     }
 }
@@ -1015,21 +1067,12 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     }
 
     if (showInfo) {
-        AlertDialog(
+        GlassDialog(
             onDismissRequest = { showInfo = false },
-            title = { Text("О TukTuk", color = TextPrimary) },
-            text = {
-                Box(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    InfoContent(compact = true)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showInfo = false }) {
-                    Text("Закрыть", color = TextPrimary)
-                }
-            },
-            containerColor = SurfaceDark
-        )
+            title = "О Tuk-Tuk"
+        ) {
+            InfoContent(compact = true)
+        }
     }
 
     Column(
@@ -1099,6 +1142,27 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                 style = Typography.labelMedium
             )
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "Версия ${viewModel.myVersionLabel()}",
+            style = Typography.labelSmall,
+            color = TextSecondary
+        )
+        Text(
+            viewModel.buildStatusLabel(),
+            style = Typography.labelSmall,
+            color = TextSecondary
+        )
+        Text(
+            if (com.blink.dtn.security.SecurityConfig.isAuthorKeyConfigured()) {
+                "Ключ автора: задан (официальные объявления проверяются)"
+            } else {
+                "Ключ автора: не задан — «официальные» объявления отклоняются"
+            },
+            style = Typography.labelSmall,
+            color = TextSecondary,
+            modifier = Modifier.padding(top = 2.dp)
+        )
         Spacer(modifier = Modifier.height(32.dp))
         // QR encodes the full contact payload (id + public key + nick) so a scan
         // pins the key out-of-band. The human-readable id below stays as-is.
@@ -1247,7 +1311,6 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
     }
 }
 
-private const val AUTHOR_TELEGRAM = "b6dmachine"
 private const val OFFICIAL_CHANNEL = "tuk_tuk_official"
 private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
 
@@ -1267,12 +1330,16 @@ private fun openTelegramLink(context: Context, pathOrUsername: String) {
     }
 }
 
-private fun openAuthorTelegram(context: Context) {
-    openTelegramLink(context, AUTHOR_TELEGRAM)
-}
-
 private fun openOfficialChannel(context: Context) {
     openTelegramLink(context, OFFICIAL_CHANNEL)
+}
+
+private fun openFeedbackEmail(context: Context) {
+    com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
+        context,
+        subject = "Tuk-Tuk: идея или баг-репорт",
+        body = ""
+    )
 }
 
 private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: String?): String {
@@ -1292,15 +1359,8 @@ private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: Stri
 @Composable
 fun InfoContent(compact: Boolean = false) {
     val context = LocalContext.current
-    val storyStyle = Typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
-    val quietStyle = Typography.bodySmall.copy(lineHeight = 15.sp)
-    val helpItems = listOf(
-        "покупать оборудование для тестов",
-        "разрабатывать маршрутизацию",
-        "тестировать сеть в реальных условиях",
-        "развивать дальнюю связь",
-        "выпускать новые версии"
-    )
+    val bodyStyle = Typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp)
+    val quietStyle = Typography.bodySmall.copy(lineHeight = 16.sp)
 
     Column(
         modifier = Modifier
@@ -1309,138 +1369,45 @@ fun InfoContent(compact: Boolean = false) {
             .then(if (compact) Modifier else Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp))
     ) {
         if (!compact) {
-            Text("О проекте", style = Typography.labelSmall, color = TextSecondary)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text("TukTuk", style = Typography.titleLarge, color = TextPrimary)
-            Spacer(modifier = Modifier.height(4.dp))
+            Text("О Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
+            Spacer(modifier = Modifier.height(8.dp))
         }
-        Text(
-            "Мессенджер, который помогает оставаться на связи, когда пропадает интернет.",
-            style = quietStyle,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Text("Почему появился TukTuk?", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Во время отключения света я не смог сообщить родному человеку, что со мной всё в порядке. " +
-                "Пришлось ехать через весь город только ради одной фразы: «Со мной всё хорошо».",
-            style = storyStyle,
-            color = TextPrimary
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "После этого я решил создать TukTuk, чтобы люди могли оставаться на связи даже тогда, " +
-                "когда привычный интернет недоступен.",
-            style = storyStyle,
-            color = TextPrimary
-        )
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text("Как помогает", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Общий чат рядом · Личные сообщения · Работает без интернета · Связь через телефоны вокруг",
-            style = quietStyle,
-            color = TextSecondary
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text("Конфиденциальность (кратко)", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "• Диалоги — личные: шифрование на устройстве, ACK от адресата.\n" +
-                "• Общий чат — открытый мегафон: его читают соседи по сети.\n" +
-                "• Ник — метка, не уникальный id (смотрите короткий id).\n" +
-                "• Для семьи сверяйте QR — так контакт станет «проверен».\n" +
-                "Подробнее: docs/THREAT_MODEL.md в исходниках.",
-            style = quietStyle,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Сообщить об уязвимости: $FEEDBACK_EMAIL (см. docs/SECURITY.md).",
-            style = quietStyle,
-            color = TextSecondary
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text("Официальный канал", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Новости и обновления TukTuk.",
-            style = quietStyle,
-            color = TextSecondary
-        )
+        Text("Связь, которую нельзя отключить.", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(6.dp))
-        TukTukButton(onClick = { openOfficialChannel(context) }) {
-            Text("t.me/$OFFICIAL_CHANNEL", color = TextPrimary, style = Typography.labelMedium)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text("Поддержать развитие", style = Typography.titleMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Если TukTuk оказался полезным, вы можете помочь развитию сети.",
-            style = quietStyle,
-            color = TextSecondary
+            "Tuk-Tuk работает, даже когда падает интернет и молчат вышки сотовой связи. " +
+                "Ваши телефоны сами становятся сетью, передавая сообщения от человека к человеку.",
+            style = bodyStyle,
+            color = TextPrimary
         )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text("Ваша поддержка помогает:", style = quietStyle, color = TextSecondary)
-        helpItems.forEach { item ->
-            Text("✔  $item", style = quietStyle, color = TextSecondary)
-        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Контакты", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = { openAuthorTelegram(context) }) {
-            Text("❤️ Стать участником сети", color = TextPrimary, style = Typography.labelMedium)
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        TukTukButton(onClick = { openAuthorTelegram(context) }) {
-            Text("☕ Угостить автора кофе", color = TextPrimary, style = Typography.labelMedium)
-        }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text("Обратная связь", style = Typography.titleMedium, color = TextPrimary)
+        Text("• Канал проекта:", style = quietStyle, color = TextSecondary)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Нашли ошибку? Есть идея? Хотите помочь проекту? Напишите — письма приходят на почту проекта.",
-            style = quietStyle,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(FEEDBACK_EMAIL, style = Typography.bodyMedium, color = TextPrimary)
-        Spacer(modifier = Modifier.height(6.dp))
-        TukTukButton(onClick = {
-            com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
-                context,
-                subject = "TukTuk feedback",
-                body = "Опишите ошибку или идею:\n\n"
-            )
-        }) {
-            Text("Написать", color = TextPrimary, style = Typography.labelMedium)
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Я читаю все сообщения, но могу отвечать не сразу.",
-            style = quietStyle,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Личный Telegram автора: @$AUTHOR_TELEGRAM",
-            style = quietStyle,
-            color = TextSecondary,
-            modifier = Modifier.clickable { openAuthorTelegram(context) }
+            "t.me/$OFFICIAL_CHANNEL",
+            style = Typography.bodyMedium,
+            color = TextPrimary,
+            modifier = Modifier.clickable { openOfficialChannel(context) }
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("• Идеи и баг-репорты:", style = quietStyle, color = TextSecondary)
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "TukTuk остаётся бесплатным для всех.\nСпасибо каждому, кто помогает делать сеть лучше.",
+            FEEDBACK_EMAIL,
+            style = Typography.bodyMedium,
+            color = TextPrimary,
+            modifier = Modifier.clickable { openFeedbackEmail(context) }
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            "® Разработано в Крыму. Для работы в любых условиях",
             style = quietStyle,
             color = TextSecondary,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,

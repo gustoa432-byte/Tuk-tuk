@@ -107,7 +107,7 @@ class CellularBridge private constructor(
                         val isSeen = dao.hasSeenPacket(msg.id)
                         if (!isSeen) {
                             dao.insertSeenPacket(SeenPacket(msg.id, System.currentTimeMillis()))
-                            if (msg.type == "SYSTEM_ANNOUNCEMENT") {
+                            if (SecurityConfig.requiresAuthorSignature(msg.type)) {
                                 val isValid = SecurityConfig.verifySignature(msg.text, msg.authorSignature)
                                 if (!isValid) {
                                     dao.blockUser(BlockedUser(msg.senderNick, System.currentTimeMillis()))

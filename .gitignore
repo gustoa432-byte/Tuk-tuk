@@ -9,3 +9,8 @@ coverage/
 .git_corrupt_backup/
 .gradle/
 *.keystore
+*.jks
+keystore.properties
+secrets/
+author_private.pem
+app/release.keystore

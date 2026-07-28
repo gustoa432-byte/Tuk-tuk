@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Not a full mesh / multi-hop Wi‑Fi fabric (group-local hop only).
  * - Requires Wi‑Fi Direct support + system group membership.
  * - Falls back to BLE when no group; label stays «экспериментально».
+ * - APK file stream (port [FILE_PORT]) is separate from mesh frames; receiver must
+ *   verify signing cert via [com.blink.dtn.security.BuildIntegrity].
  *
  * // Future: LoRa / VPS bridge can share the same MeshTransport contract.
  */
@@ -51,6 +53,7 @@ class WifiDirectTransport(
     private var channel: WifiP2pManager.Channel? = null
     private var receiver: BroadcastReceiver? = null
     private val listening = AtomicBoolean(false)
+    private val fileListening = AtomicBoolean(false)
     @Volatile private var groupOwnerAddress: String? = null
     @Volatile private var isGroupOwner: Boolean = false
     @Volatile private var groupFormed: Boolean = false
@@ -61,11 +64,19 @@ class WifiDirectTransport(
     @Volatile
     var onMeshPayload: ((ByteArray) -> Unit)? = null
 
+    /** Invoked after a complete APK file was written under cacheDir. */
+    @Volatile
+    var onApkFileReceived: ((java.io.File) -> Unit)? = null
+
     companion object {
         private const val TAG = "WifiDirectTx"
         const val PORT = 8988
+        /** Dedicated streaming port for APK / large files (not mesh frames). */
+        const val FILE_PORT = 8989
         private const val MAGIC = 0x54544B31 // "TTK1"
+        private const val MAGIC_FILE = 0x54544B46 // "TTKF"
         private const val MAX_PAYLOAD = 512 * 1024
+        private const val MAX_APK_BYTES = 120L * 1024L * 1024L
     }
 
     fun isGroupReady(): Boolean = groupFormed && (isGroupOwner || !groupOwnerAddress.isNullOrBlank())
@@ -86,6 +97,7 @@ class WifiDirectTransport(
 
     override fun stop() {
         listening.set(false)
+        fileListening.set(false)
         unregisterReceiver()
         clientOut.values.forEach { runCatching { it.close() } }
         clientOut.clear()
@@ -148,6 +160,69 @@ class WifiDirectTransport(
         }
     }
 
+    /**
+     * Stream installed APK (or cached update file) to the peer over a dedicated TCP session.
+     * Experimental — requires an active Wi‑Fi Direct group.
+     */
+    suspend fun sendApkFile(file: java.io.File): Boolean {
+        if (!groupFormed || !file.isFile) return false
+        if (file.length() <= 0L || file.length() > MAX_APK_BYTES) return false
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isGroupOwner) {
+                    val remotes = clientOut.keys.filter { it != "go-session" && it.contains('.') }
+                    if (remotes.isEmpty()) {
+                        Log.w(TAG, "GO sendApkFile: no client IPs yet")
+                        false
+                    } else {
+                        var any = false
+                        for (remote in remotes) {
+                            try {
+                                Socket().use { socket ->
+                                    socket.connect(InetSocketAddress(remote, FILE_PORT), 8_000)
+                                    writeApkStream(socket, file)
+                                }
+                                any = true
+                            } catch (e: Exception) {
+                                Log.w(TAG, "GO APK push to $remote failed: ${e.message}")
+                            }
+                        }
+                        any
+                    }
+                } else {
+                    val host = groupOwnerAddress ?: return@withContext false
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(host, FILE_PORT), 8_000)
+                        writeApkStream(socket, file)
+                    }
+                    true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "sendApkFile failed: ${e.message}")
+                false
+            }
+        }
+    }
+
+    private fun writeApkStream(socket: Socket, file: java.io.File) {
+        val nameBytes = file.name.toByteArray(Charsets.UTF_8)
+        val out = DataOutputStream(socket.getOutputStream())
+        out.writeInt(MAGIC_FILE)
+        out.writeInt(nameBytes.size.coerceAtMost(256))
+        out.write(nameBytes, 0, nameBytes.size.coerceAtMost(256))
+        out.writeLong(file.length())
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                out.write(buf, 0, n)
+            }
+        }
+        out.flush()
+        Log.i(TAG, "APK stream sent ${file.length()} bytes as ${file.name}")
+    }
+
     private fun pushToGroupOwner(payload: ByteArray): Boolean {
         val host = groupOwnerAddress ?: return false
         Socket().use { socket ->
@@ -160,7 +235,6 @@ class WifiDirectTransport(
     private fun pushAsGroupOwner(payload: ByteArray): Boolean {
         val sockets = clientOut.values.toList()
         if (sockets.isEmpty()) {
-            // No dialed-in clients yet — cannot push; BLE fallback.
             Log.d(TAG, "GO has no client sockets yet")
             return false
         }
@@ -180,7 +254,6 @@ class WifiDirectTransport(
     }
 
     private fun writeFramed(socket: Socket, payload: ByteArray) {
-        // Do not close the socket — GO keeps clients for reverse push.
         val out = DataOutputStream(socket.getOutputStream())
         out.writeInt(MAGIC)
         out.writeInt(payload.size)
@@ -201,7 +274,6 @@ class WifiDirectTransport(
                         server.soTimeout = 15_000
                         val client = server.accept()
                         val remote = client.inetAddress?.hostAddress ?: "client"
-                        // Keep socket open for GO→client push; also read one or more frames.
                         clientOut[remote] = client
                         Thread({
                             try {
@@ -226,7 +298,6 @@ class WifiDirectTransport(
                             }
                         }, "wifi-direct-client-$remote").start()
                     } catch (_: java.net.SocketTimeoutException) {
-                        // keep looping while group is up
                     } catch (e: Exception) {
                         if (listening.get()) Log.w(TAG, "Accept: ${e.message}")
                     }
@@ -240,10 +311,77 @@ class WifiDirectTransport(
         }, "wifi-direct-accept").start()
     }
 
-    /**
-     * Non-GO: open a persistent session to GO so reverse push works, and so we
-     * can also receive if GO writes frames to us.
-     */
+    private fun startFileAcceptLoop() {
+        if (!fileListening.compareAndSet(false, true)) return
+        Thread({
+            var server: ServerSocket? = null
+            try {
+                server = ServerSocket(FILE_PORT)
+                server.reuseAddress = true
+                Log.i(TAG, "APK file accept on port $FILE_PORT")
+                while (fileListening.get() && groupFormed && !Thread.currentThread().isInterrupted) {
+                    try {
+                        server.soTimeout = 20_000
+                        val client = server.accept()
+                        Thread({
+                            try {
+                                receiveApkStream(client)
+                            } finally {
+                                runCatching { client.close() }
+                            }
+                        }, "wifi-direct-apk-rx").start()
+                    } catch (_: java.net.SocketTimeoutException) {
+                    } catch (e: Exception) {
+                        if (fileListening.get()) Log.w(TAG, "File accept: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "File accept loop failed: ${e.message}")
+            } finally {
+                runCatching { server?.close() }
+                fileListening.set(false)
+            }
+        }, "wifi-direct-file-accept").start()
+    }
+
+    private fun receiveApkStream(socket: Socket) {
+        val dis = DataInputStream(socket.getInputStream())
+        val magic = dis.readInt()
+        if (magic != MAGIC_FILE) {
+            Log.w(TAG, "Bad file magic $magic")
+            return
+        }
+        val nameLen = dis.readInt().coerceIn(1, 256)
+        val nameBytes = ByteArray(nameLen)
+        dis.readFully(nameBytes)
+        val name = String(nameBytes, Charsets.UTF_8).replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val total = dis.readLong()
+        if (total <= 0L || total > MAX_APK_BYTES) {
+            Log.w(TAG, "Reject APK size $total")
+            return
+        }
+        val dir = java.io.File(context.cacheDir, "apk_updates").also { it.mkdirs() }
+        val outFile = java.io.File(dir, "peer_${System.currentTimeMillis()}_$name")
+        var written = 0L
+        outFile.outputStream().use { fos ->
+            val buf = ByteArray(64 * 1024)
+            while (written < total) {
+                val want = minOf(buf.size.toLong(), total - written).toInt()
+                val n = dis.read(buf, 0, want)
+                if (n <= 0) break
+                fos.write(buf, 0, n)
+                written += n
+            }
+        }
+        if (written != total) {
+            Log.w(TAG, "Incomplete APK $written/$total")
+            outFile.delete()
+            return
+        }
+        Log.i(TAG, "Received APK ${outFile.length()} bytes → ${outFile.name}")
+        onApkFileReceived?.invoke(outFile)
+    }
+
     private fun ensureDialIn() {
         if (isGroupOwner || groupOwnerAddress.isNullOrBlank()) return
         if (clientOut.containsKey("go-session")) return
@@ -253,7 +391,6 @@ class WifiDirectTransport(
                 val socket = Socket()
                 socket.connect(InetSocketAddress(host, PORT), 4_000)
                 clientOut["go-session"] = socket
-                // Register ourselves with a tiny hello (ignored on ingress when empty).
                 writeFramed(socket, ByteArray(0))
                 val dis = DataInputStream(socket.getInputStream())
                 while (listening.get() || groupFormed) {
@@ -310,6 +447,7 @@ class WifiDirectTransport(
                                 isGroupOwner = false
                                 groupFormed = false
                                 listening.set(false)
+                                fileListening.set(false)
                                 clientOut.values.forEach { runCatching { it.close() } }
                                 clientOut.clear()
                                 return@requestConnectionInfo
@@ -318,6 +456,7 @@ class WifiDirectTransport(
                             groupOwnerAddress = info.groupOwnerAddress?.hostAddress
                             groupFormed = true
                             Log.i(TAG, "Group formed owner=$isGroupOwner go=$groupOwnerAddress")
+                            startFileAcceptLoop()
                             if (isGroupOwner) {
                                 startAcceptLoop()
                             } else {

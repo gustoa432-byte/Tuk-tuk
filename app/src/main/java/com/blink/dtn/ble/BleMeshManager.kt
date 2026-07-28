@@ -42,6 +42,7 @@ class BleMeshManager private constructor(
     init {
         com.blink.dtn.utils.MeshIdGenerator.init(context)
         com.blink.dtn.telemetry.TraceStore.init(context)
+        com.blink.dtn.update.VersionGossip.init(context)
     }
 
     // Fast in-memory hot-path de-dup filter, in addition to the durable DB
@@ -216,6 +217,9 @@ class BleMeshManager private constructor(
                     this@BleMeshManager.trace(messageId, stage, details, visual)
                 }
                 override fun markSeen(dedupKey: String): Boolean = recentSeenIds.add(dedupKey)
+                override fun onApkUpdateRequest(fromPeerId: String) {
+                    this@BleMeshManager.handleApkUpdateRequest(fromPeerId)
+                }
             }
         )
     }
@@ -291,7 +295,10 @@ class BleMeshManager private constructor(
     private fun enqueueProfileBroadcast() {
         try {
             val pubKey = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64()
-            val payload = "$currentNick|$currentIsVip|$pubKey"
+            val vc = com.blink.dtn.security.BuildIntegrity.myVersionCode(context)
+            val vn = com.blink.dtn.security.BuildIntegrity.myVersionName(context)
+            // nick|vip|pubKey|versionCode|versionName — trailing fields optional for old peers
+            val payload = "$currentNick|$currentIsVip|$pubKey|$vc|$vn"
             val msg = Message(
                 id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
                 type = "IDENTITY_ANNOUNCEMENT",
@@ -453,7 +460,8 @@ class BleMeshManager private constructor(
         if (message.isAck || message.type == "ACK") return true
         if (message.type == "IDENTITY_ANNOUNCEMENT" ||
             message.type == "IDENTITY_REQUEST" ||
-            message.type == "SYSTEM_PROFILE"
+            message.type == "SYSTEM_PROFILE" ||
+            message.type == "UPDATE_REQUEST"
         ) {
             return true
         }
@@ -508,6 +516,80 @@ class BleMeshManager private constructor(
                     Log.w(TAG, "Wi‑Fi Direct ingress failed: ${e.message}")
                 }
             }
+        }
+        wifi?.onApkFileReceived = { file ->
+            scope.launch(Dispatchers.Main) {
+                handleReceivedApk(file)
+            }
+        }
+    }
+
+    /**
+     * Older peer asks us for a fast APK push (experimental Wi‑Fi Direct file stream).
+     */
+    fun requestApkUpdateFromPeer(peerId: String) {
+        val vc = com.blink.dtn.security.BuildIntegrity.myVersionCode(context)
+        val vn = com.blink.dtn.security.BuildIntegrity.myVersionName(context)
+        val msg = Message(
+            id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
+            type = "UPDATE_REQUEST",
+            senderId = myUniqueNodeId,
+            senderNick = currentNick,
+            targetId = peerId,
+            text = "$vc|$vn",
+            room = "system",
+            timestamp = System.currentTimeMillis(),
+            ttl = DEFAULT_TTL
+        )
+        enqueueMessage(msg)
+        showToast("Запрос обновления отправлен (нужен Wi‑Fi Direct)")
+    }
+
+    private fun handleApkUpdateRequest(fromPeerId: String) {
+        scope.launch {
+            val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
+            if (wifi == null || !wifi.isGroupReady()) {
+                showToast("Запрос APK: нет группы Wi‑Fi Direct — откройте сеть рядом")
+                Log.i(TAG, "UPDATE_REQUEST from $fromPeerId but Wi‑Fi Direct group not ready")
+                return@launch
+            }
+            val src = java.io.File(context.applicationInfo.sourceDir)
+            if (!src.isFile) {
+                showToast("Не удалось прочитать свой APK")
+                return@launch
+            }
+            showToast("Отправляю APK по Wi‑Fi Direct (экспериментально)…")
+            val ok = wifi.sendApkFile(src)
+            if (ok) {
+                showToast("APK отправлен")
+            } else {
+                showToast("Передача APK не удалась")
+            }
+        }
+    }
+
+    private fun handleReceivedApk(file: java.io.File) {
+        if (!com.blink.dtn.security.BuildIntegrity.apkMatchesInstalledSignature(context, file)) {
+            showToast("APK отклонён: подпись не совпадает с установленным приложением")
+            runCatching { file.delete() }
+            return
+        }
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            showToast("Подпись OK — подтвердите установку обновления")
+        } catch (e: Exception) {
+            Log.e(TAG, "Install intent failed: ${e.message}", e)
+            showToast("Не удалось открыть установщик: ${e.message}")
         }
     }
 

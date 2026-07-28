@@ -1,3 +1,5 @@
+import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.Properties
 
@@ -15,6 +17,43 @@ if (localPropertiesFile.exists()) {
 }
 val vkAccessToken = localProps.getProperty("VK_ACCESS_TOKEN", "")
 
+/** Release signing from gitignored keystore.properties (see scripts/setup-official-signing.sh). */
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+val hasReleaseSigning = keystorePropertiesFile.exists().also { exists ->
+    if (exists) keystoreProperties.load(keystorePropertiesFile.inputStream())
+}
+
+fun releaseCertSha256Hex(): String {
+    if (!hasReleaseSigning) return ""
+    val storeRel = keystoreProperties.getProperty("storeFile") ?: return ""
+    val storePass = keystoreProperties.getProperty("storePassword") ?: return ""
+    val alias = keystoreProperties.getProperty("keyAlias") ?: return ""
+    val storeFile = rootProject.file(storeRel)
+    if (!storeFile.isFile) return ""
+    return try {
+        // Android uses PKCS12; try PKCS12 first, then default type.
+        val ks = try {
+            KeyStore.getInstance("PKCS12").also { store ->
+                storeFile.inputStream().use { store.load(it, storePass.toCharArray()) }
+            }
+        } catch (_: Exception) {
+            KeyStore.getInstance(KeyStore.getDefaultType()).also { store ->
+                storeFile.inputStream().use { store.load(it, storePass.toCharArray()) }
+            }
+        }
+        val cert = ks.getCertificate(alias) ?: return ""
+        MessageDigest.getInstance("SHA-256")
+            .digest(cert.encoded)
+            .joinToString("") { b -> "%02x".format(b) }
+    } catch (e: Exception) {
+        logger.warn("Could not compute release cert SHA-256: ${e.message}")
+        ""
+    }
+}
+
+val expectedReleaseCertSha256 = releaseCertSha256Hex()
+
 android {
     namespace = "com.blink.dtn"
     compileSdk = 34
@@ -31,6 +70,12 @@ android {
             useSupportLibrary = true
         }
         buildConfigField("String", "VK_ACCESS_TOKEN", "\"$vkAccessToken\"")
+        buildConfigField("String", "EXPECTED_RELEASE_CERT_SHA256", "\"$expectedReleaseCertSha256\"")
+        buildConfigField(
+            "boolean",
+            "BUILD_IS_RELEASE_SIGNING",
+            "${hasReleaseSigning && expectedReleaseCertSha256.isNotEmpty()}"
+        )
     }
 
     signingConfigs {
@@ -40,16 +85,41 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (hasReleaseSigning) {
+            create("release") {
+                val storeRel = keystoreProperties.getProperty("storeFile")
+                    ?: error("keystore.properties missing storeFile")
+                storeFile = rootProject.file(storeRel)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: error("keystore.properties missing storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: error("keystore.properties missing keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: error("keystore.properties missing keyPassword")
+                check(storeFile!!.isFile) {
+                    "Release keystore not found: ${storeFile!!.absolutePath}"
+                }
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // R8 minify currently fails on this machine (I/O on merged base.jar).
+            // Official = release keystore signature; minify can be re-enabled later.
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
+    }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
     packaging {
         // Prefer stable APK entry order for FOSS verification (see docs/REPRODUCIBLE_BUILDS.md).
@@ -81,6 +151,25 @@ android {
             (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
                 .outputFileName = "Tuktuk.apk"
         }
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val wantsReleaseApk = allTasks.any { task ->
+        val n = task.name
+        n == "assembleRelease" ||
+            n == "bundleRelease" ||
+            n.endsWith("AssembleRelease") ||
+            n == "packageRelease" ||
+            n == "signReleaseBundle"
+    }
+    if (wantsReleaseApk && !hasReleaseSigning) {
+        throw GradleException(
+            "Release signing is not configured.\n" +
+                "Create keystore.properties (gitignored) via:\n" +
+                "  ./scripts/setup-official-signing.sh\n" +
+                "See docs/OFFICIAL_BUILD.md"
+        )
     }
 }
 

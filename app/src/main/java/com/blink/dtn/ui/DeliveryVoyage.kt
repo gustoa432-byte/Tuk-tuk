@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.db.Message
 import com.blink.dtn.telemetry.TraceAnalyzer
@@ -102,9 +103,14 @@ fun MessageVoyageDialog(
     onDismiss: () -> Unit,
     onRetry: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val report = remember(msg.id, msg.status) {
         TraceStore.getByMessageId(msg.id)?.let { TraceAnalyzer.analyze(it) }
     }
+    val terminal = report?.terminalStatus?.lowercase()
+    val showErrorReport = msg.status == Message.STATUS_FAILED ||
+        terminal in setOf("failed", "expired", "timeout", "dropped", "retrylimit", "cancelled")
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Путь сообщения", color = TextPrimary) },
@@ -166,6 +172,22 @@ fun MessageVoyageDialog(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("Итог: $it", color = TextSecondary, style = Typography.labelSmall)
                     }
+                }
+                if (showErrorReport) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(
+                        onClick = {
+                            TraceStore.shareMessageErrorReport(context, msg.id, msg.status)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Отправить ошибку разработчику", color = DangerColor)
+                    }
+                    Text(
+                        "Соберёт ZIP (msgId, этапы, device) и откроет почту → tuktukfb@internet.ru",
+                        color = TextSecondary,
+                        style = Typography.labelSmall
+                    )
                 }
             }
         },

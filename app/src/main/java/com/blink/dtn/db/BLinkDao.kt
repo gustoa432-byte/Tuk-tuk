@@ -14,7 +14,10 @@ abstract class BLinkDao {
 
     @androidx.room.Transaction
     open suspend fun insertMessageWithConversation(msg: Message) {
-        val convId = if (msg.type == "PUBLIC" || msg.type == "SYSTEM_ANNOUNCEMENT") {
+        val convId = if (msg.type == "PUBLIC" ||
+            msg.type == "SYSTEM_ANNOUNCEMENT" ||
+            msg.type == "VERSION_ANNOUNCEMENT"
+        ) {
             "general"
         } else {
             if (msg.isMine) msg.targetId ?: msg.senderId else msg.senderId
@@ -86,7 +89,7 @@ abstract class BLinkDao {
     abstract suspend fun insertMessage(message: Message): Long
 
     // Oldest → newest so UI can pin the latest bubble above the input.
-    @Query("SELECT * FROM messages WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT') AND senderNick NOT IN (SELECT blockedNick FROM blocked_users) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT' OR type = 'VERSION_ANNOUNCEMENT') AND senderNick NOT IN (SELECT blockedNick FROM blocked_users) ORDER BY timestamp ASC")
     abstract fun getPublicMessagesFlow(): Flow<List<Message>>
 
     @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY timestamp ASC")

@@ -495,6 +495,26 @@ class BLinkViewModel(
 
     fun currentDutyPreset(): com.blink.dtn.ble.MeshDutyPreset =
         bleMeshManager.currentDutyPreset()
+
+    val nearbyUpdate = com.blink.dtn.update.VersionGossip.nearbyUpdate
+
+    fun dismissNearbyUpdate() {
+        com.blink.dtn.update.VersionGossip.dismiss(getApplication())
+    }
+
+    fun requestNearbyApkUpdate(peerId: String) {
+        bleMeshManager.requestApkUpdateFromPeer(peerId)
+    }
+
+    fun buildStatusLabel(): String =
+        com.blink.dtn.security.BuildIntegrity.describe(getApplication()).labelRu
+
+    fun myVersionLabel(): String {
+        val ctx = getApplication<Application>()
+        val vn = com.blink.dtn.security.BuildIntegrity.myVersionName(ctx)
+        val vc = com.blink.dtn.security.BuildIntegrity.myVersionCode(ctx)
+        return "$vn ($vc)"
+    }
 }
 
 class BLinkViewModelFactory(

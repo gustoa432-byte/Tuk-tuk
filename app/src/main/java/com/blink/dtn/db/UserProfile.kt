@@ -28,7 +28,11 @@ data class UserProfile(
      * True when public key was pinned out-of-band (QR). Distinguishes «проверен»
      * from mesh-discovered «из сети» contacts.
      */
-    val verifiedOutOfBand: Boolean = false
+    val verifiedOutOfBand: Boolean = false,
+    /** Last advertised app versionCode from IDENTITY_ANNOUNCEMENT (0 = unknown). */
+    val appVersionCode: Long = 0L,
+    /** Last advertised app versionName from IDENTITY_ANNOUNCEMENT. */
+    val appVersionName: String = ""
 ) {
     companion object {
         const val TRUST_STRANGER = "STRANGER"
