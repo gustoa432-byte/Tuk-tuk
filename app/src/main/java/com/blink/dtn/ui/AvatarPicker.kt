@@ -1,7 +1,9 @@
 package com.blink.dtn.ui
 
+import android.Manifest
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,6 +59,21 @@ fun rememberAvatarPicker(
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) pendingUri = uri
+    }
+
+    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        Manifest.permission.READ_MEDIA_IMAGES
+    else
+        Manifest.permission.READ_EXTERNAL_STORAGE
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            picker.launch("image/*")
+        } else {
+            Toast.makeText(context, "Нет доступа к галерее", Toast.LENGTH_SHORT).show()
+        }
     }
 
     LaunchedEffect(pendingUri) {
@@ -145,7 +162,18 @@ fun rememberAvatarPicker(
     }
 
     return {
-        picker.launch("image/*")
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            Manifest.permission.READ_MEDIA_IMAGES
+        else
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, permission
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            picker.launch("image/*")
+        } else {
+            permissionLauncher.launch(mediaPermission)
+        }
     }
 }
 

@@ -164,6 +164,8 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val nearbyUpdate by viewModel.nearbyUpdate.collectAsState()
     val isConnected = vkActive || peerCount > 0
     val context = LocalContext.current
+    val lang by AppLang.lang.collectAsState()
+    LaunchedEffect(Unit) { AppLang.init(context) }
 
     if (showDevPanel) {
         DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
@@ -173,7 +175,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     if (showInfo) {
         AlertDialog(
             onDismissRequest = { showInfo = false },
-            title = { Text("О Tuk-Tuk", color = TextPrimary) },
+            title = { Text(S.infoTitle(lang), color = TextPrimary) },
             text = {
                 Box(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     InfoContent(compact = true)
@@ -181,7 +183,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
             },
             confirmButton = {
                 TextButton(onClick = { showInfo = false }) {
-                    Text("Закрыть", color = TextPrimary)
+                    Text(S.close(lang), color = TextPrimary)
                 }
             },
             containerColor = GlassDialogContainer
@@ -332,6 +334,7 @@ private fun NearbyUpdateBanner(
 
 @Composable
 fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+    val lang by AppLang.lang.collectAsState()
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -345,9 +348,9 @@ fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BottomBarItem(Icons.Default.Person, "Диалоги", selectedTab == 0) { onTabSelected(0) }
-            BottomBarItem(Icons.Default.Email, "Общий чат", selectedTab == 1) { onTabSelected(1) }
-            BottomBarItem(Icons.Default.Person, "Профиль", selectedTab == 2) { onTabSelected(2) }
+            BottomBarItem(Icons.Default.Person, S.dialogs(lang), selectedTab == 0) { onTabSelected(0) }
+            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 1) { onTabSelected(1) }
+            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 2) { onTabSelected(2) }
         }
     }
 }
@@ -967,6 +970,7 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
 // 4. ChatInputArea with custom BasicTextField and send button
 @Composable
 fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -986,7 +990,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     if (text.isEmpty()) {
-                        Text("Сообщение...", color = TextSecondary, style = Typography.bodyLarge)
+                        Text(S.message(lang), color = TextSecondary, style = Typography.bodyLarge)
                     }
                     innerTextField()
                 }
@@ -1001,7 +1005,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
                 .padding(12.dp),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Send, contentDescription = "Send", tint = TextPrimary, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Send, contentDescription = S.send(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -1155,13 +1159,21 @@ fun shareApk(context: Context) {
 fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val lang by AppLang.lang.collectAsState()
     var nickname by remember { mutableStateOf(viewModel.myNick) }
     var savedNick by remember { mutableStateOf(viewModel.myNick) }
-    var language by remember { mutableStateOf("Русский") }
+    var nickDirty by remember { mutableStateOf(false) }
     var showSavedFlash by remember { mutableStateOf(false) }
-    val nickDirty = nickname.trim() != savedNick.trim()
     val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
+
+    // Fix #2: sync nickname from viewModel when not actively editing
+    LaunchedEffect(viewModel.myNick) {
+        if (!nickDirty) {
+            nickname = viewModel.myNick
+            savedNick = viewModel.myNick
+        }
+    }
 
     LaunchedEffect(showSavedFlash) {
         if (showSavedFlash) {
@@ -1197,8 +1209,6 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned != null && scanned.isNotBlank()) {
-            // Try the self-certifying contact payload first (pins the public key).
-            // Fall back to treating the scan as a bare node id for legacy/manual entry.
             val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
             val pk = json?.optString("pk", "")
             if (json != null && !pk.isNullOrEmpty()) {
@@ -1227,64 +1237,84 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        PeerAvatar(
-            avatarBlob = myProfile?.avatarBlob,
-            label = nickname.ifBlank { viewModel.myNick },
-            size = 88.dp,
-            modifier = Modifier.bounceClick { openAvatarPicker() }
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "Нажмите, чтобы выбрать фото",
-            color = TextSecondary,
-            style = Typography.labelSmall
-        )
+        // Fix #3: horizontal row — avatar left, nickname+ID right
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Avatar: 72dp, tappable
+            PeerAvatar(
+                avatarBlob = myProfile?.avatarBlob,
+                label = nickname.ifBlank { viewModel.myNick },
+                size = 72.dp,
+                modifier = Modifier.bounceClick { openAvatarPicker() }
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            // Right column: nickname field + short ID
+            Column(modifier = Modifier.weight(1f)) {
+                BasicTextField(
+                    value = nickname,
+                    onValueChange = {
+                        if (it.length <= 15) {
+                            nickname = it
+                            nickDirty = it.trim() != savedNick.trim()
+                            showSavedFlash = false
+                        }
+                    },
+                    textStyle = Typography.titleMedium.copy(color = TextPrimary),
+                    cursorBrush = SolidColor(TextPrimary),
+                    decorationBox = { innerTextField ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (nickname.isEmpty()) {
+                                Text(S.enterName(lang), color = TextSecondary, style = Typography.titleMedium)
+                            }
+                            innerTextField()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                // Short ID — tap to copy
+                val shortId = viewModel.myNodeId.take(12) + "…"
+                Text(
+                    text = shortId,
+                    color = TextSecondary,
+                    style = Typography.labelSmall,
+                    modifier = Modifier
+                        .bounceClick {
+                            clipboardManager.setText(AnnotatedString(viewModel.myNodeId))
+                            Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
+                        }
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(12.dp))
-        
-        BasicTextField(
-            value = nickname,
-            onValueChange = {
-                if (it.length <= 15) {
-                    nickname = it
-                    showSavedFlash = false
-                }
-            },
-            textStyle = Typography.titleLarge.copy(color = TextPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-            cursorBrush = SolidColor(TextPrimary),
-            decorationBox = { innerTextField ->
-                if (nickname.isEmpty()) {
-                    Text("Имя", color = TextSecondary, style = Typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                }
-                innerTextField()
-            },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
+        // Save button below the row, visible when dirty or flash
         if (nickDirty || showSavedFlash) {
             TukTukButton(
                 onClick = {
                     if (!nickDirty) return@TukTukButton
                     val trimmed = nickname.trim()
                     if (trimmed.isEmpty()) {
-                        Toast.makeText(context, "Введите имя", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, S.enterNameHint(lang), Toast.LENGTH_SHORT).show()
                         return@TukTukButton
                     }
                     nickname = trimmed
                     viewModel.updateMyProfile(trimmed, false)
                     savedNick = trimmed
+                    nickDirty = false
                     showSavedFlash = true
                 }
             ) {
                 Text(
-                    if (nickDirty) "Сохранить" else "Сохранено",
+                    if (nickDirty) S.save(lang) else S.saved(lang),
                     color = if (nickDirty) TextPrimary else AccentLime,
                     style = Typography.labelMedium
                 )
             }
         }
         Spacer(modifier = Modifier.height(24.dp))
-        // QR encodes the full contact payload (id + public key + nick) so a scan
-        // pins the key out-of-band. The human-readable id below stays as-is.
         // QR encodes contact payload (id + public key + nick + optional av)
         val qrBitmap = remember(contactQr) {
             generateQrCode(contactQr, 512)?.asImageBitmap()
@@ -1307,28 +1337,29 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(24.dp))
         
+        // Full ID row — tap to copy
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .glassPanel(corner = 16.dp)
                 .bounceClick { 
                     clipboardManager.setText(AnnotatedString(viewModel.myNodeId))
-                    Toast.makeText(context, "ID скопирован", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
                 }
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Text(text = viewModel.myNodeId, color = TextSecondary, style = Typography.bodyMedium)
             Spacer(modifier = Modifier.width(16.dp))
-            Text("Копировать", color = TextSecondary, style = Typography.bodyMedium)
+            Text(S.copy(lang), color = TextSecondary, style = Typography.bodyMedium)
         }
         
         Spacer(modifier = Modifier.height(32.dp))
-        Text("Отсканируйте QR другого пользователя", style = Typography.bodyMedium, color = TextSecondary)
+        Text(S.scanContact(lang), style = Typography.bodyMedium, color = TextSecondary)
         Spacer(modifier = Modifier.height(16.dp))
         TukTukButton(onClick = { 
             val options = ScanOptions()
             options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            options.setCameraId(0) // Use a specific camera of the device
+            options.setCameraId(0)
             options.setBeepEnabled(false)
             options.setBarcodeImageEnabled(true)
             options.setCaptureActivity(CustomScannerActivity::class.java)
@@ -1336,7 +1367,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         }) {
             Icon(Icons.Default.Search, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(24.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Сканировать QR", color = TextPrimary, style = Typography.titleMedium)
+            Text(S.scanQr(lang), color = TextPrimary, style = Typography.titleMedium)
         }
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -1386,6 +1417,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
         Text("Язык", style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
+        // Fix #4: real language switching via AppLang
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
@@ -1393,16 +1425,16 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         ) {
             Text(
                 "Русский",
-                color = if (language == "Русский") TextPrimary else TextSecondary,
+                color = if (lang == "ru") TextPrimary else TextSecondary,
                 style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "Русский" }.padding(8.dp)
+                modifier = Modifier.bounceClick { AppLang.set(context, "ru") }.padding(8.dp)
             )
             Spacer(modifier = Modifier.width(16.dp))
             Text(
                 "English",
-                color = if (language == "English") TextPrimary else TextSecondary,
+                color = if (lang == "en") TextPrimary else TextSecondary,
                 style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { language = "English" }.padding(8.dp)
+                modifier = Modifier.bounceClick { AppLang.set(context, "en") }.padding(8.dp)
             )
         }
     }
