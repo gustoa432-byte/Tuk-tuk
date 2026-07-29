@@ -3,6 +3,7 @@ package com.blink.dtn.ui
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,10 +39,11 @@ import com.blink.dtn.telemetry.TraceAnalyzer
 import com.blink.dtn.telemetry.TraceAutoSend
 import com.blink.dtn.telemetry.TraceStore
 import com.blink.dtn.telemetry.TraceTreeNode
-import com.blink.dtn.ui.theme.BackgroundDark
+import com.blink.dtn.ui.theme.AppBackgroundBrush
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
+import com.blink.dtn.ui.theme.glassPanel
 import kotlinx.coroutines.delay
 
 /**
@@ -79,7 +81,7 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BackgroundDark)
+            .background(AppBackgroundBrush)
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
@@ -100,7 +102,14 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .glassPanel(corner = 12.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
             listOf("Journey", "Tree", "Route", "Timeline", "Mesh", "Heat", "Stats", "Duty").forEach { name ->
                 Text(
                     name,
@@ -114,49 +123,70 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-        if (traces.isEmpty()) {
-            Text("Нет traces — отправьте сообщение.", color = TextSecondary, style = Typography.bodyMedium)
-        } else {
-            Text("Выбор trace:", color = TextSecondary, style = Typography.labelSmall)
-            traces.take(8).forEachIndexed { idx, t ->
-                val mark = if (idx == selectedIdx) "●" else "○"
-                Text(
-                    "$mark ${t.messageType ?: t.kind} ${t.messageId?.take(14) ?: t.traceId.take(8)}… → ${t.terminalStatus ?: "Pending"}",
-                    color = TextSecondary,
-                    style = Typography.labelSmall,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedIdx = idx; replayIndex = -1 }
-                        .padding(vertical = 3.dp)
-                )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassPanel(corner = 16.dp)
+                .padding(12.dp)
+        ) {
+            if (traces.isEmpty()) {
+                Text("Нет traces — отправьте сообщение.", color = TextSecondary, style = Typography.bodyMedium)
+            } else {
+                Text("Выбор trace:", color = TextSecondary, style = Typography.labelSmall)
+                traces.take(8).forEachIndexed { idx, t ->
+                    val mark = if (idx == selectedIdx) "●" else "○"
+                    Text(
+                        "$mark ${t.messageType ?: t.kind} ${t.messageId?.take(14) ?: t.traceId.take(8)}… → ${t.terminalStatus ?: "Pending"}",
+                        color = TextSecondary,
+                        style = Typography.labelSmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedIdx = idx; replayIndex = -1 }
+                            .padding(vertical = 3.dp)
+                    )
+                }
             }
         }
 
         report?.let { r ->
             Spacer(modifier = Modifier.height(12.dp))
-            r.diagnosis.stopReasonFirstLine?.let {
-                Text(it, color = TextPrimary, style = Typography.titleMedium)
-            }
-            r.diagnosis.likelyCause?.let {
-                Text("Вероятная причина: $it", color = TextSecondary, style = Typography.bodySmall)
-            }
-            r.diagnosis.recommendation?.let {
-                Text("Рекомендация: $it", color = TextSecondary, style = Typography.bodySmall)
-            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 16.dp, strong = true)
+                    .padding(12.dp)
+            ) {
+                r.diagnosis.stopReasonFirstLine?.let {
+                    Text(it, color = TextPrimary, style = Typography.titleMedium)
+                }
+                r.diagnosis.likelyCause?.let {
+                    Text("Вероятная причина: $it", color = TextSecondary, style = Typography.bodySmall)
+                }
+                r.diagnosis.recommendation?.let {
+                    Text("Рекомендация: $it", color = TextSecondary, style = Typography.bodySmall)
+                }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            HealthBlock(r)
+                Spacer(modifier = Modifier.height(8.dp))
+                HealthBlock(r)
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
-            when (tab) {
-                "Journey" -> JourneyBlock(r, replayIndex)
-                "Tree" -> TreeBlock(r.tree)
-                "Route" -> RouteBlock(r)
-                "Timeline" -> TimelineBlock(r)
-                "Mesh" -> MeshBlock(r, viewModel)
-                "Heat" -> HeatBlock(r)
-                "Stats" -> StatsBlock(r)
-                "Duty" -> DutyBlock(viewModel)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 16.dp)
+                    .padding(12.dp)
+            ) {
+                when (tab) {
+                    "Journey" -> JourneyBlock(r, replayIndex)
+                    "Tree" -> TreeBlock(r.tree)
+                    "Route" -> RouteBlock(r)
+                    "Timeline" -> TimelineBlock(r)
+                    "Mesh" -> MeshBlock(r, viewModel)
+                    "Heat" -> HeatBlock(r)
+                    "Stats" -> StatsBlock(r)
+                    "Duty" -> DutyBlock(viewModel)
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -174,7 +204,14 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         }
         if (report == null && tab == "Duty") {
             Spacer(modifier = Modifier.height(12.dp))
-            DutyBlock(viewModel)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 16.dp)
+                    .padding(12.dp)
+            ) {
+                DutyBlock(viewModel)
+            }
             Spacer(modifier = Modifier.height(12.dp))
             TukTukButton(onClick = {
                 TraceStore.shareExport(context, peerCount, peers)
@@ -183,7 +220,13 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassPanel(corner = 12.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
             androidx.compose.material3.Switch(
                 checked = autoSend,
                 onCheckedChange = {
@@ -196,15 +239,22 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text("История устройств (${PeerDirectory.snapshot().size})", style = Typography.titleMedium, color = TextPrimary)
-        PeerDirectory.snapshot().take(10).forEach { d ->
-            Text(
-                "${d.displayName} · fwd=${d.packetsForwarded} · err=${d.errorCount}" +
-                    (d.lastRssi?.let { " · RSSI $it" } ?: ""),
-                color = TextSecondary,
-                style = Typography.labelSmall,
-                modifier = Modifier.padding(vertical = 2.dp)
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassPanel(corner = 16.dp)
+                .padding(12.dp)
+        ) {
+            Text("История устройств (${PeerDirectory.snapshot().size})", style = Typography.titleMedium, color = TextPrimary)
+            PeerDirectory.snapshot().take(10).forEach { d ->
+                Text(
+                    "${d.displayName} · fwd=${d.packetsForwarded} · err=${d.errorCount}" +
+                        (d.lastRssi?.let { " · RSSI $it" } ?: ""),
+                    color = TextSecondary,
+                    style = Typography.labelSmall,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
         }
         Spacer(modifier = Modifier.height(24.dp))
     }

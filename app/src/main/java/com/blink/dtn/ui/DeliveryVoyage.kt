@@ -1,6 +1,5 @@
 package com.blink.dtn.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,10 +21,11 @@ import com.blink.dtn.telemetry.TraceAnalyzer
 import com.blink.dtn.telemetry.TraceStore
 import com.blink.dtn.ui.theme.DangerColor
 import com.blink.dtn.ui.theme.DividerColor
-import com.blink.dtn.ui.theme.SurfaceDark
+import com.blink.dtn.ui.theme.GlassDialogContainer
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
+import com.blink.dtn.ui.theme.glassPanel
 
 /**
  * User-facing Russian delivery labels mapped from DB status + message type.
@@ -162,9 +162,9 @@ fun MessageVoyageDialog(
                             style = Typography.bodySmall,
                             modifier = Modifier
                                 .padding(vertical = 2.dp)
-                                .background(DividerColor.copy(alpha = 0.35f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
                                 .fillMaxWidth()
+                                .glassPanel(corner = 8.dp)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                         Text("+${step.elapsedMs} мс", color = TextSecondary, style = Typography.labelSmall)
                     }
@@ -212,6 +212,6 @@ fun MessageVoyageDialog(
                 }
             }
         },
-        containerColor = SurfaceDark
+        containerColor = GlassDialogContainer
     )
 }

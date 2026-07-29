@@ -3,6 +3,8 @@ package com.blink.dtn.ble
 import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
+import com.blink.dtn.ui.IncomingMessageSound
+import com.blink.dtn.utils.AppForegroundState
 
 /**
  * Small, dependency-free adapter that turns delivered mesh messages into system
@@ -12,7 +14,13 @@ import androidx.core.app.NotificationCompat
 class MeshNotificationAdapter(private val context: Context) {
 
     fun notifyIncoming(id: String, isPrivate: Boolean, senderNick: String, body: String) {
-        if (com.blink.dtn.utils.AppForegroundState.isForeground) return
+        // Private dialog messages always get a short sound (debounced), including
+        // when the app is in the foreground and no tray notification is posted.
+        if (isPrivate) {
+            IncomingMessageSound.playPrivateMessage(context)
+        }
+
+        if (AppForegroundState.isForeground) return
 
         val notificationManager =
             context.getSystemService(NotificationManager::class.java) ?: return
@@ -20,11 +28,17 @@ class MeshNotificationAdapter(private val context: Context) {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
             .setContentTitle(
-                if (isPrivate) "Private message from $senderNick" else "New message in TukTuk"
+                if (isPrivate) "Личное сообщение от $senderNick" else "Новое сообщение в TukTuk"
             )
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+
+        val soundUri = IncomingMessageSound.defaultNotificationUri(context)
+        if (soundUri != null) {
+            builder.setSound(soundUri)
+        }
 
         notificationManager.notify(id.hashCode(), builder.build())
     }

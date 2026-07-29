@@ -195,6 +195,9 @@ abstract class BLinkDao {
     @Query("UPDATE user_profiles SET trustStatus = :trustStatus WHERE userId = :userId")
     abstract suspend fun updateTrustStatus(userId: String, trustStatus: String)
 
+    @Query("UPDATE user_profiles SET avatarBlob = :avatarBlob, lastSeen = :lastSeen WHERE userId = :userId")
+    abstract suspend fun updateAvatarBlob(userId: String, avatarBlob: ByteArray?, lastSeen: Long)
+
     @Query("UPDATE conversations SET displayName = :displayName WHERE conversationId = :conversationId")
     abstract suspend fun updateConversationDisplayName(conversationId: String, displayName: String)
 

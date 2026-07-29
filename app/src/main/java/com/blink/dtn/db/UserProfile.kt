@@ -32,7 +32,12 @@ data class UserProfile(
     /** Last advertised app versionCode from IDENTITY_ANNOUNCEMENT (0 = unknown). */
     val appVersionCode: Long = 0L,
     /** Last advertised app versionName from IDENTITY_ANNOUNCEMENT. */
-    val appVersionName: String = ""
+    val appVersionName: String = "",
+    /**
+     * Mesh-sized avatar JPEG bytes (square, ≤~128px). Null = none.
+     * Stored locally and optionally embedded in contact QR as base64 `av`.
+     */
+    val avatarBlob: ByteArray? = null
 ) {
     companion object {
         const val TRUST_STRANGER = "STRANGER"

@@ -3,35 +3,66 @@ package com.blink.dtn.ui
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.animation.core.Animatable
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -42,24 +73,34 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
-import androidx.activity.compose.rememberLauncherForActivityResult
-
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.blink.dtn.db.Message
-import com.blink.dtn.ui.theme.*
+import com.blink.dtn.db.UserProfile
+import com.blink.dtn.ui.theme.AccentLime
+import com.blink.dtn.ui.theme.AppBackgroundBrush
+import com.blink.dtn.ui.theme.BackgroundDark
+import com.blink.dtn.ui.theme.DangerColor
+import com.blink.dtn.ui.theme.DividerColor
+import com.blink.dtn.ui.theme.GlassDialogContainer
+import com.blink.dtn.ui.theme.TextPrimary
+import com.blink.dtn.ui.theme.TextSecondary
+import com.blink.dtn.ui.theme.Typography
+import com.blink.dtn.ui.theme.glassBubble
+import com.blink.dtn.ui.theme.glassPanel
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
 // 1. Custom bounceClick modifier
 fun Modifier.bounceClick(onClick: () -> Unit) = composed {
     var isPressed by remember { mutableStateOf(false) }
@@ -115,85 +156,132 @@ fun CustomBackIcon(modifier: Modifier = Modifier) {
 fun MainScreen(viewModel: BLinkViewModel) {
     var selectedTab by remember { mutableStateOf(0) }
     var showDevPanel by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
     var clickCount by remember { mutableStateOf(0) }
     var lastClickTime by remember { mutableStateOf(0L) }
     val peerCount by viewModel.peerCount.collectAsState()
     val vkActive by viewModel.vkActive.collectAsState()
-    val relayActive by viewModel.relayActive.collectAsState()
     val nearbyUpdate by viewModel.nearbyUpdate.collectAsState()
     val isConnected = vkActive || peerCount > 0
+    val context = LocalContext.current
 
     if (showDevPanel) {
         DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
         return
     }
 
-    Scaffold(
-        containerColor = BackgroundDark,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = {
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastClickTime < 500) {
-                                        clickCount++
-                                        if (clickCount >= 4) {
-                                            showDevPanel = true
-                                            clickCount = 0
+    if (showInfo) {
+        AlertDialog(
+            onDismissRequest = { showInfo = false },
+            title = { Text("О Tuk-Tuk", color = TextPrimary) },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    InfoContent(compact = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showInfo = false }) {
+                    Text("Закрыть", color = TextPrimary)
+                }
+            },
+            containerColor = GlassDialogContainer
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppBackgroundBrush)
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = {
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastClickTime < 500) {
+                                            clickCount++
+                                            if (clickCount >= 4) {
+                                                showDevPanel = true
+                                                clickCount = 0
+                                            }
+                                        } else {
+                                            clickCount = 1
                                         }
-                                    } else {
-                                        clickCount = 1
+                                        lastClickTime = now
                                     }
-                                    lastClickTime = now
-                                }
+                                )
+                            }
+                        ) {
+                            Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(
+                                        color = if (isConnected) AccentLime else DividerColor,
+                                        shape = CircleShape
+                                    )
                             )
                         }
-                    ) {
-                        Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Subtle indicator
+                    },
+                    actions = {
                         Box(
                             modifier = Modifier
-                                .size(6.dp)
-                                .background(
-                                    color = if (isConnected) TextPrimary else DividerColor,
-                                    shape = CircleShape
-                                )
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = BackgroundDark,
-                    titleContentColor = TextPrimary
+                                .padding(end = 4.dp)
+                                .size(40.dp)
+                                .glassPanel(corner = 20.dp)
+                                .bounceClick { showInfo = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Info, contentDescription = "Информация", tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .size(40.dp)
+                                .glassPanel(corner = 20.dp)
+                                .bounceClick { shareApk(context) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = "Поделиться", tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = TextPrimary,
+                        actionIconContentColor = TextPrimary
+                    )
                 )
-            )
-        },
-        bottomBar = {
-            CustomBottomBar(selectedTab) { selectedTab = it }
-        }
-    ) { paddingValues ->
-        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-            nearbyUpdate?.let { offer ->
-                NearbyUpdateBanner(
-                    versionName = offer.versionName,
-                    peerNick = offer.peerNick,
-                    onRequest = { viewModel.requestNearbyApkUpdate(offer.peerId) },
-                    onDismiss = { viewModel.dismissNearbyUpdate() }
-                )
+            },
+            bottomBar = {
+                CustomBottomBar(selectedTab) { selectedTab = it }
             }
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (selectedTab) {
-                    0 -> PrivateTab(viewModel)
-                    1 -> PublicTab(viewModel) { contactId ->
-                        viewModel.ensureContact(contactId)
-                        viewModel.setCurrentDialog(contactId)
-                        selectedTab = 0
+        ) { paddingValues ->
+            Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+                nearbyUpdate?.let { offer ->
+                    NearbyUpdateBanner(
+                        versionName = offer.versionName,
+                        peerNick = offer.peerNick,
+                        onRequest = { viewModel.requestNearbyApkUpdate(offer.peerId) },
+                        onDismiss = { viewModel.dismissNearbyUpdate() }
+                    )
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when (selectedTab) {
+                        0 -> PrivateTab(viewModel)
+                        1 -> PublicTab(viewModel) { contactId ->
+                            viewModel.ensureContact(contactId)
+                            viewModel.setCurrentDialog(contactId)
+                            selectedTab = 0
+                        }
+                        2 -> ProfileTab(viewModel, { selectedTab = 0 })
                     }
-                    2 -> ProfileTab(viewModel, { selectedTab = 0 })
                 }
             }
         }
@@ -211,7 +299,7 @@ private fun NearbyUpdateBanner(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .background(SurfaceDark, RoundedCornerShape(12.dp))
+            .glassPanel(corner = 12.dp, strong = true)
             .padding(12.dp)
     ) {
         Text(
@@ -244,14 +332,15 @@ private fun NearbyUpdateBanner(
 
 @Composable
 fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
-    Surface(
-        color = BackgroundDark,
-        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(SurfaceDark, RoundedCornerShape(24.dp))
+                .glassPanel(corner = 24.dp, strong = true)
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
@@ -266,7 +355,7 @@ fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
 @Composable
 fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, isSelected: Boolean, onClick: () -> Unit) {
     val contentColor = if (isSelected) BackgroundDark else TextSecondary
-    val bgColor = if (isSelected) TextPrimary else Color.Transparent
+    val bgColor = if (isSelected) AccentLime else Color.Transparent
 
     Box(
         modifier = Modifier
@@ -290,8 +379,7 @@ fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 fun TukTukButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceDark)
+            .glassPanel(corner = 16.dp)
             .bounceClick(onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
@@ -329,8 +417,7 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp, bottom = 8.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(SurfaceDark)
+                    .glassPanel(corner = 24.dp)
                     .bounceClick { showSearch = true }
                     .padding(16.dp),
                 contentAlignment = Alignment.CenterStart
@@ -361,13 +448,18 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(SurfaceDark)
+                                .glassPanel(corner = 16.dp)
                                 .bounceClick { viewModel.setCurrentDialog(dialog.conversationId) }
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            PeerAvatar(
+                                avatarBlob = profile?.avatarBlob,
+                                label = title,
+                                size = 44.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -434,7 +526,7 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(BackgroundDark.copy(alpha = 0.9f))
+                    .background(BackgroundDark.copy(alpha = 0.72f))
                     .pointerInput(Unit) {
                         detectTapGestures { showSearch = false }
                     },
@@ -444,8 +536,7 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(SurfaceDark)
+                        .glassPanel(corner = 24.dp, strong = true)
                         .padding(16.dp)
                 ) {
                     BasicTextField(
@@ -509,8 +600,10 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     var showRename by remember { mutableStateOf(false) }
     var renameDraft by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
+    var showPeerProfile by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
 
     val verifyScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
@@ -526,13 +619,36 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     Toast.makeText(context, "QR другого человека — не этого диалога", Toast.LENGTH_LONG).show()
                 } else {
                     val nick = json.optString("n", "")
-                    viewModel.addScannedContact(derivedId, nick, pk)
+                    val avatar = decodeContactQrAvatar(json)
+                    viewModel.addScannedContact(derivedId, nick, pk, avatar)
                     Toast.makeText(context, "Контакт проверен по QR", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 Toast.makeText(context, "Нужен QR контакта TukTuk (с ключом)", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    if (showPeerProfile) {
+        PeerProfileSheet(
+            contactId = contactId,
+            displayName = displayName,
+            profile = profile,
+            onDismiss = { showPeerProfile = false },
+            onRename = {
+                showPeerProfile = false
+                renameDraft = profile?.localAlias?.ifBlank { displayName } ?: displayName
+                showRename = true
+            },
+            onAccept = {
+                viewModel.acceptContact(contactId)
+                Toast.makeText(context, "Контакт принят", Toast.LENGTH_SHORT).show()
+            },
+            onCopyId = {
+                clipboardManager.setText(AnnotatedString(contactId))
+                Toast.makeText(context, "ID скопирован", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.id) {
@@ -562,7 +678,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(DividerColor, RoundedCornerShape(12.dp))
+                                    .glassPanel(corner = 12.dp)
                                     .padding(12.dp)
                             ) {
                                 if (renameDraft.isEmpty()) {
@@ -589,7 +705,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     Text("Отмена", color = TextSecondary)
                 }
             },
-            containerColor = SurfaceDark
+            containerColor = GlassDialogContainer
         )
     }
     
@@ -607,29 +723,44 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 CustomBackIcon()
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName,
-                    style = Typography.titleMedium,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .bounceClick { showPeerProfile = true }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PeerAvatar(
+                    avatarBlob = profile?.avatarBlob,
+                    label = displayName,
+                    size = 40.dp
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = profile?.trustBadgeRu() ?: "из сети",
-                        style = Typography.labelSmall,
-                        color = TextSecondary,
-                        modifier = Modifier
-                            .background(DividerColor, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                        text = displayName,
+                        style = Typography.titleMedium,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "id ${(profile?.shortId() ?: contactId.take(8))}",
-                        style = Typography.labelSmall,
-                        color = TextSecondary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = profile?.trustBadgeRu() ?: "из сети",
+                            style = Typography.labelSmall,
+                            color = TextSecondary,
+                            modifier = Modifier
+                                .background(DividerColor, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "id ${(profile?.shortId() ?: contactId.take(8))}",
+                            style = Typography.labelSmall,
+                            color = TextSecondary
+                        )
+                    }
                 }
             }
             Box {
@@ -689,8 +820,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SurfaceDark)
+                    .glassPanel(corner = 16.dp, strong = true)
                     .padding(12.dp)
             ) {
                 Text(
@@ -715,8 +845,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SurfaceDark)
+                    .glassPanel(corner = 16.dp, strong = true)
                     .padding(12.dp)
             ) {
                 Text(
@@ -853,7 +982,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .background(SurfaceDark, RoundedCornerShape(24.dp))
+                        .glassPanel(corner = 24.dp)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     if (text.isEmpty()) {
@@ -867,8 +996,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
         Spacer(modifier = Modifier.width(8.dp))
         Box(
             modifier = Modifier
-                .clip(CircleShape)
-                .background(SurfaceDark)
+                .glassPanel(corner = 22.dp)
                 .bounceClick { onSend() }
                 .padding(12.dp),
             contentAlignment = Alignment.Center
@@ -945,7 +1073,7 @@ fun MessageBubble(
                     }
                 }
             },
-            containerColor = SurfaceDark
+            containerColor = GlassDialogContainer
         )
     }
 
@@ -975,15 +1103,7 @@ fun MessageBubble(
         }
         Box(
             modifier = Modifier
-                .background(
-                    if (isMine) SurfaceDark else DividerColor,
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isMine) 16.dp else 4.dp,
-                        bottomEnd = if (isMine) 4.dp else 16.dp
-                    )
-                )
+                .glassBubble(isMine = isMine)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             Column {
@@ -1038,8 +1158,41 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     var nickname by remember { mutableStateOf(viewModel.myNick) }
     var savedNick by remember { mutableStateOf(viewModel.myNick) }
     var language by remember { mutableStateOf("Русский") }
-    var showInfo by remember { mutableStateOf(false) }
+    var showSavedFlash by remember { mutableStateOf(false) }
     val nickDirty = nickname.trim() != savedNick.trim()
+    val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
+    var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
+
+    LaunchedEffect(showSavedFlash) {
+        if (showSavedFlash) {
+            delay(3000)
+            showSavedFlash = false
+        }
+    }
+
+    LaunchedEffect(myProfile?.avatarBlob?.size, myProfile?.nickname, viewModel.myNick) {
+        contactQr = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            viewModel.buildContactQr()
+        }
+    }
+
+    val openAvatarPicker = rememberAvatarPicker(
+        onCompressed = { bytes ->
+            viewModel.setAvatarBlob(viewModel.myNodeId, bytes) { ok ->
+                if (ok) {
+                    val qrOk = AvatarCompressor.fitForQr(bytes) != null
+                    Toast.makeText(
+                        context,
+                        if (qrOk) "Аватар сохранён"
+                        else "Аватар слишком большой для QR, сохранён локально",
+                        if (qrOk) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(context, "Не удалось сохранить аватар", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    )
     
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
@@ -1055,7 +1208,8 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                     Toast.makeText(context, "Неверный QR: ключ не совпадает с id", Toast.LENGTH_LONG).show()
                 } else {
                     val nick = json.optString("n", "")
-                    viewModel.addScannedContact(derivedId, nick, pk)
+                    val avatar = decodeContactQrAvatar(json)
+                    viewModel.addScannedContact(derivedId, nick, pk, avatar)
                     onScanSuccess()
                 }
             } else {
@@ -1066,50 +1220,33 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         }
     }
 
-    if (showInfo) {
-        GlassDialog(
-            onDismissRequest = { showInfo = false },
-            title = "О Tuk-Tuk"
-        ) {
-            InfoContent(compact = true)
-        }
-    }
-
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(SurfaceDark)
-                    .bounceClick { showInfo = true }
-                    .padding(12.dp)
-            ) {
-                Icon(Icons.Default.Info, contentDescription = "Информация", tint = TextPrimary)
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(SurfaceDark)
-                    .bounceClick { shareApk(context) }
-                    .padding(12.dp)
-            ) {
-                Icon(Icons.Default.Share, contentDescription = "Поделиться приложением", tint = TextPrimary)
-            }
-        }
+        PeerAvatar(
+            avatarBlob = myProfile?.avatarBlob,
+            label = nickname.ifBlank { viewModel.myNick },
+            size = 88.dp,
+            modifier = Modifier.bounceClick { openAvatarPicker() }
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "Нажмите, чтобы выбрать фото",
+            color = TextSecondary,
+            style = Typography.labelSmall
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         
         BasicTextField(
             value = nickname,
             onValueChange = {
                 if (it.length <= 15) {
                     nickname = it
+                    showSavedFlash = false
                 }
             },
             textStyle = Typography.titleLarge.copy(color = TextPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
@@ -1123,50 +1260,32 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
         )
         Spacer(modifier = Modifier.height(12.dp))
-        TukTukButton(
-            onClick = {
-                val trimmed = nickname.trim()
-                if (trimmed.isEmpty()) {
-                    Toast.makeText(context, "Введите имя", Toast.LENGTH_SHORT).show()
-                    return@TukTukButton
+        if (nickDirty || showSavedFlash) {
+            TukTukButton(
+                onClick = {
+                    if (!nickDirty) return@TukTukButton
+                    val trimmed = nickname.trim()
+                    if (trimmed.isEmpty()) {
+                        Toast.makeText(context, "Введите имя", Toast.LENGTH_SHORT).show()
+                        return@TukTukButton
+                    }
+                    nickname = trimmed
+                    viewModel.updateMyProfile(trimmed, false)
+                    savedNick = trimmed
+                    showSavedFlash = true
                 }
-                nickname = trimmed
-                viewModel.updateMyProfile(trimmed, false)
-                savedNick = trimmed
-                Toast.makeText(context, "Имя сохранено", Toast.LENGTH_SHORT).show()
+            ) {
+                Text(
+                    if (nickDirty) "Сохранить" else "Сохранено",
+                    color = if (nickDirty) TextPrimary else AccentLime,
+                    style = Typography.labelMedium
+                )
             }
-        ) {
-            Text(
-                if (nickDirty) "Сохранить" else "Сохранено",
-                color = if (nickDirty) TextPrimary else TextSecondary,
-                style = Typography.labelMedium
-            )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "Версия ${viewModel.myVersionLabel()}",
-            style = Typography.labelSmall,
-            color = TextSecondary
-        )
-        Text(
-            viewModel.buildStatusLabel(),
-            style = Typography.labelSmall,
-            color = TextSecondary
-        )
-        Text(
-            if (com.blink.dtn.security.SecurityConfig.isAuthorKeyConfigured()) {
-                "Ключ автора: задан (официальные объявления проверяются)"
-            } else {
-                "Ключ автора: не задан — «официальные» объявления отклоняются"
-            },
-            style = Typography.labelSmall,
-            color = TextSecondary,
-            modifier = Modifier.padding(top = 2.dp)
-        )
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         // QR encodes the full contact payload (id + public key + nick) so a scan
         // pins the key out-of-band. The human-readable id below stays as-is.
-        val contactQr = viewModel.myContactQr
+        // QR encodes contact payload (id + public key + nick + optional av)
         val qrBitmap = remember(contactQr) {
             generateQrCode(contactQr, 512)?.asImageBitmap()
         }
@@ -1191,7 +1310,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
+                .glassPanel(corner = 16.dp)
                 .bounceClick { 
                     clipboardManager.setText(AnnotatedString(viewModel.myNodeId))
                     Toast.makeText(context, "ID скопирован", Toast.LENGTH_SHORT).show()
@@ -1200,7 +1319,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         ) {
             Text(text = viewModel.myNodeId, color = TextSecondary, style = Typography.bodyMedium)
             Spacer(modifier = Modifier.width(16.dp))
-            Text("📋 Копировать", color = TextSecondary, style = Typography.bodyMedium)
+            Text("Копировать", color = TextSecondary, style = Typography.bodyMedium)
         }
         
         Spacer(modifier = Modifier.height(32.dp))
@@ -1236,8 +1355,8 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (selected) DividerColor else SurfaceDark)
+                        .glassPanel(corner = 12.dp, strong = selected)
+                        .background(if (selected) AccentLime.copy(alpha = 0.22f) else Color.Transparent)
                         .bounceClick {
                             viewModel.setDutyPreset(p)
                             Toast.makeText(context, "Режим: ${p.labelRu}", Toast.LENGTH_SHORT).show()
@@ -1247,7 +1366,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                 ) {
                     Text(
                         p.labelRu,
-                        color = if (selected) TextPrimary else TextSecondary,
+                        color = if (selected) AccentLime else TextSecondary,
                         style = Typography.labelSmall
                     )
                 }
@@ -1264,7 +1383,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             modifier = Modifier.padding(top = 6.dp)
         )
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(32.dp))
         Text("Язык", style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         Row(
@@ -1311,6 +1430,7 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
     }
 }
 
+private const val AUTHOR_TELEGRAM = "b6dmachine"
 private const val OFFICIAL_CHANNEL = "tuk_tuk_official"
 private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
 
@@ -1330,16 +1450,12 @@ private fun openTelegramLink(context: Context, pathOrUsername: String) {
     }
 }
 
-private fun openOfficialChannel(context: Context) {
-    openTelegramLink(context, OFFICIAL_CHANNEL)
+private fun openAuthorTelegram(context: Context) {
+    openTelegramLink(context, AUTHOR_TELEGRAM)
 }
 
-private fun openFeedbackEmail(context: Context) {
-    com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
-        context,
-        subject = "Tuk-Tuk: идея или баг-репорт",
-        body = ""
-    )
+private fun openOfficialChannel(context: Context) {
+    openTelegramLink(context, OFFICIAL_CHANNEL)
 }
 
 private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: String?): String {
@@ -1357,10 +1473,97 @@ private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: Stri
 }
 
 @Composable
+private fun PeerProfileSheet(
+    contactId: String,
+    displayName: String,
+    profile: UserProfile?,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onAccept: () -> Unit,
+    onCopyId: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Профиль", color = TextPrimary) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                PeerAvatar(
+                    avatarBlob = profile?.avatarBlob,
+                    label = displayName,
+                    size = 96.dp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    displayName,
+                    color = TextPrimary,
+                    style = Typography.titleMedium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    profile?.trustBadgeRu() ?: "из сети",
+                    color = TextSecondary,
+                    style = Typography.labelSmall,
+                    modifier = Modifier
+                        .background(DividerColor, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+                if (profile?.isVerified == true) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("QR уже проверен", color = TextSecondary, style = Typography.labelSmall)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .glassPanel(corner = 12.dp)
+                        .bounceClick { onCopyId() }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = contactId,
+                        color = TextSecondary,
+                        style = Typography.bodySmall,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Копировать", color = TextPrimary, style = Typography.labelSmall)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                if (profile?.isStranger == true) {
+                    TukTukButton(onClick = {
+                        onAccept()
+                        onDismiss()
+                    }) {
+                        Text("В контакты", color = TextPrimary, style = Typography.labelMedium)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                TukTukButton(onClick = onRename) {
+                    Text("Изменить имя", color = TextPrimary, style = Typography.labelMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Закрыть", color = TextPrimary)
+            }
+        },
+        containerColor = GlassDialogContainer
+    )
+}
+
+@Composable
 fun InfoContent(compact: Boolean = false) {
     val context = LocalContext.current
     val bodyStyle = Typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp)
-    val quietStyle = Typography.bodySmall.copy(lineHeight = 16.sp)
+    val quietStyle = Typography.bodySmall.copy(lineHeight = 18.sp)
 
     Column(
         modifier = Modifier
@@ -1370,10 +1573,13 @@ fun InfoContent(compact: Boolean = false) {
     ) {
         if (!compact) {
             Text("О Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
         }
-
-        Text("Связь, которую нельзя отключить.", style = Typography.titleMedium, color = TextPrimary)
+        Text(
+            "Связь, которую нельзя отключить.",
+            style = Typography.titleMedium,
+            color = TextPrimary
+        )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             "Tuk-Tuk работает, даже когда падает интернет и молчат вышки сотовой связи. " +
@@ -1385,7 +1591,6 @@ fun InfoContent(compact: Boolean = false) {
         Spacer(modifier = Modifier.height(16.dp))
         Text("Контакты", style = Typography.titleMedium, color = TextPrimary)
         Spacer(modifier = Modifier.height(8.dp))
-
         Text("• Канал проекта:", style = quietStyle, color = TextSecondary)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
@@ -1394,7 +1599,6 @@ fun InfoContent(compact: Boolean = false) {
             color = TextPrimary,
             modifier = Modifier.clickable { openOfficialChannel(context) }
         )
-
         Spacer(modifier = Modifier.height(10.dp))
         Text("• Идеи и баг-репорты:", style = quietStyle, color = TextSecondary)
         Spacer(modifier = Modifier.height(4.dp))
@@ -1402,7 +1606,13 @@ fun InfoContent(compact: Boolean = false) {
             FEEDBACK_EMAIL,
             style = Typography.bodyMedium,
             color = TextPrimary,
-            modifier = Modifier.clickable { openFeedbackEmail(context) }
+            modifier = Modifier.clickable {
+                com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
+                    context,
+                    subject = "Tuk-Tuk feedback",
+                    body = "Опишите ошибку или идею:\n\n"
+                )
+            }
         )
 
         Spacer(modifier = Modifier.height(20.dp))

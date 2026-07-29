@@ -142,11 +142,66 @@ class BLinkViewModel(
     }
     }
 
+    /**
+     * Save a mesh-compressed avatar for [userId] (own profile or peer).
+     * Returns false via [onDone] if the profile row could not be updated.
+     */
+    fun setAvatarBlob(userId: String, blob: ByteArray?, onDone: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = try {
+                val existing = dao.getProfileById(userId)
+                val now = System.currentTimeMillis()
+                if (existing != null) {
+                    dao.updateAvatarBlob(userId, blob, now)
+                    true
+                } else if (userId == myNodeId) {
+                    val pubKey = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64()
+                    dao.insertOrUpdateProfile(
+                        com.blink.dtn.db.UserProfile(
+                            userId = myNodeId,
+                            nickname = myNick,
+                            lastSeen = now,
+                            isVip = false,
+                            publicKey = pubKey,
+                            avatarBlob = blob
+                        )
+                    )
+                    true
+                } else {
+                    false
+                }
+            } catch (_: Exception) {
+                false
+            }
+            if (onDone != null) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(ok) }
+            }
+        }
+    }
+
     fun getProfileFlow(userId: String) = dao.getProfileByIdFlow(userId)
 
     // Contact QR payload: carries our public key so a scan can pin the key
-    // out-of-band without waiting for a BLE identity announcement. JSONObject
-    // escapes the nick correctly.
+    // out-of-band without waiting for a BLE identity announcement. Optional
+    // compact avatar (`av` = base64 JPEG) when it fits the QR budget.
+    suspend fun buildContactQr(): String {
+        val avatar = dao.getProfileById(myNodeId)?.avatarBlob
+        return org.json.JSONObject().apply {
+            put("v", 1)
+            put("id", myNodeId)
+            put("pk", com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
+            put("n", myNick)
+            val qrAvatar = avatar?.let { AvatarCompressor.fitForQr(it) }
+            if (qrAvatar != null) {
+                put(
+                    "av",
+                    android.util.Base64.encodeToString(qrAvatar, android.util.Base64.NO_WRAP)
+                )
+            }
+        }.toString()
+    }
+
+    /** Sync getter used by UI when avatar is not needed in the payload. */
     val myContactQr: String
         get() = org.json.JSONObject().apply {
             put("v", 1)
@@ -170,7 +225,8 @@ class BLinkViewModel(
         peerId: String,
         nick: String = "",
         pubKeyBase64: String? = null,
-        verifiedOutOfBand: Boolean = false
+        verifiedOutOfBand: Boolean = false,
+        avatarBlob: ByteArray? = null
     ) {
         val existing = dao.getProfileById(peerId)
         if (existing?.isBlocked == true) return
@@ -181,7 +237,8 @@ class BLinkViewModel(
                 lastSeen = System.currentTimeMillis(),
                 publicKey = pubKeyBase64?.takeIf { it.isNotEmpty() } ?: existing.publicKey,
                 trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
-                verifiedOutOfBand = existing.verifiedOutOfBand || verifiedOutOfBand
+                verifiedOutOfBand = existing.verifiedOutOfBand || verifiedOutOfBand,
+                avatarBlob = avatarBlob ?: existing.avatarBlob
             )
         } else {
             com.blink.dtn.db.UserProfile(
@@ -191,7 +248,8 @@ class BLinkViewModel(
                 isVip = false,
                 publicKey = pubKeyBase64.orEmpty(),
                 trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
-                verifiedOutOfBand = verifiedOutOfBand
+                verifiedOutOfBand = verifiedOutOfBand,
+                avatarBlob = avatarBlob
             )
         }
         dao.insertOrUpdateProfile(profile)
@@ -268,10 +326,21 @@ class BLinkViewModel(
     // Persist a QR-scanned contact with its pinned public key. The id is the
     // self-certifying hash of pubKeyBase64, so this can only ever pin the one
     // key that matches the id (a later BLE announcement must carry the same key
-    // or it is rejected at ingress).
-    fun addScannedContact(id: String, nick: String, pubKeyBase64: String) {
+    // or it is rejected at ingress). Optional compact avatar from QR `av`.
+    fun addScannedContact(
+        id: String,
+        nick: String,
+        pubKeyBase64: String,
+        avatarBlob: ByteArray? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
-            upsertPeerAsContact(id, nick, pubKeyBase64, verifiedOutOfBand = true)
+            upsertPeerAsContact(
+                id,
+                nick,
+                pubKeyBase64,
+                verifiedOutOfBand = true,
+                avatarBlob = avatarBlob
+            )
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 setCurrentDialog(id)
             }
