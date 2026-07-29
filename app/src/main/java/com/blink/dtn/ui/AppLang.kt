@@ -149,6 +149,22 @@ object S {
         "Баланс обнаружения и батареи."
     fun langLabel(lang: String) = if (lang == LANG_EN) "Language" else "Язык"
 
+    // Settings
+    fun settings(lang: String) = if (lang == LANG_EN) "Settings" else "Настройки"
+    fun wallpaper(lang: String) = if (lang == LANG_EN) "Wallpaper" else "Обои"
+    fun wallpaperHint(lang: String) = if (lang == LANG_EN)
+        "Photo sits on a black background — dial how strong it shows."
+    else
+        "Фото поверх чёрного фона — ползунком настройте, насколько оно видно."
+    fun chooseWallpaper(lang: String) = if (lang == LANG_EN) "Choose photo" else "Выбрать фото"
+    fun resetWallpaper(lang: String) = if (lang == LANG_EN) "Remove wallpaper" else "Убрать обои"
+    fun wallpaperNone(lang: String) = if (lang == LANG_EN) "Black background" else "Чёрный фон"
+    fun wallpaperOpacity(lang: String) = if (lang == LANG_EN) "Wallpaper strength" else "Прозрачность обоев"
+    fun wallpaperSaved(lang: String) = if (lang == LANG_EN) "Wallpaper saved" else "Обои сохранены"
+    fun wallpaperReset(lang: String) = if (lang == LANG_EN) "Black background restored" else "Чёрный фон восстановлен"
+    fun wallpaperError(lang: String) = if (lang == LANG_EN) "Could not set wallpaper" else "Не удалось установить обои"
+    fun galleryDenied(lang: String) = if (lang == LANG_EN) "Gallery access denied" else "Нет доступа к галерее"
+
     // Scan contact
     fun scanContact(lang: String) = if (lang == LANG_EN) "Scan contact QR" else "Отсканируйте QR другого пользователя"
 

@@ -1,5 +1,6 @@
 package com.blink.dtn.ui.theme
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -7,12 +8,21 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.blink.dtn.ui.AppWallpaper
 
 val AppBackgroundBrush = Brush.verticalGradient(
     colors = listOf(
@@ -66,10 +76,34 @@ fun Modifier.glassBubble(
 
 @Composable
 fun AppGlassBackground(content: @Composable BoxScope.() -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AppRootBackdrop()
+        content()
+    }
+}
+
+/** Black base; optional wallpaper drawn on top with user opacity. */
+@Composable
+fun AppRootBackdrop() {
+    val context = LocalContext.current
+    val revision by AppWallpaper.revision.collectAsState()
+    val opacity by AppWallpaper.opacity.collectAsState()
+    LaunchedEffect(Unit) { AppWallpaper.init(context) }
+    val wallpaper = remember(revision) { AppWallpaper.loadBitmap(context) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppBackgroundBrush),
-        content = content
+            .background(BackgroundDark)
     )
+    if (wallpaper != null && opacity > 0.01f) {
+        Image(
+            bitmap = wallpaper.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = opacity.coerceIn(0f, 1f) }
+        )
+    }
 }

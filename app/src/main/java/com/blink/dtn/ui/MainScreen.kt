@@ -36,6 +36,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import android.Manifest
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
@@ -43,13 +47,17 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -75,6 +83,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -86,7 +95,7 @@ import androidx.core.content.FileProvider
 import com.blink.dtn.db.Message
 import com.blink.dtn.db.UserProfile
 import com.blink.dtn.ui.theme.AccentLime
-import com.blink.dtn.ui.theme.AppBackgroundBrush
+import com.blink.dtn.ui.theme.AppRootBackdrop
 import com.blink.dtn.ui.theme.BackgroundDark
 import com.blink.dtn.ui.theme.DangerColor
 import com.blink.dtn.ui.theme.DividerColor
@@ -98,6 +107,7 @@ import com.blink.dtn.ui.theme.glassBubble
 import com.blink.dtn.ui.theme.glassPanel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -170,7 +180,10 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val isConnected = vkActive || peerCount > 0
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
-    LaunchedEffect(Unit) { AppLang.init(context) }
+    LaunchedEffect(Unit) {
+        AppLang.init(context)
+        AppWallpaper.init(context)
+    }
 
     if (showDevPanel) {
         DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
@@ -195,11 +208,8 @@ fun MainScreen(viewModel: BLinkViewModel) {
         )
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AppBackgroundBrush)
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AppRootBackdrop()
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
@@ -1231,6 +1241,12 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
 
     // Use TextFieldValue to preserve cursor position correctly
     var nickFieldValue by remember {
@@ -1470,27 +1486,180 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         )
 
         Spacer(modifier = Modifier.height(32.dp))
+        TukTukButton(onClick = { showSettings = true }) {
+            Icon(Icons.Default.Settings, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(S.settings(lang), color = TextPrimary, style = Typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val lang by AppLang.lang.collectAsState()
+    val revision by AppWallpaper.revision.collectAsState()
+    val opacity by AppWallpaper.opacity.collectAsState()
+    val scope = rememberCoroutineScope()
+    val preview = remember(revision) { AppWallpaper.loadBitmap(context) }
+    var saving by remember { mutableStateOf(false) }
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        saving = true
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { AppWallpaper.setFromUri(context, uri) }
+            saving = false
+            Toast.makeText(
+                context,
+                if (ok) S.wallpaperSaved(lang) else S.wallpaperError(lang),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        Manifest.permission.READ_MEDIA_IMAGES
+    else
+        Manifest.permission.READ_EXTERNAL_STORAGE
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            picker.launch("image/*")
+        } else {
+            Toast.makeText(context, S.galleryDenied(lang), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openGallery() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            picker.launch("image/*")
+        } else {
+            permissionLauncher.launch(mediaPermission)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            IconButton(onClick = onBack) {
+                CustomBackIcon()
+            }
+            Text(
+                S.settings(lang),
+                color = TextPrimary,
+                style = Typography.titleLarge,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
         Text(S.langLabel(lang), style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
-        // Fix #4: real language switching via AppLang
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassPanel(corner = 12.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 "Русский",
-                color = if (lang == "ru") TextPrimary else TextSecondary,
+                color = if (lang == "ru") AccentLime else TextSecondary,
                 style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { AppLang.set(context, "ru") }.padding(8.dp)
+                modifier = Modifier.bounceClick { AppLang.set(context, "ru") }.padding(12.dp)
             )
             Spacer(modifier = Modifier.width(16.dp))
             Text(
                 "English",
-                color = if (lang == "en") TextPrimary else TextSecondary,
+                color = if (lang == "en") AccentLime else TextSecondary,
                 style = Typography.bodyMedium,
-                modifier = Modifier.bounceClick { AppLang.set(context, "en") }.padding(8.dp)
+                modifier = Modifier.bounceClick { AppLang.set(context, "en") }.padding(12.dp)
             )
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+        Text(S.wallpaper(lang), style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.wallpaperHint(lang), style = Typography.bodySmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(BackgroundDark),
+            contentAlignment = Alignment.Center
+        ) {
+            if (preview != null) {
+                Image(
+                    bitmap = preview.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = opacity.coerceIn(0f, 1f) }
+                )
+            } else {
+                Text(S.wallpaperNone(lang), color = TextSecondary, style = Typography.bodySmall)
+            }
+        }
+
+        if (preview != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(S.wallpaperOpacity(lang), style = Typography.labelSmall, color = TextSecondary)
+                Text(
+                    "${(opacity * 100).toInt()}%",
+                    style = Typography.labelSmall,
+                    color = AccentLime
+                )
+            }
+            Slider(
+                value = opacity,
+                onValueChange = { AppWallpaper.setOpacity(context, it) },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = AccentLime,
+                    activeTrackColor = AccentLime,
+                    inactiveTrackColor = DividerColor
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        TukTukButton(onClick = { if (!saving) openGallery() }) {
+            Text(
+                if (saving) "…" else S.chooseWallpaper(lang),
+                color = TextPrimary,
+                style = Typography.titleMedium
+            )
+        }
+        if (preview != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            TukTukButton(onClick = {
+                AppWallpaper.clear(context)
+                Toast.makeText(context, S.wallpaperReset(lang), Toast.LENGTH_SHORT).show()
+            }) {
+                Text(S.resetWallpaper(lang), color = TextPrimary, style = Typography.titleMedium)
+            }
         }
     }
 }
