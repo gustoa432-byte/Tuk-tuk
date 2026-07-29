@@ -206,11 +206,31 @@ abstract class BLinkDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    BLinkDatabase::class.java,
-                    "blink_database"
-                )
+                val instance = try {
+                    buildAndOpen(context)
+                } catch (e: Exception) {
+                    // Schema mismatch after a bad update used to crash-loop on every launch.
+                    // Last resort: wipe local DB once and recreate from current entities
+                    // so the user can open the app without uninstalling.
+                    android.util.Log.e(
+                        "BLinkDatabase",
+                        "DB open/migration failed — recreating blink_database",
+                        e
+                    )
+                    context.applicationContext.deleteDatabase("blink_database")
+                    buildAndOpen(context)
+                }
+                INSTANCE = instance
+                instance
+            }
+        }
+
+        private fun buildAndOpen(context: Context): BLinkDatabase {
+            val db = Room.databaseBuilder(
+                context.applicationContext,
+                BLinkDatabase::class.java,
+                "blink_database"
+            )
                 .addMigrations(
                     MIGRATION_9_10,
                     MIGRATION_10_11,
@@ -221,18 +241,14 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_15_16,
                     MIGRATION_16_17
                 )
-                // Do NOT wipe user data on every unknown schema change. Real
-                // migrations are provided for 9->10->…->15; destructive fallback is
-                // deliberately limited to legacy pre-9 schemas (which never had a
-                // migration path) and to downgrades. Any future forgotten
-                // migration will now surface as a crash in debug instead of
-                // silently deleting messages.
+                // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
-                INSTANCE = instance
-                instance
-            }
+            // Force migration + schema validation now (not lazily on first DAO call),
+            // so a mismatch is caught (and recovered) inside getDatabase().
+            db.openHelper.writableDatabase
+            return db
         }
     }
 }

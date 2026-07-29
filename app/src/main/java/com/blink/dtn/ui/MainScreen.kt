@@ -1034,7 +1034,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
             decorationBox = { innerTextField ->
                 Box(
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .glassPanel(corner = 24.dp)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
@@ -1178,7 +1178,11 @@ fun MessageBubble(
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             Column {
-                Text(text = msg.text, style = Typography.bodyLarge, color = TextPrimary)
+                EmojiText(
+                    text = msg.text,
+                    style = Typography.bodyLarge,
+                    color = TextPrimary
+                )
                 Row(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
