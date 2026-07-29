@@ -172,6 +172,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     var selectedTab by remember { mutableStateOf(0) }
     var showDevPanel by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var clickCount by remember { mutableStateOf(0) }
     var lastClickTime by remember { mutableStateOf(0L) }
     val peerCount by viewModel.peerCount.collectAsState()
@@ -183,6 +184,12 @@ fun MainScreen(viewModel: BLinkViewModel) {
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
+    }
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 2) {
+            showSettings = false
+            AppWallpaper.discardDraft()
+        }
     }
 
     if (showDevPanel) {
@@ -248,25 +255,37 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         }
                     },
                     actions = {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .size(40.dp)
-                                .glassPanel(corner = 20.dp)
-                                .bounceClick { showInfo = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Info, contentDescription = "Информация", tint = TextPrimary, modifier = Modifier.size(20.dp))
-                        }
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 12.dp)
-                                .size(40.dp)
-                                .glassPanel(corner = 20.dp)
-                                .bounceClick { shareApk(context) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = "Поделиться", tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        if (selectedTab == 2) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 4.dp)
+                                    .size(40.dp)
+                                    .glassPanel(corner = 20.dp)
+                                    .bounceClick { showInfo = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = S.infoTitle(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 4.dp)
+                                    .size(40.dp)
+                                    .glassPanel(corner = 20.dp)
+                                    .bounceClick { shareApk(context) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = S.shareTukTuk(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 12.dp)
+                                    .size(40.dp)
+                                    .glassPanel(corner = 20.dp)
+                                    .bounceClick { showSettings = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = S.settings(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -297,7 +316,14 @@ fun MainScreen(viewModel: BLinkViewModel) {
                             viewModel.setCurrentDialog(contactId)
                             selectedTab = 0
                         }
-                        2 -> ProfileTab(viewModel, { selectedTab = 0 })
+                        2 -> if (showSettings) {
+                            SettingsScreen(onBack = {
+                                AppWallpaper.discardDraft()
+                                showSettings = false
+                            })
+                        } else {
+                            ProfileTab(viewModel, { selectedTab = 0 })
+                        }
                     }
                 }
             }
@@ -1241,12 +1267,6 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
-    var showSettings by remember { mutableStateOf(false) }
-
-    if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false })
-        return
-    }
 
     // Use TextFieldValue to preserve cursor position correctly
     var nickFieldValue by remember {
@@ -1484,13 +1504,6 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             style = Typography.labelSmall,
             modifier = Modifier.padding(top = 6.dp)
         )
-
-        Spacer(modifier = Modifier.height(32.dp))
-        TukTukButton(onClick = { showSettings = true }) {
-            Icon(Icons.Default.Settings, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(24.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(S.settings(lang), color = TextPrimary, style = Typography.titleMedium)
-        }
     }
 }
 
@@ -1499,24 +1512,36 @@ private fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
     val revision by AppWallpaper.revision.collectAsState()
-    val opacity by AppWallpaper.opacity.collectAsState()
+    val savedOpacity by AppWallpaper.opacity.collectAsState()
+    val draftBitmap by AppWallpaper.draftBitmap.collectAsState()
+    val draftOpacity by AppWallpaper.draftOpacity.collectAsState()
     val scope = rememberCoroutineScope()
-    val preview = remember(revision) { AppWallpaper.loadBitmap(context) }
-    var saving by remember { mutableStateOf(false) }
+    val savedPreview = remember(revision) { AppWallpaper.loadBitmap(context) }
+    val preview = draftBitmap ?: savedPreview
+    val displayOpacity = (draftOpacity ?: savedOpacity).coerceIn(0f, 1f)
+    val wallpaperDirty = draftBitmap != null ||
+        (draftOpacity != null && draftOpacity != savedOpacity)
+    var loading by remember { mutableStateOf(false) }
+    var showSavedFlash by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showSavedFlash) {
+        if (showSavedFlash) {
+            delay(2000)
+            showSavedFlash = false
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        saving = true
+        loading = true
         scope.launch {
-            val ok = withContext(Dispatchers.IO) { AppWallpaper.setFromUri(context, uri) }
-            saving = false
-            Toast.makeText(
-                context,
-                if (ok) S.wallpaperSaved(lang) else S.wallpaperError(lang),
-                Toast.LENGTH_SHORT
-            ).show()
+            val ok = withContext(Dispatchers.IO) { AppWallpaper.loadDraftFromUri(context, uri) }
+            loading = false
+            if (!ok) {
+                Toast.makeText(context, S.wallpaperError(lang), Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -1543,6 +1568,17 @@ private fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    fun saveWallpaper() {
+        if (!wallpaperDirty) return
+        val ok = AppWallpaper.commitDraft(context)
+        if (ok) {
+            showSavedFlash = true
+            Toast.makeText(context, S.wallpaperSaved(lang), Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, S.wallpaperError(lang), Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1560,8 +1596,24 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 S.settings(lang),
                 color = TextPrimary,
                 style = Typography.titleLarge,
-                modifier = Modifier.padding(start = 4.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 4.dp)
             )
+            if (wallpaperDirty || showSavedFlash) {
+                Box(
+                    modifier = Modifier
+                        .bounceClick { saveWallpaper() }
+                        .padding(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = S.save(lang),
+                        tint = if (wallpaperDirty) AccentLime else TextSecondary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -1610,7 +1662,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = opacity.coerceIn(0f, 1f) }
+                        .graphicsLayer { alpha = displayOpacity }
                 )
             } else {
                 Text(S.wallpaperNone(lang), color = TextSecondary, style = Typography.bodySmall)
@@ -1626,14 +1678,14 @@ private fun SettingsScreen(onBack: () -> Unit) {
             ) {
                 Text(S.wallpaperOpacity(lang), style = Typography.labelSmall, color = TextSecondary)
                 Text(
-                    "${(opacity * 100).toInt()}%",
+                    "${(displayOpacity * 100).toInt()}%",
                     style = Typography.labelSmall,
                     color = AccentLime
                 )
             }
             Slider(
-                value = opacity,
-                onValueChange = { AppWallpaper.setOpacity(context, it) },
+                value = displayOpacity,
+                onValueChange = { AppWallpaper.setDraftOpacity(it) },
                 valueRange = 0f..1f,
                 colors = SliderDefaults.colors(
                     thumbColor = AccentLime,
@@ -1645,14 +1697,14 @@ private fun SettingsScreen(onBack: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = { if (!saving) openGallery() }) {
+        TukTukButton(onClick = { if (!loading) openGallery() }) {
             Text(
-                if (saving) "…" else S.chooseWallpaper(lang),
+                if (loading) "…" else S.chooseWallpaper(lang),
                 color = TextPrimary,
                 style = Typography.titleMedium
             )
         }
-        if (preview != null) {
+        if (savedPreview != null || draftBitmap != null) {
             Spacer(modifier = Modifier.height(12.dp))
             TukTukButton(onClick = {
                 AppWallpaper.clear(context)

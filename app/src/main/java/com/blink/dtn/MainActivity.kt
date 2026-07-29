@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
             BLinkTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = androidx.compose.ui.graphics.Color.Transparent
                 ) {
                     BLinkApp(bleManager, factory)
                 }

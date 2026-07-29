@@ -82,28 +82,32 @@ fun AppGlassBackground(content: @Composable BoxScope.() -> Unit) {
     }
 }
 
-/** Black base; optional wallpaper drawn on top with user opacity. */
+/** Black base; optional wallpaper (saved or draft) drawn on top with opacity. */
 @Composable
 fun AppRootBackdrop() {
     val context = LocalContext.current
     val revision by AppWallpaper.revision.collectAsState()
     val opacity by AppWallpaper.opacity.collectAsState()
+    val draftBitmap by AppWallpaper.draftBitmap.collectAsState()
+    val draftOpacity by AppWallpaper.draftOpacity.collectAsState()
     LaunchedEffect(Unit) { AppWallpaper.init(context) }
-    val wallpaper = remember(revision) { AppWallpaper.loadBitmap(context) }
+    val savedWallpaper = remember(revision) { AppWallpaper.loadBitmap(context) }
+    val wallpaper = draftBitmap ?: savedWallpaper
+    val effectiveOpacity = (draftOpacity ?: opacity).coerceIn(0f, 1f)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundDark)
     )
-    if (wallpaper != null && opacity > 0.01f) {
+    if (wallpaper != null && effectiveOpacity > 0.01f) {
         Image(
             bitmap = wallpaper.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = opacity.coerceIn(0f, 1f) }
+                .graphicsLayer { alpha = effectiveOpacity }
         )
     }
 }

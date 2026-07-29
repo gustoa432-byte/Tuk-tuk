@@ -11,7 +11,9 @@ import java.io.FileOutputStream
 import kotlin.math.max
 
 /**
- * Local app wallpaper over a black base. [opacity] = how strongly the photo shows (0 = black only).
+ * Local app wallpaper over a black base.
+ * [opacity] = how strongly the photo shows (0 = black only).
+ * Draft photo/opacity preview live until [commitDraft].
  */
 object AppWallpaper {
 
@@ -21,7 +23,6 @@ object AppWallpaper {
     private const val FILE_NAME = "wallpaper.jpg"
     private const val MAX_EDGE_PX = 1920
     private const val JPEG_QUALITY = 82
-    /** Default strength when a photo is first chosen — readable UI, visible wallpaper. */
     const val DEFAULT_OPACITY = 0.45f
 
     private val _revision = MutableStateFlow(0L)
@@ -29,6 +30,12 @@ object AppWallpaper {
 
     private val _opacity = MutableStateFlow(DEFAULT_OPACITY)
     val opacity: StateFlow<Float> = _opacity
+
+    private val _draftBitmap = MutableStateFlow<Bitmap?>(null)
+    val draftBitmap: StateFlow<Bitmap?> = _draftBitmap
+
+    private val _draftOpacity = MutableStateFlow<Float?>(null)
+    val draftOpacity: StateFlow<Float?> = _draftOpacity
 
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -49,41 +56,66 @@ object AppWallpaper {
 
     fun file(context: Context): File = File(context.filesDir, FILE_NAME)
 
-    fun setOpacity(context: Context, value: Float) {
-        val clamped = value.coerceIn(0f, 1f)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putFloat(KEY_OPACITY, clamped).apply()
-        _opacity.value = clamped
+    fun effectiveOpacity(): Float = (_draftOpacity.value ?: _opacity.value).coerceIn(0f, 1f)
+
+    fun setDraftOpacity(value: Float) {
+        _draftOpacity.value = value.coerceIn(0f, 1f)
     }
 
-    fun setFromUri(context: Context, uri: Uri): Boolean {
+    /** Load gallery photo into draft only — not written until [commitDraft]. */
+    fun loadDraftFromUri(context: Context, uri: Uri): Boolean {
         val bitmap = decodeSampled(context, uri, MAX_EDGE_PX) ?: return false
-        return try {
-            val scaled = scaleDown(bitmap, MAX_EDGE_PX)
-            try {
+        val scaled = scaleDown(bitmap, MAX_EDGE_PX)
+        if (scaled !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+        val old = _draftBitmap.value
+        _draftBitmap.value = scaled
+        if (old != null && old !== scaled && !old.isRecycled) old.recycle()
+        if (_draftOpacity.value == null) {
+            _draftOpacity.value = _opacity.value
+        }
+        return true
+    }
+
+    fun commitDraft(context: Context): Boolean {
+        val draft = _draftBitmap.value
+        val draftOp = _draftOpacity.value ?: _opacity.value
+        try {
+            if (draft != null) {
                 FileOutputStream(file(context)).use { out ->
-                    if (!scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) return false
+                    if (!draft.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) return false
                 }
-                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val opacity = prefs.getFloat(KEY_OPACITY, DEFAULT_OPACITY).coerceIn(0f, 1f)
-                prefs.edit()
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
                     .putBoolean(KEY_CUSTOM, true)
-                    .putFloat(KEY_OPACITY, opacity)
+                    .putFloat(KEY_OPACITY, draftOp.coerceIn(0f, 1f))
                     .apply()
-                _opacity.value = opacity
+                _opacity.value = draftOp.coerceIn(0f, 1f)
                 _revision.value = System.currentTimeMillis()
-                true
-            } finally {
-                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+            } else if (_draftOpacity.value != null) {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putFloat(KEY_OPACITY, draftOp.coerceIn(0f, 1f)).apply()
+                _opacity.value = draftOp.coerceIn(0f, 1f)
+            } else {
+                return false
             }
+            discardDraft(keepOpacityPreview = false)
+            return true
         } catch (_: Exception) {
-            false
-        } finally {
-            if (!bitmap.isRecycled) bitmap.recycle()
+            return false
+        }
+    }
+
+    fun discardDraft(keepOpacityPreview: Boolean = false) {
+        val old = _draftBitmap.value
+        _draftBitmap.value = null
+        if (old != null && !old.isRecycled) old.recycle()
+        if (!keepOpacityPreview) {
+            _draftOpacity.value = null
         }
     }
 
     fun clear(context: Context) {
+        discardDraft()
         file(context).delete()
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_CUSTOM, false).apply()
