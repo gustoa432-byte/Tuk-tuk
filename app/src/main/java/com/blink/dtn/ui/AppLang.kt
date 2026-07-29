@@ -30,19 +30,141 @@ object AppLang {
 
 /** Provides UI strings in the current language. */
 object S {
+    // Tabs
     fun dialogs(lang: String) = if (lang == LANG_EN) "Dialogs" else "Диалоги"
     fun groupChat(lang: String) = if (lang == LANG_EN) "Group chat" else "Общий чат"
     fun profile(lang: String) = if (lang == LANG_EN) "Profile" else "Профиль"
+
+    // Actions
     fun save(lang: String) = if (lang == LANG_EN) "Save" else "Сохранить"
     fun saved(lang: String) = if (lang == LANG_EN) "Saved" else "Сохранено"
     fun copy(lang: String) = if (lang == LANG_EN) "Copy" else "Копировать"
-    fun scanQr(lang: String) = if (lang == LANG_EN) "Scan QR" else "Сканировать QR"
-    fun send(lang: String) = if (lang == LANG_EN) "Send" else "Отправить"
-    fun message(lang: String) = if (lang == LANG_EN) "Message..." else "Сообщение..."
-    fun infoTitle(lang: String) = if (lang == LANG_EN) "About Tuk-Tuk" else "О Tuk-Tuk"
+    fun cancel(lang: String) = if (lang == LANG_EN) "Cancel" else "Отмена"
     fun close(lang: String) = if (lang == LANG_EN) "Close" else "Закрыть"
-    fun enterName(lang: String) = if (lang == LANG_EN) "Name" else "Имя"
-    fun enterNameHint(lang: String) = if (lang == LANG_EN) "Enter name..." else "Введите имя..."
+    fun send(lang: String) = if (lang == LANG_EN) "Send" else "Отправить"
+    fun accept(lang: String) = if (lang == LANG_EN) "Accept" else "Принять"
+    fun ignore(lang: String) = if (lang == LANG_EN) "Ignore" else "Игнорировать"
+    fun addToContacts(lang: String) = if (lang == LANG_EN) "Add contact" else "В контакты"
+    fun rename(lang: String) = if (lang == LANG_EN) "Rename" else "Изменить имя"
+    fun get(lang: String) = if (lang == LANG_EN) "Download" else "Получить"
+    fun hide(lang: String) = if (lang == LANG_EN) "Hide" else "Скрыть"
+    fun scanQr(lang: String) = if (lang == LANG_EN) "Scan QR" else "Сканировать QR"
+    fun verifyQr(lang: String) = if (lang == LANG_EN) "Verify QR" else "Сверить QR"
+    fun deleteLocal(lang: String) = if (lang == LANG_EN) "Delete for me" else "Удалить у себя"
+    fun cancelSend(lang: String) = if (lang == LANG_EN) "Cancel sending" else "Отменить отправку"
+    fun blockUser(lang: String) = if (lang == LANG_EN) "Block user" else "Заблокировать пользователя"
+    fun shareTukTuk(lang: String) = if (lang == LANG_EN) "Share Tuk-Tuk" else "Поделиться Tuk-Tuk"
+
+    // Inputs / placeholders
+    fun message(lang: String) = if (lang == LANG_EN) "Message..." else "Сообщение..."
+    fun enterName(lang: String) = if (lang == LANG_EN) "Your nickname..." else "Ваш никнейм..."
+    fun enterNameHint(lang: String) = if (lang == LANG_EN) "Enter nickname..." else "Введите никнейм..."
+    fun enterPeerId(lang: String) = if (lang == LANG_EN) "Enter contact ID..." else "Введите ID собеседника..."
+    fun findOrStartDialog(lang: String) = if (lang == LANG_EN) "Find or start a dialog..." else "Найти или начать диалог..."
+    fun renameHint(lang: String) = if (lang == LANG_EN) "E.g. Vasya from work" else "Например, Вася с работы"
+
+    // Notifications / toasts
     fun idCopied(lang: String) = if (lang == LANG_EN) "ID copied" else "ID скопирован"
+    fun contactAccepted(lang: String) = if (lang == LANG_EN) "Contact accepted" else "Контакт принят"
+    fun nameSaved(lang: String) = if (lang == LANG_EN) "Name saved" else "Имя сохранено"
+    fun modeSet(lang: String, label: String) = if (lang == LANG_EN) "Mode: $label" else "Режим: $label"
+    fun qrVerified(lang: String) = if (lang == LANG_EN) "Contact verified via QR" else "Контакт проверен по QR"
+    fun qrKeyMismatch(lang: String) = if (lang == LANG_EN) "Invalid QR: key does not match ID" else "Неверный QR: ключ не совпадает с id"
+    fun qrNotContact(lang: String) = if (lang == LANG_EN) "Need a TukTuk contact QR (with key)" else "Нужен QR контакта TukTuk (с ключом)"
+    fun telegramError(lang: String) = if (lang == LANG_EN) "Could not open Telegram" else "Не удалось открыть Telegram"
+    fun avatarSaved(lang: String) = if (lang == LANG_EN) "Avatar saved" else "Аватар сохранён"
+    fun avatarTooBig(lang: String) = if (lang == LANG_EN) "Avatar too large for QR, saved locally" else "Аватар слишком большой для QR, сохранён локально"
+    fun avatarSaveError(lang: String) = if (lang == LANG_EN) "Could not save avatar" else "Не удалось сохранить аватар"
+    fun userBlocked(lang: String) = if (lang == LANG_EN) "User blocked" else "Пользователь заблокирован"
+
+    // Empty states
+    fun noDialogs(lang: String) = if (lang == LANG_EN)
+        "No dialogs yet.\nTap 'Find or start a dialog...' to add a contact."
+    else
+        "У вас пока нет диалогов.\nНажмите 'Найти или начать диалог...', чтобы добавить контакт."
+    fun noMessages(lang: String) = if (lang == LANG_EN) "No messages yet." else "Здесь пока нет сообщений."
+    fun publicChatEmpty(lang: String) = if (lang == LANG_EN) "Public chat is quiet.\nSay something!" else "В общем чате пока тихо.\nНапишите что-нибудь!"
+    fun anonymous(lang: String) = if (lang == LANG_EN) "Anonymous" else "Аноним"
+    fun unknownContact(lang: String) = if (lang == LANG_EN) "Unknown contact" else "Неизвестный контакт"
+    fun stranger(lang: String) = if (lang == LANG_EN) "Stranger" else "Незнакомец"
+    fun fromNetwork(lang: String) = if (lang == LANG_EN) "from network" else "из сети"
+    fun qrAlreadyVerified(lang: String) = if (lang == LANG_EN) "QR already verified" else "QR уже проверен"
+
+    // Banners / hints
+    fun strangerBanner(lang: String) = if (lang == LANG_EN)
+        "Message request from a stranger. Nickname is just a label — check the ID. Accept, ignore or verify QR."
+    else
+        "Запрос сообщения от незнакомца. Ник — просто метка; смотрите id. Примите, игнорируйте или сверьте QR."
+    fun verifyQrHint(lang: String) = if (lang == LANG_EN)
+        "Contact from network. For family and close ones verify QR — this locks the key (\"verified\")."
+    else
+        "Контакт из сети. Для семьи и близких сверьте QR — так вы закрепите ключ («проверен»)."
+    fun publicChatHint(lang: String) = if (lang == LANG_EN)
+        "Public chat — open megaphone: nearby nodes see the text. No group encryption."
+    else
+        "Общий чат — открытый мегафон: соседние узлы видят текст. Без группового шифрования."
+    fun renameTip(lang: String) = if (lang == LANG_EN)
+        "Local label on this device only. The contact's network nick does not change."
+    else
+        "Локальная подпись только на этом устройстве. Сетевой ник собеседника не меняется (ник — просто метка, не уникальный id)."
+
+    // Message actions dialog
+    fun msgActionTitle(lang: String) = if (lang == LANG_EN) "Message" else "Сообщение"
+    fun msgDeleteHintCanCancel(lang: String) = if (lang == LANG_EN)
+        "Delete for yourself or cancel sending (while not yet sent to network)."
+    else
+        "Удалить только у себя или отменить отправку (пока не ушло в сеть)."
+    fun msgDeleteHint(lang: String) = if (lang == LANG_EN)
+        "Delete message on this device only. Others will still have it."
+    else
+        "Удалить сообщение только на этом устройстве. У других оно останется."
+
+    // Profile & dialog rename
+    fun renameDlgTitle(lang: String) = if (lang == LANG_EN) "Name in dialogs" else "Имя в диалогах"
+    fun profileDlgTitle(lang: String) = if (lang == LANG_EN) "Profile" else "Профиль"
+
+    // Update banner
+    fun updateAvailable(lang: String, version: String) = if (lang == LANG_EN)
+        "Version $version available nearby"
+    else
+        "Доступна версия $version рядом"
+    fun updatePeer(lang: String, nick: String) = if (lang == LANG_EN)
+        "From $nick · fast transfer via Wi-Fi Direct (experimental)"
+    else
+        "У $nick · быстрая передача по Wi‑Fi Direct (экспериментально)"
+
+    // Network mode (battery)
+    fun networkMode(lang: String) = if (lang == LANG_EN) "Network mode (battery)" else "Режим сети (батарея)"
+    fun modeEconomy(lang: String) = if (lang == LANG_EN)
+        "Rare scan — network stays up, battery lasts."
+    else
+        "Редкий скан — сеть живёт, телефон не садится за час."
+    fun modeMax(lang: String) = if (lang == LANG_EN)
+        "Dense scan — faster neighbors, higher drain."
+    else
+        "Плотный скан — быстрее соседи, выше расход."
+    fun modeBalance(lang: String) = if (lang == LANG_EN)
+        "Balance between discovery and battery."
+    else
+        "Баланс обнаружения и батареи."
+    fun langLabel(lang: String) = if (lang == LANG_EN) "Language" else "Язык"
+
+    // Scan contact
     fun scanContact(lang: String) = if (lang == LANG_EN) "Scan contact QR" else "Отсканируйте QR другого пользователя"
+
+    // Info screen
+    fun infoTitle(lang: String) = if (lang == LANG_EN) "About Tuk-Tuk" else "О Tuk-Tuk"
+    fun infoTagline(lang: String) = if (lang == LANG_EN) "Communication that can't be shut down." else "Связь, которую нельзя отключить."
+    fun infoBody(lang: String) = if (lang == LANG_EN)
+        "Tuk-Tuk works even when the internet is down and cell towers are silent. Your phones become the network, relaying messages from person to person."
+    else
+        "Tuk-Tuk работает, даже когда падает интернет и молчат вышки сотовой связи. Ваши телефоны сами становятся сетью, передавая сообщения от человека к человеку."
+    fun infoContacts(lang: String) = if (lang == LANG_EN) "Contacts" else "Контакты"
+    fun infoChannel(lang: String) = if (lang == LANG_EN) "• Project channel:" else "• Канал проекта:"
+    fun infoBugs(lang: String) = if (lang == LANG_EN) "• Ideas and bug reports:" else "• Идеи и баг-репорты:"
+    fun infoFooter(lang: String) = if (lang == LANG_EN)
+        "® Built in Crimea. Works under any conditions."
+    else
+        "® Разработано в Крыму. Для работы в любых условиях"
+    fun feedbackBody(lang: String) = if (lang == LANG_EN) "Describe the bug or idea:\n\n" else "Опишите ошибку или идею:\n\n"
 }

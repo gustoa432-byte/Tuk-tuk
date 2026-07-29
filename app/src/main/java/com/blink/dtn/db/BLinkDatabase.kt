@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 15, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 17, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -164,6 +164,46 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v15 → v16: Room-aware public chat.
+         *
+         * 1. Index on `room` column for fast per-room queries.
+         * 2. Normalise legacy "general" → "1" (MeshRoom.GENERAL) so all rows use
+         *    the compact single-char wire IDs going forward.
+         *
+         * Drop Policy helper: a dedicated index on (room, timestamp) lets the
+         * overflow-pruner find and delete old FLOOD ("9") messages efficiently
+         * without a full-table scan.
+         */
+        val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Fast filter for getPublicMessagesForRoomFlow
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_messages_room` ON `messages` (`room`)"
+                )
+                // Drop Policy pruner index — (room, timestamp) composite
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_messages_room_ts` ON `messages` (`room`, `timestamp`)"
+                )
+                // Normalise legacy "general" → "1"
+                database.execSQL(
+                    "UPDATE `messages` SET `room` = '1' WHERE `room` = 'general'"
+                )
+            }
+        }
+
+        // Silent block by stable UID while preserving legacy nick-based blocks.
+        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `blocked_users` ADD COLUMN `blockedUserId` TEXT NOT NULL DEFAULT ''"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_blocked_users_blockedUserId` ON `blocked_users` (`blockedUserId`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -177,7 +217,9 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_11_12,
                     MIGRATION_12_13,
                     MIGRATION_13_14,
-                    MIGRATION_14_15
+                    MIGRATION_14_15,
+                    MIGRATION_15_16,
+                    MIGRATION_16_17
                 )
                 // Do NOT wipe user data on every unknown schema change. Real
                 // migrations are provided for 9->10->…->15; destructive fallback is

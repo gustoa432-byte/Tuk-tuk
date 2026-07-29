@@ -76,9 +76,24 @@ class BLinkViewModel(
     // a) dialogs: StateFlow со списком всех приватных Conversation.
     val dialogs = repository.getAllConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
-        
-    // b) publicMessages: StateFlow с сообщениями глобального чата.
-    val publicMessages = repository.getPublicChatHistory()
+
+    /**
+     * Currently selected public room (wire ID per [MeshRoom] constants).
+     * Changing this value instantly switches the DB subscription via [flatMapLatest]
+     * without reloading the whole table.
+     */
+    val selectedRoom = MutableStateFlow(com.blink.dtn.ble.MeshRoom.GENERAL)
+
+    fun selectRoom(roomId: String) {
+        selectedRoom.value = com.blink.dtn.ble.MeshRoom.normalise(roomId)
+    }
+
+    // b) publicMessages: реактивный Flow переключается при смене комнаты.
+    // flatMapLatest отменяет предыдущую подписку сразу при смене selectedRoom —
+    // UI обновляется без full-table scan, только данные выбранной комнаты.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val publicMessages = selectedRoom
+        .flatMapLatest { room -> repository.getPublicChatHistoryForRoom(room) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     // c) Стейт для текущего открытого диалога
@@ -86,11 +101,11 @@ class BLinkViewModel(
 
     val currentDialogId = MutableStateFlow<String?>(null)
     
-    @kotlinx.coroutines.ExperimentalCoroutinesApi
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val currentDialogMessages = currentDialogId
-        .flatMapLatest { convId -> 
-            if (convId != null) repository.getDialogHistory(convId) else kotlinx.coroutines.flow.flowOf(emptyList()) 
-    }
+        .flatMapLatest { convId ->
+            if (convId != null) repository.getDialogHistory(convId) else kotlinx.coroutines.flow.flowOf(emptyList())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
         
     fun setCurrentDialog(conversationId: String?) {
@@ -310,9 +325,13 @@ class BLinkViewModel(
             )).copy(trustStatus = com.blink.dtn.db.UserProfile.TRUST_BLOCKED)
             dao.insertOrUpdateProfile(profile)
             val blockNick = nick.ifBlank { existing?.nickname.orEmpty() }
-            if (blockNick.isNotBlank()) {
-                dao.blockUser(BlockedUser(blockNick, System.currentTimeMillis()))
-            }
+            dao.blockUser(
+                BlockedUser(
+                    blockedNick = blockNick.ifBlank { peerId },
+                    blockedUserId = peerId,
+                    blockedAt = System.currentTimeMillis()
+                )
+            )
             dao.deleteMessagesInConversation(peerId)
             dao.deleteConversationById(peerId)
             kotlinx.coroutines.withContext(Dispatchers.Main) {
@@ -347,7 +366,7 @@ class BLinkViewModel(
         }
     }
 
-    fun sendPublicMessage(text: String, room: String = "general") {
+    fun sendPublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL) {
         viewModelScope.launch(Dispatchers.IO) {
             val trace = TraceStore.begin(
                 kind = TraceKind.MESSAGE,
@@ -509,10 +528,16 @@ class BLinkViewModel(
     }
     }
 
-    fun blockUser(nick: String) {
+    fun blockUser(peerId: String, nick: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.blockUser(BlockedUser(nick, System.currentTimeMillis()))
-    }
+            dao.blockUser(
+                BlockedUser(
+                    blockedNick = nick.ifBlank { peerId },
+                    blockedUserId = peerId,
+                    blockedAt = System.currentTimeMillis()
+                )
+            )
+        }
     }
 
     /** Remove a message from this device only (own or others). */

@@ -56,8 +56,9 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putString("node_id", myNodeId).apply()
         
         var myNick = prefs.getString("nick", null)
-        if (myNick == null) {
-            myNick = "User-$myNodeId"
+        // Migrate old auto-generated "User-..." nicks → empty so the placeholder shows
+        if (myNick == null || myNick.startsWith("User-")) {
+            myNick = ""
             prefs.edit().putString("nick", myNick).apply()
         }
         

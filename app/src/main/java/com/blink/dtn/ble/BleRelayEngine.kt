@@ -40,6 +40,18 @@ internal class BleRelayEngine(
         /** Prefer Wi‑Fi Direct hop when a group is up; false → fall back to BLE. */
         suspend fun tryAlternateTransport(bytes: ByteArray, messageId: String): Boolean = false
         fun maxPeersPerBatch(): Int = 6
+
+        // ── Drop Policy ──────────────────────────────────────────────────────
+        /** Max total public messages stored. Excess triggers Drop Policy. */
+        fun publicMessageQueueLimit(): Int = 2_000
+        suspend fun countPublicMessages(): Int = 0
+        suspend fun countFloodMessages(): Int = 0
+        /** Delete oldest [n] FLOOD ("9") messages. */
+        suspend fun deleteOldestFloodMessages(n: Int) {}
+        /** Delete oldest [n] non-SOS public messages (second-tier drop). */
+        suspend fun deleteOldestNonSosMessages(n: Int) {}
+        suspend fun isSenderBlocked(userId: String, nick: String): Boolean = false
+        suspend fun deleteQueuedMessage(messageId: String) {}
     }
 
     private class TxBatch(val totalAttempts: Int) {
@@ -154,9 +166,42 @@ internal class BleRelayEngine(
         }
     }
 
+    /**
+     * QoS message comparator applied to the relay queue before pick.
+     *
+     * Priority tiers (lower = higher urgency):
+     *   0 — System/ACK (IDENTITY_ANNOUNCEMENT, VERSION_ANNOUNCEMENT, ACK, IDENTITY_REQUEST)
+     *   1 — SOS room "0"
+     *   2 — Base rooms "1".."8"  (and PRIVATE messages regardless of room)
+     *   3 — FLOOD room "9"
+     *
+     * Within the same priority tier, older messages (lower timestamp) go first
+     * so we honour FIFO within each class.
+     */
+    private fun qosPriority(msg: Message): Int {
+        if (msg.isAck) return 0
+        return when (msg.type) {
+            "IDENTITY_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT",
+            "IDENTITY_REQUEST", "SYSTEM_PROFILE", "UPDATE_REQUEST" -> 0
+            "PRIVATE" -> 2      // PRIVATE always mid-priority regardless of room
+            "PUBLIC", "SYSTEM_ANNOUNCEMENT" -> MeshRoom.priority(msg.room)
+            else -> 2
+        }
+    }
+
     private suspend fun tickOnce() {
-        val messages = deps.queuedMessages()
+        // ── Drop Policy: overflow check before processing ────────────────────
+        // Runs on every tick but is cheap: one COUNT(*) query, fast on the index.
+        runDropPolicyIfNeeded()
+
+        val rawMessages = deps.queuedMessages()
         val now = System.currentTimeMillis()
+
+        // ── QoS sort: priority ASC, then timestamp ASC within same priority ──
+        val messages = rawMessages.sortedWith(
+            compareBy({ qosPriority(it) }, { it.timestamp })
+        )
+
         var selectedMessage: Message? = null
         var nextWakeTime = Long.MAX_VALUE
 
@@ -181,6 +226,12 @@ internal class BleRelayEngine(
                 relayTrigger.receive()
             }
             delay(200)
+            return
+        }
+
+        if (message.senderId != deps.myNodeId() && deps.isSenderBlocked(message.senderId, message.senderNick)) {
+            Log.i("ROUTE", "Drop queued packet from blocked sender ${message.senderId}")
+            deps.deleteQueuedMessage(message.id)
             return
         }
 
@@ -386,10 +437,51 @@ internal class BleRelayEngine(
         }
     }
 
+    /**
+     * Drop Policy: keeps the public message buffer under [Deps.publicMessageQueueLimit].
+     *
+     * Eviction order (strict hierarchy):
+     *   1. Delete oldest FLOOD ("9") messages first.
+     *   2. If still over limit — delete oldest non-SOS public messages.
+     *   SOS ("0") messages are NEVER deleted by this policy.
+     *
+     * The policy evicts in batches of [DROP_BATCH_SIZE] to amortise the cost of
+     * the COUNT query: one drop run removes up to [DROP_BATCH_SIZE] rows and the
+     * next tick re-checks if another run is needed.
+     */
+    private suspend fun runDropPolicyIfNeeded() {
+        val limit = deps.publicMessageQueueLimit()
+        val total = deps.countPublicMessages()
+        if (total <= limit) return
+
+        val excess = total - limit
+        val toDrop = minOf(excess + DROP_BATCH_SIZE, excess * 2).coerceAtLeast(1)
+
+        Log.w("ROUTE", "Drop Policy triggered: total=$total limit=$limit dropping up to $toDrop")
+
+        // Tier 1: flood messages
+        val floodCount = deps.countFloodMessages()
+        val floodDrop = minOf(toDrop, floodCount)
+        if (floodDrop > 0) {
+            deps.deleteOldestFloodMessages(floodDrop)
+            Log.i("ROUTE", "Drop Policy: removed $floodDrop FLOOD messages")
+        }
+
+        // Tier 2: if flood didn't cover the excess, drop non-SOS
+        val remaining = toDrop - floodDrop
+        if (remaining > 0) {
+            deps.deleteOldestNonSosMessages(remaining)
+            Log.i("ROUTE", "Drop Policy: removed $remaining non-SOS messages (tier 2)")
+        }
+    }
+
     companion object {
         fun calculateBackoff(retryCount: Int): Long {
             val baseMs = 5_000L
             return baseMs * (1 shl minOf(retryCount, 6))
         }
+
+        /** Messages removed per drop run to avoid heavy I/O spikes. */
+        private const val DROP_BATCH_SIZE = 50
     }
 }

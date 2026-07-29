@@ -63,6 +63,11 @@ internal class BleIngressHandler(
                 return@launch
             }
 
+            if (dao.isUserIdBlocked(packet.senderId) || dao.isUserBlocked(packet.senderNick)) {
+                Log.i("DTN", "Silently dropped packet from blocked sender ${packet.senderId}")
+                return@launch
+            }
+
             val now = System.currentTimeMillis()
 
             if (!deps.markSeen(dedupKey)) {
@@ -84,7 +89,13 @@ internal class BleIngressHandler(
                 }
                 if (!isValid) {
                     Log.w("DTN", "Rejected unsigned/invalid ${packet.type} from ${packet.senderNick}")
-                    dao.blockUser(BlockedUser(packet.senderNick, System.currentTimeMillis()))
+                    dao.blockUser(
+                        BlockedUser(
+                            blockedNick = packet.senderNick.ifBlank { packet.senderId },
+                            blockedUserId = packet.senderId,
+                            blockedAt = System.currentTimeMillis()
+                        )
+                    )
                     return@launch
                 }
             }

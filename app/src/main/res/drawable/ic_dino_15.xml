@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Background circle -->
+    <path
+        android:fillColor="#98D8C8"
+        android:pathData="M48,48m-48,0a48,48 0,1,1 96,0a48,48 0,1,1 -96,0"/>
+    <!-- Simple dino stub silhouette -->
+    <path
+        android:fillColor="#1A4038"
+        android:fillAlpha="0.55"
+        android:pathData="M28,58 C28,46 36,38 48,36 C52,28 60,26 66,32 C72,30 78,34 76,42 C82,46 82,56 74,58 L74,68 C74,72 70,74 66,74 L34,74 C30,74 28,70 28,66 Z"/>
+    <!-- Eye -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,40 m-3,0 a3,3 0,1,1 6,0 a3,3 0,1,1 -6,0"/>
+    <!-- Label badge -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.85"
+        android:pathData="M36,78 h24 a6,6 0,0,1 0,12 h-24 a6,6 0,0,1 0,-12 z"/>
+</vector>

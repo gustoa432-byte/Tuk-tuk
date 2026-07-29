@@ -196,6 +196,14 @@ class BleMeshManager private constructor(
                     return wifi.send(bytes, messageId = messageId)
                 }
                 override fun maxPeersPerBatch(): Int = MeshDutyPrefs.cadence().maxPeersPerBatch
+                // Drop Policy hooks — delegate straight to DAO
+                override suspend fun countPublicMessages(): Int = dao.countPublicMessages()
+                override suspend fun countFloodMessages(): Int = dao.countFloodMessages()
+                override suspend fun deleteOldestFloodMessages(n: Int) { dao.deleteOldestFloodMessages(n) }
+                override suspend fun deleteOldestNonSosMessages(n: Int) { dao.deleteOldestNonSosMessages(n) }
+                override suspend fun isSenderBlocked(userId: String, nick: String): Boolean =
+                    dao.isUserIdBlocked(userId) || dao.isUserBlocked(nick)
+                override suspend fun deleteQueuedMessage(messageId: String) { dao.deleteMessageById(messageId) }
             }
         )
     }

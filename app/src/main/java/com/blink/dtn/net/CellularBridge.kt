@@ -110,7 +110,13 @@ class CellularBridge private constructor(
                             if (SecurityConfig.requiresAuthorSignature(msg.type)) {
                                 val isValid = SecurityConfig.verifySignature(msg.text, msg.authorSignature)
                                 if (!isValid) {
-                                    dao.blockUser(BlockedUser(msg.senderNick, System.currentTimeMillis()))
+                                    dao.blockUser(
+                                        BlockedUser(
+                                            blockedNick = msg.senderNick.ifBlank { msg.senderId },
+                                            blockedUserId = msg.senderId,
+                                            blockedAt = System.currentTimeMillis()
+                                        )
+                                    )
                                     continue
                                 }
                             }

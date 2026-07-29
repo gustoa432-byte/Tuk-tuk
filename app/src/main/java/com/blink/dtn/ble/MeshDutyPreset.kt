@@ -13,10 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Future LoRa / VPS bridge can read the same prefs key without changing UI.
  */
-enum class MeshDutyPreset(val id: String, val labelRu: String) {
-    ECONOMY("economy", "Экономия"),
-    NORMAL("normal", "Норма"),
-    MAX("max", "Макс. сеть");
+enum class MeshDutyPreset(val id: String, val labelRu: String, val labelEn: String) {
+    ECONOMY("economy", "Экономия", "Economy"),
+    NORMAL("normal", "Норма", "Normal"),
+    MAX("max", "Макс. сеть", "Max network");
 
     companion object {
         fun fromId(id: String?): MeshDutyPreset =

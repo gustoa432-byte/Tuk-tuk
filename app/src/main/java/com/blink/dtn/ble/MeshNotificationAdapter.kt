@@ -21,15 +21,14 @@ class MeshNotificationAdapter(private val context: Context) {
         }
 
         if (AppForegroundState.isForeground) return
+        if (!isPrivate) return
 
         val notificationManager =
             context.getSystemService(NotificationManager::class.java) ?: return
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle(
-                if (isPrivate) "Личное сообщение от $senderNick" else "Новое сообщение в TukTuk"
-            )
+            .setSmallIcon(com.blink.dtn.R.drawable.ic_notification)
+            .setContentTitle("Тук... от $senderNick")
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)

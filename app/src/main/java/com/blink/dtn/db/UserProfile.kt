@@ -65,11 +65,18 @@ data class UserProfile(
         return id.take(chars)
     }
 
-    /** Russian trust badge for dialogs. */
-    fun trustBadgeRu(): String = when {
+    fun trustBadge(lang: String = "ru"): String = if (lang == "en") when {
+        isBlocked -> "blocked"
+        isStranger -> "stranger"
+        isVerified -> "verified"
+        else -> "from network"
+    } else when {
         isBlocked -> "блок"
         isStranger -> "незнакомец"
         isVerified -> "проверен"
         else -> "из сети"
     }
+
+    @Deprecated("Use trustBadge(lang)", replaceWith = ReplaceWith("trustBadge()"))
+    fun trustBadgeRu(): String = trustBadge("ru")
 }

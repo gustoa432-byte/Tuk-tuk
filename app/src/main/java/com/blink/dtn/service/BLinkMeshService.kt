@@ -74,9 +74,9 @@ class BLinkMeshService : Service() {
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "mesh_channel")
-            .setContentTitle("TukTuk Network")
-            .setContentText("Relay active")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentTitle("Тук...")
+            .setContentText("От человека... к человеку... тук")
+            .setSmallIcon(com.blink.dtn.R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()

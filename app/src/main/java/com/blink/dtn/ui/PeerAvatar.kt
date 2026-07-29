@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -13,21 +12,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.blink.dtn.ui.theme.DividerColor
-import com.blink.dtn.ui.theme.TextPrimary
-import com.blink.dtn.ui.theme.Typography
 
+/**
+ * Avatar resolution (zero network overhead for defaults):
+ * 1. Custom JPEG blob (from QR / local picker) → show photo
+ * 2. Else → [AvatarHelper.getDefaultAvatarForUid] — same dino on every node
+ */
 @Composable
 fun PeerAvatar(
     avatarBlob: ByteArray?,
     label: String,
     size: Dp = 44.dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Stable mesh node id — drives deterministic default dino. */
+    uid: String = ""
 ) {
     val bitmap = remember(avatarBlob) { AvatarCompressor.decodeToBitmap(avatarBlob) }
+    val dinoRes = remember(uid.ifBlank { label }) {
+        AvatarHelper.getDefaultAvatarForUid(uid.ifBlank { label })
+    }
     Box(
         modifier = modifier
             .size(size)
@@ -43,21 +50,12 @@ fun PeerAvatar(
                 modifier = Modifier.size(size).clip(CircleShape)
             )
         } else {
-            Text(
-                text = initialsOf(label),
-                color = TextPrimary,
-                style = Typography.labelMedium.copy(fontSize = (size.value * 0.32f).sp)
+            Image(
+                painter = painterResource(id = dinoRes),
+                contentDescription = label.ifBlank { "avatar" },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size).clip(CircleShape)
             )
         }
-    }
-}
-
-private fun initialsOf(label: String): String {
-    val cleaned = label.trim()
-    if (cleaned.isEmpty()) return "?"
-    val parts = cleaned.split(Regex("\\s+")).filter { it.isNotEmpty() }
-    return when {
-        parts.size >= 2 -> "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
-        else -> cleaned.take(2).uppercase()
     }
 }

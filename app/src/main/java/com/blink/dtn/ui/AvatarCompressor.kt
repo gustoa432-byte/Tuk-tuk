@@ -30,11 +30,24 @@ object AvatarCompressor {
     const val MAX_QR_AVATAR_BYTES = 1_200
 
     fun compressFromUri(context: Context, uri: Uri): ByteArray? {
-        val source = decodeSampled(context, uri, EDGE_PX * 2) ?: return null
+        val source = decodeSampled(context, uri, EDGE_PX * 2)
+            ?: decodeDirect(context, uri)
+            ?: return null
         return try {
             compressBitmap(source)
         } finally {
             if (!source.isRecycled) source.recycle()
+        }
+    }
+
+    private fun decodeDirect(context: Context, uri: Uri): Bitmap? {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("AvatarCompressor", "decodeDirect failed: ${e.message}")
+            null
         }
     }
 
@@ -112,9 +125,14 @@ object AvatarCompressor {
 
     private fun decodeSampled(context: Context, uri: Uri, maxSide: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
+        try {
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+            } ?: return null
+        } catch (e: Exception) {
+            android.util.Log.w("AvatarCompressor", "bounds decode failed: ${e.message}")
+            return null
+        }
         val w = bounds.outWidth
         val h = bounds.outHeight
         if (w <= 0 || h <= 0) return null
@@ -124,8 +142,13 @@ object AvatarCompressor {
             sample *= 2
         }
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        return context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, opts)
+        return try {
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("AvatarCompressor", "sampled decode failed: ${e.message}")
+            null
         }
     }
 }
