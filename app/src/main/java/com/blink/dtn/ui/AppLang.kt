@@ -32,8 +32,39 @@ object AppLang {
 object S {
     // Tabs
     fun dialogs(lang: String) = if (lang == LANG_EN) "Dialogs" else "Диалоги"
-    fun groupChat(lang: String) = if (lang == LANG_EN) "Group chat" else "Общий чат"
+    fun groupChat(lang: String) = if (lang == LANG_EN) "Channels" else "Каналы"
+    fun network(lang: String) = if (lang == LANG_EN) "Network" else "Сеть"
     fun profile(lang: String) = if (lang == LANG_EN) "Profile" else "Профиль"
+
+    // Network / router
+    fun networkActive(lang: String) = if (lang == LANG_EN)
+        "Your network is active. Tuk-Tuk helps deliver messages"
+    else
+        "Ваша сеть активна. Tuk-Tuk помогает доставлять сообщения"
+    fun networkWaiting(lang: String) = if (lang == LANG_EN)
+        "Waiting for people nearby — connection where there are people"
+    else
+        "Ждём людей рядом — связь там где есть люди"
+    fun slogan(lang: String) = if (lang == LANG_EN)
+        "Connection where there are people"
+    else
+        "Связь там где есть люди"
+    fun routeVia(lang: String, path: String) = if (lang == LANG_EN) "via $path" else "через $path"
+    fun transferred(lang: String) = if (lang == LANG_EN) "Queued" else "В очереди"
+    fun hopsToday(lang: String) = if (lang == LANG_EN) "Hops" else "Прыжков"
+    fun devicesNearby(lang: String) = if (lang == LANG_EN) "Devices" else "Устройств"
+    fun preferredRoute(lang: String) = if (lang == LANG_EN) "Preferred route" else "Предпочтительный путь"
+    fun currentShipment(lang: String) = if (lang == LANG_EN) "Current message" else "Текущее сообщение"
+    fun noShipment(lang: String) = if (lang == LANG_EN) "No message in flight" else "Сейчас ничего не летит"
+    fun neighbors(lang: String) = if (lang == LANG_EN) "Neighbors" else "Соседи"
+    fun noNeighbors(lang: String) = if (lang == LANG_EN) "No peers yet — walk, wait, or open Wi‑Fi Direct" else "Пока нет соседей — подойдите ближе или откройте Wi‑Fi Direct"
+    fun vpsUrl(lang: String) = if (lang == LANG_EN) "VPS URL (online path)" else "VPS URL (онлайн-путь)"
+    fun vpsUrlHint(lang: String) = if (lang == LANG_EN)
+        "Example: https://your-server:8080 — leave empty to use only mesh"
+    else
+        "Например: https://ваш-сервер:8080 — пусто = только mesh"
+    fun vpsSaved(lang: String) = if (lang == LANG_EN) "VPS URL saved" else "VPS URL сохранён"
+    fun messageTracker(lang: String) = if (lang == LANG_EN) "Delivery tracker" else "Трекер доставки"
 
     // Actions
     fun save(lang: String) = if (lang == LANG_EN) "Save" else "Сохранить"
@@ -170,7 +201,7 @@ object S {
 
     // Info screen
     fun infoTitle(lang: String) = if (lang == LANG_EN) "About Tuk-Tuk" else "О Tuk-Tuk"
-    fun infoTagline(lang: String) = if (lang == LANG_EN) "Communication that can't be shut down." else "Связь, которую нельзя отключить."
+    fun infoTagline(lang: String) = if (lang == LANG_EN) "Connection where there are people." else "Связь там где есть люди."
     fun infoBody(lang: String) = if (lang == LANG_EN)
         "Tuk-Tuk works even when the internet is down and cell towers are silent. Your phones become the network, relaying messages from person to person."
     else

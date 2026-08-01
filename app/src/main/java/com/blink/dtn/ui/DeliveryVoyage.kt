@@ -32,14 +32,20 @@ import com.blink.dtn.ui.theme.glassPanel
  * Not a second Observatory — short «voyage» crumbs only.
  */
 object DeliveryVoyageLabels {
-    fun label(msg: Message): String = when (msg.status) {
-        Message.STATUS_PENDING -> "в очереди"
-        Message.STATUS_PENDING_KEY -> "ждём ключ"
-        Message.STATUS_IN_FLIGHT -> "у соседей"
-        Message.STATUS_SENT -> if (msg.type == "PRIVATE") "в пути" else "у соседей"
-        Message.STATUS_DELIVERED -> "доставлено"
-        Message.STATUS_FAILED -> "ошибка"
-        else -> "в очереди"
+    fun label(msg: Message): String {
+        val base = when (msg.status) {
+            Message.STATUS_PENDING -> "в очереди"
+            Message.STATUS_PENDING_KEY -> "ждём ключ"
+            Message.STATUS_IN_FLIGHT -> "у соседей"
+            Message.STATUS_SENT -> if (msg.type == "PRIVATE") "в пути" else "у соседей"
+            Message.STATUS_DELIVERED -> "доставлено"
+            Message.STATUS_FAILED -> "ошибка"
+            else -> "в очереди"
+        }
+        val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
+        return if (path != null && msg.status != Message.STATUS_PENDING_KEY) {
+            "$base · ${path.labelRu()}"
+        } else base
     }
 
     fun color(msg: Message): Color = when (msg.status) {
@@ -50,16 +56,20 @@ object DeliveryVoyageLabels {
         else -> DividerColor
     }
 
-    fun subtitle(msg: Message): String = when (msg.status) {
-        Message.STATUS_PENDING -> "В очереди на отправку"
-        Message.STATUS_PENDING_KEY -> "Ждём ключ собеседника (лучше сверить QR)"
-        Message.STATUS_IN_FLIGHT -> "Пишем соседям (BLE / Wi‑Fi Direct)"
-        Message.STATUS_SENT ->
-            if (msg.type == "PRIVATE") "Ушло в сеть, ждём подтверждение (ACK)"
-            else "Передано соседям (общий чат — без личного ACK)"
-        Message.STATUS_DELIVERED -> "Получено подтверждение от адресата"
-        Message.STATUS_FAILED -> "Не удалось доставить после повторов — нажмите, чтобы повторить"
-        else -> ""
+    fun subtitle(msg: Message): String {
+        val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
+        val via = path?.let { " (${it.labelRu()})" }.orEmpty()
+        return when (msg.status) {
+            Message.STATUS_PENDING -> "В очереди на отправку$via"
+            Message.STATUS_PENDING_KEY -> "Ждём ключ собеседника (лучше сверить QR)"
+            Message.STATUS_IN_FLIGHT -> "Пишем соседям$via"
+            Message.STATUS_SENT ->
+                if (msg.type == "PRIVATE") "Ушло в сеть$via, ждём подтверждение (ACK)"
+                else "Передано соседям$via (общий чат — без личного ACK)"
+            Message.STATUS_DELIVERED -> "Получено подтверждение от адресата$via"
+            Message.STATUS_FAILED -> "Не удалось доставить после повторов — нажмите, чтобы повторить"
+            else -> ""
+        }
     }
 }
 
@@ -113,7 +123,7 @@ fun MessageVoyageDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Путь сообщения", color = TextPrimary) },
+        title = { Text(S.messageTracker(AppLang.lang.value), color = TextPrimary) },
         text = {
             Column(
                 modifier = Modifier
@@ -129,6 +139,13 @@ fun MessageVoyageDialog(
                     DeliveryVoyageLabels.subtitle(msg),
                     style = Typography.bodySmall,
                     color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
+                    ?: com.blink.dtn.router.RoutePath.BLE
+                MessageTrackerStrip(
+                    path = path,
+                    statusRu = DeliveryVoyageLabels.subtitle(msg)
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 if (report == null) {

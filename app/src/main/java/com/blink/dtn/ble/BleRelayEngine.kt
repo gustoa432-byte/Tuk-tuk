@@ -373,6 +373,8 @@ internal class BleRelayEngine(
             if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
                 deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
             }
+            val path = com.blink.dtn.router.MessageRouter.pathFor(message.id)
+            val transport = path?.traceId() ?: "alternate"
             deps.trace(
                 message.id,
                 com.blink.dtn.telemetry.TraceStages.TX_BATCH_RESULT,
@@ -380,9 +382,9 @@ internal class BleRelayEngine(
                     "successes" to 1,
                     "failures" to 0,
                     "result" to "Success",
-                    "transport" to "wifi_direct"
+                    "transport" to transport
                 ),
-                visual = "📡 Ушло по Wi‑Fi Direct"
+                visual = "📡 Ушло: ${path?.labelRu() ?: transport}"
             )
             deps.emitTxResult(TxResult.Success(message.id))
             return

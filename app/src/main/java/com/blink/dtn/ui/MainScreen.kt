@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -186,7 +187,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
         AppWallpaper.init(context)
     }
     LaunchedEffect(selectedTab) {
-        if (selectedTab != 2) {
+        if (selectedTab != 3) {
             showSettings = false
             AppWallpaper.discardDraft()
         }
@@ -255,7 +256,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         }
                     },
                     actions = {
-                        if (selectedTab == 2) {
+                        if (selectedTab == 3) {
                             Box(
                                 modifier = Modifier
                                     .padding(end = 4.dp)
@@ -300,6 +301,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
             }
         ) { paddingValues ->
             Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+                NetworkStatusBanner(isConnected = isConnected)
                 nearbyUpdate?.let { offer ->
                     NearbyUpdateBanner(
                         versionName = offer.versionName,
@@ -311,12 +313,13 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedTab) {
                         0 -> PrivateTab(viewModel)
-                        1 -> PublicTab(viewModel) { contactId ->
+                        1 -> NetworkTab(viewModel)
+                        2 -> PublicTab(viewModel) { contactId ->
                             viewModel.ensureContact(contactId)
                             viewModel.setCurrentDialog(contactId)
                             selectedTab = 0
                         }
-                        2 -> if (showSettings) {
+                        3 -> if (showSettings) {
                             SettingsScreen(onBack = {
                                 AppWallpaper.discardDraft()
                                 showSettings = false
@@ -391,8 +394,9 @@ fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             BottomBarItem(Icons.Default.Person, S.dialogs(lang), selectedTab == 0) { onTabSelected(0) }
-            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 1) { onTabSelected(1) }
-            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 2) { onTabSelected(2) }
+            BottomBarItem(Icons.Default.WifiTethering, S.network(lang), selectedTab == 1) { onTabSelected(1) }
+            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 2) { onTabSelected(2) }
+            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 3) { onTabSelected(3) }
         }
     }
 }
@@ -478,7 +482,11 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
 
             if (privateDialogs.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(S.noDialogs(lang), color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(S.noDialogs(lang), color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(S.slogan(lang), color = TextSecondary, style = Typography.labelSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
                 }
             } else {
                 LazyColumn(modifier = Modifier.weight(1f)) {
@@ -1523,6 +1531,14 @@ private fun SettingsScreen(onBack: () -> Unit) {
         (draftOpacity != null && draftOpacity != savedOpacity)
     var loading by remember { mutableStateOf(false) }
     var showSavedFlash by remember { mutableStateOf(false) }
+    var vpsDraft by remember {
+        mutableStateOf(
+            run {
+                com.blink.dtn.net.VpsConfig.init(context)
+                com.blink.dtn.net.VpsConfig.baseUrl.value
+            }
+        )
+    }
 
     LaunchedEffect(showSavedFlash) {
         if (showSavedFlash) {
@@ -1639,6 +1655,40 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 style = Typography.bodyMedium,
                 modifier = Modifier.bounceClick { AppLang.set(context, "en") }.padding(12.dp)
             )
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+        Text(S.vpsUrl(lang), style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.vpsUrlHint(lang), style = Typography.bodySmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        BasicTextField(
+            value = vpsDraft,
+            onValueChange = { vpsDraft = it },
+            textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+            singleLine = true,
+            cursorBrush = SolidColor(TextPrimary),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassPanel(corner = 12.dp)
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                ) {
+                    if (vpsDraft.isEmpty()) {
+                        Text("https://…", color = TextSecondary, style = Typography.bodyMedium)
+                    }
+                    inner()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        TukTukButton(onClick = {
+            com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft)
+            Toast.makeText(context, S.vpsSaved(lang), Toast.LENGTH_SHORT).show()
+        }) {
+            Text(S.save(lang), color = TextPrimary, style = Typography.titleMedium)
         }
 
         Spacer(modifier = Modifier.height(28.dp))

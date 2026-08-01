@@ -72,6 +72,20 @@ class BLinkMeshService : Service() {
             android.util.Log.w("MeshService", "Transport registry init: ${it.message}")
         }
 
+        runCatching {
+            com.blink.dtn.net.VpsConfig.init(this)
+            val vps = com.blink.dtn.net.VpsBridge.getInstance(
+                this,
+                dao,
+                bleMeshManager,
+                myNodeId
+            )
+            bleMeshManager.vpsBridge = vps
+            vps.start()
+        }.onFailure {
+            android.util.Log.w("MeshService", "VPS bridge init: ${it.message}")
+        }
+
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "mesh_channel")
             .setContentTitle("Тук...")
@@ -128,6 +142,7 @@ class BLinkMeshService : Service() {
                             ) {
                                 dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_SENT)
                             }
+                            com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "в пути")
                         }
                         is com.blink.dtn.ble.TxResult.Failure -> {
                             val currentMsg = dao.getMessageById(result.msgId)

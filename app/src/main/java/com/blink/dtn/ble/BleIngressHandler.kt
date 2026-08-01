@@ -190,6 +190,10 @@ internal class BleIngressHandler(
             if (status == Message.STATUS_DELIVERED) "Delivered" else "Sent",
             com.blink.dtn.telemetry.detailsOf("ackLatencyMs" to latency)
         )
+        if (status == Message.STATUS_DELIVERED) {
+            com.blink.dtn.router.MessageRouter.noteShipmentStatus(ackedMessageId, "доставлено")
+            com.blink.dtn.router.MessageRouter.clearShipmentIf(ackedMessageId)
+        }
         return true
     }
 
