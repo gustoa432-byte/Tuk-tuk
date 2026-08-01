@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -145,15 +145,18 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8" // Forced rewrite
     }
 
-    // Friendly install name: assembleDebug → app/build/outputs/apk/debug/Tuktuk.apk
+    // Friendly install names
     applicationVariants.configureEach {
         outputs.configureEach {
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
-                .outputFileName = "Tuktuk.apk"
+            val out = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            out.outputFileName = if (name.contains("release", ignoreCase = true)) {
+                "tuktuk.v.0.2.apk"
+            } else {
+                "Tuktuk.apk"
+            }
         }
     }
 }
-
 gradle.taskGraph.whenReady {
     val wantsReleaseApk = allTasks.any { task ->
         val n = task.name

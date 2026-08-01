@@ -16,3 +16,5 @@ author_private.pem
 app/release.keystore
 __pycache__/
 *.pyc
+
+android-sdk/
