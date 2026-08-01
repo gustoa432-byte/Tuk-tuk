@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path android:fillColor="#A8E063" android:pathData="M48,48m-46,0a46,46 0,1,1 92,0a46,46 0,1,1 -92,0"/>
+    <!-- stub dino head blob -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.25"
+        android:pathData="M22,50 C22,34 34,24 48,24 C62,24 74,34 74,50 C74,66 62,76 48,76 C34,76 22,66 22,50 Z"/>
+
+    <path android:fillColor="#1A1A1A" android:pathData="M34,42 m-3.5,0 a3.5,3.5 0 1,1 7,0 a3.5,3.5 0 1,1 -7,0"/>
+    <path android:fillColor="#1A1A1A" android:pathData="M58,42 m-3.5,0 a3.5,3.5 0 1,1 7,0 a3.5,3.5 0 1,1 -7,0"/>
+    <path android:fillColor="#1A1A1A" android:pathData="M36,54 C40,66 56,66 60,54 C56,58 40,58 36,54 Z"/>
+</vector>

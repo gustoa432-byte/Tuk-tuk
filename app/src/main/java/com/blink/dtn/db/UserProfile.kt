@@ -23,7 +23,21 @@ data class UserProfile(
      * CONTACT — accepted / QR-scanned / user-initiated.
      * BLOCKED — ignored; further private ingress is dropped locally.
      */
-    val trustStatus: String = TRUST_CONTACT
+    val trustStatus: String = TRUST_CONTACT,
+    /**
+     * True when public key was pinned out-of-band (QR). Distinguishes «проверен»
+     * from mesh-discovered «из сети» contacts.
+     */
+    val verifiedOutOfBand: Boolean = false,
+    /** Last advertised app versionCode from IDENTITY_ANNOUNCEMENT (0 = unknown). */
+    val appVersionCode: Long = 0L,
+    /** Last advertised app versionName from IDENTITY_ANNOUNCEMENT. */
+    val appVersionName: String = "",
+    /**
+     * Mesh-sized avatar JPEG bytes (square, ≤~128px). Null = none.
+     * Stored locally and optionally embedded in contact QR as base64 `av`.
+     */
+    val avatarBlob: ByteArray? = null
 ) {
     companion object {
         const val TRUST_STRANGER = "STRANGER"
@@ -34,6 +48,7 @@ data class UserProfile(
     val isContact: Boolean get() = trustStatus == TRUST_CONTACT
     val isStranger: Boolean get() = trustStatus == TRUST_STRANGER
     val isBlocked: Boolean get() = trustStatus == TRUST_BLOCKED
+    val isVerified: Boolean get() = verifiedOutOfBand && isContact
 
     /** Local alias if set, else network nick, else node id. */
     fun displayLabel(fallback: String? = null): String {
@@ -43,4 +58,25 @@ data class UserProfile(
         if (nick.isNotEmpty()) return nick
         return fallback?.takeIf { it.isNotBlank() } ?: userId
     }
+
+    fun shortId(chars: Int = 8): String {
+        val id = userId.trim()
+        if (id.length <= chars) return id
+        return id.take(chars)
+    }
+
+    fun trustBadge(lang: String = "ru"): String = if (lang == "en") when {
+        isBlocked -> "blocked"
+        isStranger -> "stranger"
+        isVerified -> "verified"
+        else -> "from network"
+    } else when {
+        isBlocked -> "блок"
+        isStranger -> "незнакомец"
+        isVerified -> "проверен"
+        else -> "из сети"
+    }
+
+    @Deprecated("Use trustBadge(lang)", replaceWith = ReplaceWith("trustBadge()"))
+    fun trustBadgeRu(): String = trustBadge("ru")
 }

@@ -21,11 +21,16 @@ class BLinkRepository(
         return bLinkDao.getPublicMessagesFlow()
     }
 
+    /** Room-scoped public chat — uses the indexed per-room query. */
+    fun getPublicChatHistoryForRoom(room: String): Flow<List<Message>> {
+        return bLinkDao.getPublicMessagesForRoomFlow(com.blink.dtn.ble.MeshRoom.normalise(room))
+    }
+
     fun getDialogHistory(conversationId: String): Flow<List<Message>> {
         return conversationDao.getMessagesForConversation(conversationId)
     }
 
-    suspend fun createAndSavePublicMessage(text: String, room: String = "general"): Message {
+    suspend fun createAndSavePublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL): Message {
         val msg = Message(
             id = MeshIdGenerator.next(myNodeId),
             type = "PUBLIC",
@@ -33,7 +38,7 @@ class BLinkRepository(
             senderNick = myNick,
             targetId = null,
             text = text,
-            room = room,
+            room = com.blink.dtn.ble.MeshRoom.normalise(room),
             timestamp = System.currentTimeMillis(),
             ttl = 7,
             isMine = true

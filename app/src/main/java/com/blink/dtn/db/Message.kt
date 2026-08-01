@@ -20,7 +20,10 @@ import kotlinx.serialization.Transient
         )
     ],
     indices = [
-        Index(value = ["conversationId"])
+        Index(value = ["conversationId"]),
+        // Names must match MIGRATION_15_16 exactly — Room validates after migrate.
+        Index(value = ["room"], name = "index_messages_room"),
+        Index(value = ["room", "timestamp"], name = "index_messages_room_ts")
     ]
 )
 data class Message(

@@ -56,8 +56,9 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putString("node_id", myNodeId).apply()
         
         var myNick = prefs.getString("nick", null)
-        if (myNick == null) {
-            myNick = "User-$myNodeId"
+        // Migrate old auto-generated "User-..." nicks → empty so the placeholder shows
+        if (myNick == null || myNick.startsWith("User-")) {
+            myNick = ""
             prefs.edit().putString("nick", myNick).apply()
         }
         
@@ -69,7 +70,7 @@ class MainActivity : ComponentActivity() {
             BLinkTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = androidx.compose.ui.graphics.Color.Transparent
                 ) {
                     BLinkApp(bleManager, factory)
                 }

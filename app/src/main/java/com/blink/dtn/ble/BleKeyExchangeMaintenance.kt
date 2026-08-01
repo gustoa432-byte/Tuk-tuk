@@ -17,7 +17,7 @@ internal class BleKeyExchangeMaintenance(
     private val dao: BLinkDao,
     private val myNodeId: String,
     private val scopeProvider: () -> CoroutineScope,
-    private val intervalMs: Long = 20_000L,
+    intervalMs: Long = 20_000L,
     private val deps: Deps
 ) {
     interface Deps {
@@ -28,6 +28,14 @@ internal class BleKeyExchangeMaintenance(
 
     private val requestBackoff = ConcurrentHashMap<String, Long>()
     private var job: Job? = null
+
+    @Volatile
+    var intervalMs: Long = intervalMs
+        private set
+
+    fun setIntervalMs(ms: Long) {
+        intervalMs = ms.coerceAtLeast(5_000L)
+    }
 
     fun start() {
         job?.cancel()
@@ -52,12 +60,13 @@ internal class BleKeyExchangeMaintenance(
     private suspend fun tick() {
         val targets = dao.getPendingKeyTargets()
         val now = System.currentTimeMillis()
+        val interval = intervalMs
         for (targetId in targets) {
             val profile = dao.getProfileById(targetId)
             if (profile != null && profile.publicKey.isNotEmpty()) continue
 
             val lastRequest = requestBackoff[targetId] ?: 0L
-            if (now - lastRequest < intervalMs) continue
+            if (now - lastRequest < interval) continue
             requestBackoff[targetId] = now
 
             deps.enqueueMessage(

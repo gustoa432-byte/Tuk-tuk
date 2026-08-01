@@ -76,9 +76,24 @@ class BLinkViewModel(
     // a) dialogs: StateFlow со списком всех приватных Conversation.
     val dialogs = repository.getAllConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
-        
-    // b) publicMessages: StateFlow с сообщениями глобального чата.
-    val publicMessages = repository.getPublicChatHistory()
+
+    /**
+     * Currently selected public room (wire ID per [MeshRoom] constants).
+     * Changing this value instantly switches the DB subscription via [flatMapLatest]
+     * without reloading the whole table.
+     */
+    val selectedRoom = MutableStateFlow(com.blink.dtn.ble.MeshRoom.GENERAL)
+
+    fun selectRoom(roomId: String) {
+        selectedRoom.value = com.blink.dtn.ble.MeshRoom.normalise(roomId)
+    }
+
+    // b) publicMessages: реактивный Flow переключается при смене комнаты.
+    // flatMapLatest отменяет предыдущую подписку сразу при смене selectedRoom —
+    // UI обновляется без full-table scan, только данные выбранной комнаты.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val publicMessages = selectedRoom
+        .flatMapLatest { room -> repository.getPublicChatHistoryForRoom(room) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     // c) Стейт для текущего открытого диалога
@@ -86,11 +101,11 @@ class BLinkViewModel(
 
     val currentDialogId = MutableStateFlow<String?>(null)
     
-    @kotlinx.coroutines.ExperimentalCoroutinesApi
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val currentDialogMessages = currentDialogId
-        .flatMapLatest { convId -> 
-            if (convId != null) repository.getDialogHistory(convId) else kotlinx.coroutines.flow.flowOf(emptyList()) 
-    }
+        .flatMapLatest { convId ->
+            if (convId != null) repository.getDialogHistory(convId) else kotlinx.coroutines.flow.flowOf(emptyList())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
         
     fun setCurrentDialog(conversationId: String?) {
@@ -142,11 +157,66 @@ class BLinkViewModel(
     }
     }
 
+    /**
+     * Save a mesh-compressed avatar for [userId] (own profile or peer).
+     * Returns false via [onDone] if the profile row could not be updated.
+     */
+    fun setAvatarBlob(userId: String, blob: ByteArray?, onDone: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = try {
+                val existing = dao.getProfileById(userId)
+                val now = System.currentTimeMillis()
+                if (existing != null) {
+                    dao.updateAvatarBlob(userId, blob, now)
+                    true
+                } else if (userId == myNodeId) {
+                    val pubKey = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64()
+                    dao.insertOrUpdateProfile(
+                        com.blink.dtn.db.UserProfile(
+                            userId = myNodeId,
+                            nickname = myNick,
+                            lastSeen = now,
+                            isVip = false,
+                            publicKey = pubKey,
+                            avatarBlob = blob
+                        )
+                    )
+                    true
+                } else {
+                    false
+                }
+            } catch (_: Exception) {
+                false
+            }
+            if (onDone != null) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(ok) }
+            }
+        }
+    }
+
     fun getProfileFlow(userId: String) = dao.getProfileByIdFlow(userId)
 
     // Contact QR payload: carries our public key so a scan can pin the key
-    // out-of-band without waiting for a BLE identity announcement. JSONObject
-    // escapes the nick correctly.
+    // out-of-band without waiting for a BLE identity announcement. Optional
+    // compact avatar (`av` = base64 JPEG) when it fits the QR budget.
+    suspend fun buildContactQr(): String {
+        val avatar = dao.getProfileById(myNodeId)?.avatarBlob
+        return org.json.JSONObject().apply {
+            put("v", 1)
+            put("id", myNodeId)
+            put("pk", com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
+            put("n", myNick)
+            val qrAvatar = avatar?.let { AvatarCompressor.fitForQr(it) }
+            if (qrAvatar != null) {
+                put(
+                    "av",
+                    android.util.Base64.encodeToString(qrAvatar, android.util.Base64.NO_WRAP)
+                )
+            }
+        }.toString()
+    }
+
+    /** Sync getter used by UI when avatar is not needed in the payload. */
     val myContactQr: String
         get() = org.json.JSONObject().apply {
             put("v", 1)
@@ -166,7 +236,13 @@ class BLinkViewModel(
         }
     }
 
-    private suspend fun upsertPeerAsContact(peerId: String, nick: String = "", pubKeyBase64: String? = null) {
+    private suspend fun upsertPeerAsContact(
+        peerId: String,
+        nick: String = "",
+        pubKeyBase64: String? = null,
+        verifiedOutOfBand: Boolean = false,
+        avatarBlob: ByteArray? = null
+    ) {
         val existing = dao.getProfileById(peerId)
         if (existing?.isBlocked == true) return
         val resolvedNick = nick.ifBlank { existing?.nickname.orEmpty() }.ifBlank { peerId }
@@ -175,7 +251,9 @@ class BLinkViewModel(
                 nickname = if (nick.isNotBlank()) nick else existing.nickname,
                 lastSeen = System.currentTimeMillis(),
                 publicKey = pubKeyBase64?.takeIf { it.isNotEmpty() } ?: existing.publicKey,
-                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
+                verifiedOutOfBand = existing.verifiedOutOfBand || verifiedOutOfBand,
+                avatarBlob = avatarBlob ?: existing.avatarBlob
             )
         } else {
             com.blink.dtn.db.UserProfile(
@@ -184,7 +262,9 @@ class BLinkViewModel(
                 lastSeen = System.currentTimeMillis(),
                 isVip = false,
                 publicKey = pubKeyBase64.orEmpty(),
-                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
+                verifiedOutOfBand = verifiedOutOfBand,
+                avatarBlob = avatarBlob
             )
         }
         dao.insertOrUpdateProfile(profile)
@@ -245,9 +325,13 @@ class BLinkViewModel(
             )).copy(trustStatus = com.blink.dtn.db.UserProfile.TRUST_BLOCKED)
             dao.insertOrUpdateProfile(profile)
             val blockNick = nick.ifBlank { existing?.nickname.orEmpty() }
-            if (blockNick.isNotBlank()) {
-                dao.blockUser(BlockedUser(blockNick, System.currentTimeMillis()))
-            }
+            dao.blockUser(
+                BlockedUser(
+                    blockedNick = blockNick.ifBlank { peerId },
+                    blockedUserId = peerId,
+                    blockedAt = System.currentTimeMillis()
+                )
+            )
             dao.deleteMessagesInConversation(peerId)
             dao.deleteConversationById(peerId)
             kotlinx.coroutines.withContext(Dispatchers.Main) {
@@ -261,17 +345,28 @@ class BLinkViewModel(
     // Persist a QR-scanned contact with its pinned public key. The id is the
     // self-certifying hash of pubKeyBase64, so this can only ever pin the one
     // key that matches the id (a later BLE announcement must carry the same key
-    // or it is rejected at ingress).
-    fun addScannedContact(id: String, nick: String, pubKeyBase64: String) {
+    // or it is rejected at ingress). Optional compact avatar from QR `av`.
+    fun addScannedContact(
+        id: String,
+        nick: String,
+        pubKeyBase64: String,
+        avatarBlob: ByteArray? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
-            upsertPeerAsContact(id, nick, pubKeyBase64)
+            upsertPeerAsContact(
+                id,
+                nick,
+                pubKeyBase64,
+                verifiedOutOfBand = true,
+                avatarBlob = avatarBlob
+            )
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 setCurrentDialog(id)
             }
         }
     }
 
-    fun sendPublicMessage(text: String, room: String = "general") {
+    fun sendPublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL) {
         viewModelScope.launch(Dispatchers.IO) {
             val trace = TraceStore.begin(
                 kind = TraceKind.MESSAGE,
@@ -395,7 +490,11 @@ class BLinkViewModel(
                     bleMeshManager.enqueueMessage(reqMsg)
                     
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(getApplication(), "Missing public key. Requesting from mesh...", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(
+                            getApplication(),
+                            "Нет ключа собеседника — запросили по сети. Лучше сверить QR.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
                     return@launch
                 }
@@ -429,10 +528,16 @@ class BLinkViewModel(
     }
     }
 
-    fun blockUser(nick: String) {
+    fun blockUser(peerId: String, nick: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.blockUser(BlockedUser(nick, System.currentTimeMillis()))
-    }
+            dao.blockUser(
+                BlockedUser(
+                    blockedNick = nick.ifBlank { peerId },
+                    blockedUserId = peerId,
+                    blockedAt = System.currentTimeMillis()
+                )
+            )
+        }
     }
 
     /** Remove a message from this device only (own or others). */
@@ -459,6 +564,50 @@ class BLinkViewModel(
                 ).show()
             }
         }
+    }
+
+    /** Re-queue a failed / stuck outgoing message. */
+    fun retryOutgoingMessage(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = dao.getMessageById(messageId) ?: return@launch
+            if (msg.senderId != myNodeId) return@launch
+            val retryable = msg.status == Message.STATUS_FAILED ||
+                msg.status == Message.STATUS_PENDING ||
+                msg.status == Message.STATUS_PENDING_KEY
+            if (!retryable) return@launch
+            dao.updateMessageStatusAndRetryCount(messageId, Message.STATUS_PENDING, 0)
+            bleMeshManager.triggerRelay()
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(getApplication(), "Повторная отправка…", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun setDutyPreset(preset: com.blink.dtn.ble.MeshDutyPreset) {
+        bleMeshManager.applyDutyPreset(preset)
+    }
+
+    fun currentDutyPreset(): com.blink.dtn.ble.MeshDutyPreset =
+        bleMeshManager.currentDutyPreset()
+
+    val nearbyUpdate = com.blink.dtn.update.VersionGossip.nearbyUpdate
+
+    fun dismissNearbyUpdate() {
+        com.blink.dtn.update.VersionGossip.dismiss(getApplication())
+    }
+
+    fun requestNearbyApkUpdate(peerId: String) {
+        bleMeshManager.requestApkUpdateFromPeer(peerId)
+    }
+
+    fun buildStatusLabel(): String =
+        com.blink.dtn.security.BuildIntegrity.describe(getApplication()).labelRu
+
+    fun myVersionLabel(): String {
+        val ctx = getApplication<Application>()
+        val vn = com.blink.dtn.security.BuildIntegrity.myVersionName(ctx)
+        val vc = com.blink.dtn.security.BuildIntegrity.myVersionCode(ctx)
+        return "$vn ($vc)"
     }
 }
 

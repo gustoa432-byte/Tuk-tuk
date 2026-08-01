@@ -28,10 +28,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * BLE radio front: GATT server + advertise + scan cycle.
  * Peer table / ingress / TX live elsewhere; this owns the peripheral/discovery stack.
+ * Cadence follows [MeshDutyPrefs] so Economy / Norm / Max actually change radio duty.
  */
 @SuppressLint("MissingPermission")
 internal class BleRadioFront(
@@ -61,14 +63,19 @@ internal class BleRadioFront(
     private var advertiser: BluetoothLeAdvertiser? = null
     private var scanner: BluetoothLeScanner? = null
     private var scanJob: Job? = null
+    private val cadenceRef = AtomicReference(MeshDutyCadence.forPreset(MeshDutyPreset.NORMAL))
+    @Volatile private var running = false
 
     fun start() {
+        running = true
+        cadenceRef.set(MeshDutyPrefs.cadence())
         startGattServer()
         startAdvertising()
         startScanningCycle()
     }
 
     fun stop() {
+        running = false
         scanJob?.cancel()
         scanJob = null
         try {
@@ -89,6 +96,19 @@ internal class BleRadioFront(
         gattServer = null
         advertiser = null
         scanner = null
+    }
+
+    /** Hot-swap scan/advertise aggressiveness without tearing down GATT server. */
+    fun applyCadence(cadence: MeshDutyCadence) {
+        cadenceRef.set(cadence)
+        if (!running) return
+        try {
+            advertiser?.stopAdvertising(advertiseCallback)
+        } catch (_: Exception) {
+        }
+        startAdvertising()
+        startScanningCycle()
+        Log.i("DTN", "Radio cadence applied scan=${cadence.scanOnMs}/${cadence.scanOffMs}")
     }
 
     private fun startGattServer() {
@@ -112,11 +132,12 @@ internal class BleRadioFront(
 
     private fun startAdvertising() {
         advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
+        val cadence = cadenceRef.get()
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setAdvertiseMode(cadence.advertiseMode)
             .setConnectable(true)
             .setTimeout(0)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setTxPowerLevel(cadence.advertiseTxPower)
             .build()
 
         val data = AdvertiseData.Builder()
@@ -138,18 +159,19 @@ internal class BleRadioFront(
             val filters = listOf(
                 ScanFilter.Builder().setServiceUuid(ParcelUuid(deps.serviceUuid())).build()
             )
-            val settings = ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
-                .build()
 
             while (isActive) {
+                val cadence = cadenceRef.get()
+                val settings = ScanSettings.Builder()
+                    .setScanMode(cadence.scanMode)
+                    .build()
                 try {
                     scanner?.startScan(filters, settings, scanCallback)
                 } catch (e: SecurityException) {
                     Log.e("DTN", "SecurityException in startScanning: ${e.message}")
                 }
 
-                delay(10_000)
+                delay(cadence.scanOnMs)
 
                 try {
                     scanner?.stopScan(scanCallback)
@@ -157,7 +179,7 @@ internal class BleRadioFront(
                     Log.e("DTN", "SecurityException in stopScanning: ${e.message}")
                 }
 
-                delay(20_000)
+                delay(cadence.scanOffMs)
             }
         }
     }

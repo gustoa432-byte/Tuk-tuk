@@ -14,38 +14,45 @@ abstract class BLinkDao {
 
     @androidx.room.Transaction
     open suspend fun insertMessageWithConversation(msg: Message) {
-        val convId = if (msg.type == "PUBLIC" || msg.type == "SYSTEM_ANNOUNCEMENT") {
+        val convId = if (msg.type == "PUBLIC" ||
+            msg.type == "SYSTEM_ANNOUNCEMENT" ||
+            msg.type == "VERSION_ANNOUNCEMENT"
+        ) {
             "general"
         } else {
             if (msg.isMine) msg.targetId ?: msg.senderId else msg.senderId
         }
         
-        msg.conversationId = convId
-        
+        // Normalise legacy "general" room wire value → "1" on the way in
+        val normalisedMsg = if (msg.room == com.blink.dtn.ble.MeshRoom.LEGACY_GENERAL)
+            msg.copy(room = com.blink.dtn.ble.MeshRoom.GENERAL)
+        else msg
+        normalisedMsg.conversationId = convId
+
         var conv = getConversationByIdInternal(convId)
         if (conv == null) {
-            val displayName = if (convId == "general") "General Chat" else (if (msg.isMine) msg.targetId else msg.senderNick) ?: "Unknown"
+            val displayName = if (convId == "general") "General Chat" else (if (normalisedMsg.isMine) normalisedMsg.targetId else normalisedMsg.senderNick) ?: "Unknown"
             val peerId = if (convId == "general") null else convId
             conv = Conversation(
                 conversationId = convId,
                 peerId = peerId,
                 displayName = displayName,
-                lastMessage = msg.text,
-                lastTimestamp = msg.timestamp,
-                unreadCount = if (msg.isMine) 0 else 1
+                lastMessage = normalisedMsg.text,
+                lastTimestamp = normalisedMsg.timestamp,
+                unreadCount = if (normalisedMsg.isMine) 0 else 1
             )
             insertConversationInternal(conv)
         } else {
             conv = conv.copy(
-                lastMessage = msg.text,
-                lastTimestamp = maxOf(msg.timestamp, conv.lastTimestamp),
-                unreadCount = conv.unreadCount + if (msg.isMine) 0 else 1
+                lastMessage = normalisedMsg.text,
+                lastTimestamp = maxOf(normalisedMsg.timestamp, conv.lastTimestamp),
+                unreadCount = conv.unreadCount + if (normalisedMsg.isMine) 0 else 1
             )
             updateConversationInternal(conv)
         }
-        
-        insertMessage(msg)
-        android.util.Log.d("DB_INSERT", "ConversationId=${msg.conversationId} MessageId=${msg.id} Status=${msg.status}")
+
+        insertMessage(normalisedMsg)
+        android.util.Log.d("DB_INSERT", "ConversationId=${normalisedMsg.conversationId} MessageId=${normalisedMsg.id} Status=${normalisedMsg.status}")
     }
 
     @androidx.room.Transaction
@@ -85,9 +92,82 @@ abstract class BLinkDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertMessage(message: Message): Long
 
-    // Oldest → newest so UI can pin the latest bubble above the input.
-    @Query("SELECT * FROM messages WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT') AND senderNick NOT IN (SELECT blockedNick FROM blocked_users) ORDER BY timestamp ASC")
+    // Legacy broad query kept for migration safety; new code uses getPublicMessagesForRoomFlow.
+    // Rewritten with NOT EXISTS to avoid the O(N²) correlated subquery of NOT IN.
+    @Query("""
+        SELECT * FROM messages
+        WHERE (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT' OR type = 'VERSION_ANNOUNCEMENT')
+          AND NOT EXISTS (
+              SELECT 1 FROM blocked_users
+              WHERE blocked_users.blockedUserId = messages.senderId
+                 OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
+          )
+        ORDER BY timestamp ASC
+    """)
     abstract fun getPublicMessagesFlow(): Flow<List<Message>>
+
+    /**
+     * Room-scoped public chat query.
+     *
+     * Uses the composite index `index_messages_room` for the room filter and
+     * avoids the O(N²) NOT IN pattern via a correlated NOT EXISTS which SQLite
+     * can short-circuit as soon as it finds the first blocked row.
+     *
+     * Pass [room] as a single-char string per [MeshRoom] constants ("0".."9").
+     * Pass "1" for the general room (normalised from legacy "general" in v16).
+     */
+    @Query("""
+        SELECT * FROM messages
+        WHERE room = :room
+          AND (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT' OR type = 'VERSION_ANNOUNCEMENT')
+          AND NOT EXISTS (
+              SELECT 1 FROM blocked_users
+              WHERE blocked_users.blockedUserId = messages.senderId
+                 OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
+          )
+        ORDER BY timestamp ASC
+    """)
+    abstract fun getPublicMessagesForRoomFlow(room: String): Flow<List<Message>>
+
+    /**
+     * Drop Policy: count of FLOOD ("9") messages in the public queue.
+     * Called by the overflow pruner before inserting into a full buffer.
+     */
+    @Query("SELECT COUNT(*) FROM messages WHERE room = '9' AND type = 'PUBLIC'")
+    abstract suspend fun countFloodMessages(): Int
+
+    /**
+     * Drop Policy: delete the oldest [limit] FLOOD messages.
+     * FLOOD room ("9") is purged first; SOS ("0") is never touched.
+     */
+    @Query("""
+        DELETE FROM messages WHERE id IN (
+            SELECT id FROM messages
+            WHERE room = '9' AND type = 'PUBLIC'
+            ORDER BY timestamp ASC
+            LIMIT :limit
+        )
+    """)
+    abstract suspend fun deleteOldestFloodMessages(limit: Int)
+
+    /**
+     * Drop Policy second tier: if FLOOD is exhausted, delete oldest non-SOS,
+     * non-system public messages to make room.
+     */
+    @Query("""
+        DELETE FROM messages WHERE id IN (
+            SELECT id FROM messages
+            WHERE room != '0'
+              AND (type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT')
+            ORDER BY timestamp ASC
+            LIMIT :limit
+        )
+    """)
+    abstract suspend fun deleteOldestNonSosMessages(limit: Int)
+
+    /** Total count of public messages (for overflow check). */
+    @Query("SELECT COUNT(*) FROM messages WHERE type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT'")
+    abstract suspend fun countPublicMessages(): Int
 
     @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY timestamp ASC")
     abstract fun getPrivateMessagesFlow(myNodeId: String, myNick: String): Flow<List<Message>>
@@ -192,6 +272,9 @@ abstract class BLinkDao {
     @Query("UPDATE user_profiles SET trustStatus = :trustStatus WHERE userId = :userId")
     abstract suspend fun updateTrustStatus(userId: String, trustStatus: String)
 
+    @Query("UPDATE user_profiles SET avatarBlob = :avatarBlob, lastSeen = :lastSeen WHERE userId = :userId")
+    abstract suspend fun updateAvatarBlob(userId: String, avatarBlob: ByteArray?, lastSeen: Long)
+
     @Query("UPDATE conversations SET displayName = :displayName WHERE conversationId = :conversationId")
     abstract suspend fun updateConversationDisplayName(conversationId: String, displayName: String)
 
@@ -253,4 +336,7 @@ abstract class BLinkDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM blocked_users WHERE blockedNick = :senderNick)")
     abstract suspend fun isUserBlocked(senderNick: String): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM blocked_users WHERE blockedUserId = :userId)")
+    abstract suspend fun isUserIdBlocked(userId: String): Boolean
 }

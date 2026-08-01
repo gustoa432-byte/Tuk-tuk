@@ -199,6 +199,97 @@ object TraceStore {
         FeedbackMailer.sendTraceZip(context, file)
     }
 
+    /**
+     * Compact black-box for one message voyage (failed delivery report).
+     * Reuses the same ZIP + FeedbackMailer path as full Observatory export.
+     */
+    fun exportMessageReportZip(context: Context, messageId: String, dbStatus: Int? = null): File? {
+        init(context)
+        return try {
+            val stamp = SimpleDateFormat("yyyy_MM_dd_HHmmss", Locale.US).format(Date())
+            val outFile = File(context.cacheDir, "voyage_error_${messageId.take(12)}_$stamp.zip")
+            val trace = getByMessageId(messageId)
+            val report = trace?.let { TraceAnalyzer.analyze(it) }
+            val device = captureDevice(context)
+            val appVersion = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
+            }.getOrDefault("1.0")
+            val summary = buildString {
+                appendLine("TukTuk voyage error report")
+                appendLine("messageId=$messageId")
+                appendLine("dbStatus=$dbStatus")
+                appendLine("appVersion=$appVersion")
+                appendLine("terminalStatus=${trace?.terminalStatus}")
+                appendLine("messageType=${trace?.messageType}")
+                appendLine("targetId=${trace?.targetId}")
+                appendLine("senderId=${trace?.senderId}")
+                if (report != null) {
+                    appendLine("diagnosis=${report.diagnosis}")
+                    report.journey.takeLast(12).forEach { step ->
+                        appendLine("  ${step.emojiTitle} (+${step.elapsedMs}ms)")
+                    }
+                } else {
+                    appendLine("(no MessageTrace on disk for this id)")
+                }
+                val lastErrors = trace?.events
+                    ?.filter {
+                        it.stage.contains("Fail", ignoreCase = true) ||
+                            it.stage.contains("Error", ignoreCase = true) ||
+                            it.details.values.any { v ->
+                                v.contains("fail", ignoreCase = true) ||
+                                    v.contains("error", ignoreCase = true)
+                            }
+                    }
+                    ?.takeLast(8)
+                    .orEmpty()
+                if (lastErrors.isNotEmpty()) {
+                    appendLine("lastErrors:")
+                    lastErrors.forEach { e ->
+                        appendLine("  ${e.stage} ${e.details}")
+                    }
+                }
+            }
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(outFile))).use { zos ->
+                fun put(name: String, text: String) {
+                    zos.putNextEntry(ZipEntry(name))
+                    zos.write(text.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
+                put("summary.txt", summary)
+                put("device.json", json.encodeToString(device))
+                put("duty.json", json.encodeToString(MeshDutyTelemetry.current()))
+                if (trace != null) {
+                    put("trace.json", json.encodeToString(trace))
+                    if (report != null) {
+                        put("voyage.json", json.encodeToString(report))
+                        put("journey.json", json.encodeToString(report.journey))
+                        put("diagnosis.json", json.encodeToString(report.diagnosis))
+                    }
+                }
+            }
+            outFile
+        } catch (e: Exception) {
+            Log.e(TAG, "exportMessageReportZip failed: ${e.message}", e)
+            null
+        }
+    }
+
+    fun shareMessageErrorReport(context: Context, messageId: String, dbStatus: Int? = null) {
+        val file = exportMessageReportZip(context, messageId, dbStatus) ?: run {
+            android.widget.Toast.makeText(
+                context,
+                "Не удалось собрать отчёт",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        FeedbackMailer.sendTraceZip(
+            context,
+            file,
+            subject = "TukTuk voyage error · ${messageId.take(16)}"
+        )
+    }
+
     fun captureDevice(context: Context): DeviceSnapshot {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val mem = ActivityManager.MemoryInfo()

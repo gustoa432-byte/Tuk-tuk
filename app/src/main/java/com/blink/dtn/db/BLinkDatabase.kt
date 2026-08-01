@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 12, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 17, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -134,26 +134,121 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // QR out-of-band verification flag («проверен» vs «из сети»).
+        val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `verifiedOutOfBand` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        // Peer app version gossip (IDENTITY_ANNOUNCEMENT vc|vn).
+        val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `appVersionCode` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `appVersionName` TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        // Compact avatar JPEG blob for profiles / contact QR.
+        val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `avatarBlob` BLOB DEFAULT NULL"
+                )
+            }
+        }
+
+        /**
+         * v15 → v16: Room-aware public chat.
+         *
+         * 1. Index on `room` column for fast per-room queries.
+         * 2. Normalise legacy "general" → "1" (MeshRoom.GENERAL) so all rows use
+         *    the compact single-char wire IDs going forward.
+         *
+         * Drop Policy helper: a dedicated index on (room, timestamp) lets the
+         * overflow-pruner find and delete old FLOOD ("9") messages efficiently
+         * without a full-table scan.
+         */
+        val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Fast filter for getPublicMessagesForRoomFlow
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_messages_room` ON `messages` (`room`)"
+                )
+                // Drop Policy pruner index — (room, timestamp) composite
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_messages_room_ts` ON `messages` (`room`, `timestamp`)"
+                )
+                // Normalise legacy "general" → "1"
+                database.execSQL(
+                    "UPDATE `messages` SET `room` = '1' WHERE `room` = 'general'"
+                )
+            }
+        }
+
+        // Silent block by stable UID while preserving legacy nick-based blocks.
+        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `blocked_users` ADD COLUMN `blockedUserId` TEXT NOT NULL DEFAULT ''"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_blocked_users_blockedUserId` ON `blocked_users` (`blockedUserId`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    BLinkDatabase::class.java,
-                    "blink_database"
-                )
-                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
-                // Do NOT wipe user data on every unknown schema change. Real
-                // migrations are provided for 9->10->11->12; destructive fallback is
-                // deliberately limited to legacy pre-9 schemas (which never had a
-                // migration path) and to downgrades. Any future forgotten
-                // migration will now surface as a crash in debug instead of
-                // silently deleting messages.
-                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
-                .fallbackToDestructiveMigrationOnDowngrade()
-                .build()
+                val instance = try {
+                    buildAndOpen(context)
+                } catch (e: Exception) {
+                    // Schema mismatch after a bad update used to crash-loop on every launch.
+                    // Last resort: wipe local DB once and recreate from current entities
+                    // so the user can open the app without uninstalling.
+                    android.util.Log.e(
+                        "BLinkDatabase",
+                        "DB open/migration failed — recreating blink_database",
+                        e
+                    )
+                    context.applicationContext.deleteDatabase("blink_database")
+                    buildAndOpen(context)
+                }
                 INSTANCE = instance
                 instance
             }
+        }
+
+        private fun buildAndOpen(context: Context): BLinkDatabase {
+            val db = Room.databaseBuilder(
+                context.applicationContext,
+                BLinkDatabase::class.java,
+                "blink_database"
+            )
+                .addMigrations(
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                    MIGRATION_11_12,
+                    MIGRATION_12_13,
+                    MIGRATION_13_14,
+                    MIGRATION_14_15,
+                    MIGRATION_15_16,
+                    MIGRATION_16_17
+                )
+                // Pre-v9 never had migrations; wipe those only.
+                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
+                .fallbackToDestructiveMigrationOnDowngrade()
+                .build()
+            // Force migration + schema validation now (not lazily on first DAO call),
+            // so a mismatch is caught (and recovered) inside getDatabase().
+            db.openHelper.writableDatabase
+            return db
         }
     }
 }
