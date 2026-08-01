@@ -1,0 +1,21 @@
+---
+description: Always commit and push finished work to GitHub master
+alwaysApply: true
+---
+
+# Git: push straight to master
+
+Default branch for this repo is **master**. Do not leave finished work only on `cursor/*` branches.
+
+## After meaningful work is done
+
+1. Prefer working **on `master`** (checkout `master` if on a Cursor feature branch; merge feature work into `master` first if needed).
+2. **Commit** completed changes without waiting to be asked again for the same finished task (still follow the usual safety checks: no secrets, clear message, no unrelated files).
+3. **Push to `origin master` immediately** after the commit — do not wait for a separate “push” request.
+4. Do **not** use `cursor/prepare-debug-apk` (or similar agent branches) as the long-term destination for product changes.
+
+## Exceptions
+
+- User explicitly says not to commit/push, or asks for a PR/feature branch instead.
+- Push fails (auth) — report once and give the exact command; retry when credentials work.
+- Destructive git ops (`push --force` to master, hard reset) still require an explicit user request.
