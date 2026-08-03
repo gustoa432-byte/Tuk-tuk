@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 17, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 18, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -204,6 +204,18 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // Dialog list: persistent pin + archive (Phase 2).
+        val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `conversations` ADD COLUMN `pinnedAt` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `conversations` ADD COLUMN `isArchived` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = try {
@@ -239,7 +251,8 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_13_14,
                     MIGRATION_14_15,
                     MIGRATION_15_16,
-                    MIGRATION_16_17
+                    MIGRATION_16_17,
+                    MIGRATION_17_18
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)

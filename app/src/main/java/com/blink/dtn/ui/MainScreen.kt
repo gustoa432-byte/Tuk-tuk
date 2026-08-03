@@ -47,10 +47,13 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -67,10 +70,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -95,12 +101,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.blink.dtn.db.Conversation
 import com.blink.dtn.db.Message
 import com.blink.dtn.db.UserProfile
 import com.blink.dtn.ui.theme.AccentLime
@@ -512,222 +521,350 @@ fun PrivateTab(viewModel: BLinkViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatListScreen(viewModel: BLinkViewModel) {
     val lang by AppLang.lang.collectAsState()
     val dialogs by viewModel.dialogs.collectAsState()
     val privateDialogs = dialogs.filter { it.conversationId != "general" }
-    var showSearch by remember { mutableStateOf(false) }
-    var searchId by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
     var filterUnread by remember { mutableStateOf(false) }
     var filterPinned by remember { mutableStateOf(false) }
-    val query = searchId.trim().lowercase()
-    val filtered = privateDialogs.filter { dialog ->
-        val unreadOk = !filterUnread || dialog.unreadCount > 0
-        val pinnedOk = !filterPinned || dialog.unreadCount > 0 // stub pin: reuse unread until pin store
-        val textOk = query.isEmpty() ||
-            dialog.displayName.orEmpty().lowercase().contains(query) ||
-            dialog.conversationId.lowercase().contains(query) ||
-            dialog.lastMessage.orEmpty().lowercase().contains(query)
-        unreadOk && pinnedOk && textOk
-    }
-    
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .glassPanel(corner = 16.dp)
-                        .bounceClick { showSearch = true }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Text(
-                        text = S.findOrStartDialog(lang),
-                        color = TextSecondary,
-                        style = Typography.bodyMedium
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(bottom = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                FilterChip(S.unreadOnly(lang), filterUnread) { filterUnread = !filterUnread }
-                FilterChip(S.pinned(lang), filterPinned) { filterPinned = !filterPinned }
-                FilterChip(S.archive(lang), false) { /* stub archive */ }
-            }
+    var showArchive by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val listState = rememberLazyListState()
+    val query = searchQuery.trim().lowercase()
 
-            if (filtered.isEmpty()) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(S.noDialogs(lang), color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(S.slogan(lang), color = TextSecondary, style = Typography.labelSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    }
-                }
-            } else {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(filtered) { dialog ->
-                        val profile by viewModel.getProfileFlow(dialog.conversationId).collectAsState(initial = null)
-                        val formatter = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
-                        val timeString = if (dialog.lastTimestamp > 0) formatter.format(java.util.Date(dialog.lastTimestamp)) else ""
-                        val title = peerListTitle(profile, dialog.displayName)
-                        val trustBadge = profile?.trustBadge(lang)
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .bounceClick { viewModel.setCurrentDialog(dialog.conversationId) }
-                                .padding(horizontal = 4.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            PeerAvatar(
-                                avatarBlob = profile?.avatarBlob,
-                                label = title,
-                                size = 42.dp,
-                                uid = dialog.conversationId
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = title,
-                                        color = TextPrimary,
-                                        style = Typography.bodyLarge,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    if (trustBadge != null) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = trustBadge,
-                                            color = TextSecondary,
-                                            style = Typography.labelSmall
-                                        )
-                                    }
-                                }
-                                if (!dialog.lastMessage.isNullOrEmpty()) {
-                                    Text(
-                                        text = dialog.lastMessage,
-                                        color = TextSecondary,
-                                        style = Typography.bodyMedium,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                if (timeString.isNotEmpty()) {
-                                    Text(text = timeString, color = TextSecondary, style = Typography.labelSmall)
-                                }
-                                if (dialog.unreadCount > 0) {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .height(18.dp)
-                                            .padding(horizontal = 0.dp)
-                                            .background(AccentLime, RoundedCornerShape(9.dp))
-                                            .padding(horizontal = 6.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = dialog.unreadCount.toString(),
-                                            color = BackgroundDark,
-                                            style = Typography.labelSmall
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(0.5.dp)
-                                .background(DividerColor.copy(alpha = 0.45f))
-                        )
-                    }
-                }
-            }
-
+    val filtered = remember(privateDialogs, query, filterUnread, filterPinned, showArchive) {
+        privateDialogs.filter { dialog ->
+            val archiveOk = dialog.isArchived == showArchive
+            val unreadOk = !filterUnread || dialog.unreadCount > 0
+            val pinnedOk = !filterPinned || dialog.isPinned
+            val textOk = query.isEmpty() ||
+                dialog.displayName.orEmpty().lowercase().contains(query) ||
+                dialog.lastMessage.orEmpty().lowercase().contains(query) ||
+                dialog.conversationId.lowercase().contains(query)
+            archiveOk && unreadOk && pinnedOk && textOk
         }
-        
-        // 3. Custom Search Overlay
-        if (showSearch) {
-            Box(
+    }
+
+    fun startFromQuery() {
+        val id = searchQuery.trim()
+        if (id.isBlank()) return
+        viewModel.ensureContact(id)
+        viewModel.setCurrentDialog(id)
+        searchQuery = ""
+        focusManager.clearFocus()
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(BackgroundDark.copy(alpha = 0.72f))
-                    .pointerInput(Unit) {
-                        detectTapGestures { showSearch = false }
-                    },
-                contentAlignment = Alignment.TopCenter
+                    .weight(1f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DividerColor.copy(alpha = 0.28f))
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                BasicTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    singleLine = true,
+                    textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                    cursorBrush = SolidColor(TextPrimary),
+                    decorationBox = { inner ->
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = S.searchDialogs(lang),
+                                color = TextSecondary,
+                                style = Typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        inner()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (searchQuery.isNotBlank()) {
+                Text(
+                    text = S.startDialog(lang),
+                    color = AccentLime,
+                    style = Typography.labelMedium,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .glassPanel(corner = 24.dp, strong = true)
-                        .padding(16.dp)
-                ) {
-                    BasicTextField(
-                        value = searchId,
-                        onValueChange = { searchId = it },
-                        textStyle = Typography.bodyLarge.copy(color = TextPrimary),
-                        cursorBrush = SolidColor(TextPrimary),
-                        decorationBox = { innerTextField ->
-                            if (searchId.isEmpty()) {
-                                Text(S.enterPeerId(lang), color = TextSecondary, style = Typography.bodyLarge)
-                            }
-                            innerTextField()
+                        .bounceClick { startFromQuery() }
+                        .padding(horizontal = 4.dp, vertical = 8.dp)
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp)
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(S.unreadOnly(lang), filterUnread) {
+                filterUnread = !filterUnread
+                if (filterUnread) filterPinned = false
+            }
+            FilterChip(S.pinned(lang), filterPinned) {
+                filterPinned = !filterPinned
+                if (filterPinned) filterUnread = false
+            }
+            FilterChip(S.archive(lang), showArchive) {
+                showArchive = !showArchive
+            }
+        }
+
+        if (filtered.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = when {
+                            showArchive -> S.noArchivedDialogs(lang)
+                            filterUnread -> S.noUnreadDialogs(lang)
+                            filterPinned -> S.noPinnedDialogs(lang)
+                            else -> S.noDialogs(lang)
                         },
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                        color = TextSecondary,
+                        style = Typography.bodyMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
                     )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
+                    if (!showArchive && !filterUnread && !filterPinned && query.isEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = S.cancel(lang),
+                            text = S.slogan(lang),
                             color = TextSecondary,
-                            modifier = Modifier
-                                .bounceClick { showSearch = false }
-                                .padding(8.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (lang == "en") "Start" else "Начать",
-                            color = TextPrimary,
-                            modifier = Modifier
-                                .bounceClick {
-                                    if (searchId.isNotBlank()) {
-                                        viewModel.ensureContact(searchId.trim())
-                                        viewModel.setCurrentDialog(searchId.trim())
-                                        showSearch = false
-                                        searchId = ""
-                                    }
-                                }
-                                .padding(8.dp)
+                            style = Typography.labelSmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            ) {
+                items(filtered, key = { it.conversationId }) { dialog ->
+                    DialogListRow(
+                        dialog = dialog,
+                        viewModel = viewModel,
+                        lang = lang,
+                        onOpen = {
+                            focusManager.clearFocus()
+                            viewModel.setCurrentDialog(dialog.conversationId)
+                        },
+                        onTogglePin = { viewModel.togglePinDialog(dialog.conversationId) },
+                        onToggleArchive = {
+                            viewModel.setDialogArchived(dialog.conversationId, !dialog.isArchived)
+                        }
+                    )
                 }
             }
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DialogListRow(
+    dialog: Conversation,
+    viewModel: BLinkViewModel,
+    lang: String,
+    onOpen: () -> Unit,
+    onTogglePin: () -> Unit,
+    onToggleArchive: () -> Unit
+) {
+    val profile by viewModel.getProfileFlow(dialog.conversationId).collectAsState(initial = null)
+    val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeString = if (dialog.lastTimestamp > 0) formatter.format(Date(dialog.lastTimestamp)) else ""
+    val title = peerListTitle(profile, dialog.displayName, dialog.conversationId)
+    val trustBadge = profile?.trustBadge(lang)
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onTogglePin()
+                    false
+                }
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onToggleArchive()
+                    true
+                }
+                SwipeToDismissBoxValue.Settled -> false
+            }
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = Modifier.fillMaxWidth(),
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            val pinBg = AccentLime.copy(alpha = 0.85f)
+            val archiveBg = Color(0xFF3D6BCC)
+            when (direction) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(pinBg)
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PushPin,
+                            contentDescription = null,
+                            tint = BackgroundDark,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (dialog.isPinned) S.unpin(lang) else S.pin(lang),
+                            color = BackgroundDark,
+                            style = Typography.labelMedium
+                        )
+                    }
+                }
+                SwipeToDismissBoxValue.EndToStart -> {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(archiveBg)
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = if (dialog.isArchived) S.unarchive(lang) else S.archive(lang),
+                            color = TextPrimary,
+                            style = Typography.labelMedium
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = if (dialog.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                            contentDescription = null,
+                            tint = TextPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                else -> {}
+            }
+        }
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().background(BackgroundDark)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bounceClick(onOpen)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PeerAvatar(
+                    avatarBlob = profile?.avatarBlob,
+                    label = title,
+                    size = 44.dp,
+                    uid = dialog.conversationId
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (dialog.isPinned) {
+                            Icon(
+                                imageVector = Icons.Default.PushPin,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .padding(end = 0.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = title,
+                            color = TextPrimary,
+                            style = Typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (trustBadge != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = trustBadge,
+                                color = TextSecondary,
+                                style = Typography.labelSmall,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    if (!dialog.lastMessage.isNullOrEmpty()) {
+                        Text(
+                            text = dialog.lastMessage,
+                            color = TextSecondary,
+                            style = Typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    if (timeString.isNotEmpty()) {
+                        Text(text = timeString, color = TextSecondary, style = Typography.labelSmall)
+                    }
+                    if (dialog.unreadCount > 0) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Box(
+                            modifier = Modifier
+                                .height(18.dp)
+                                .background(AccentLime, RoundedCornerShape(9.dp))
+                                .padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = dialog.unreadCount.toString(),
+                                color = BackgroundDark,
+                                style = Typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 64.dp)
+                    .height(0.5.dp)
+                    .background(DividerColor.copy(alpha = 0.4f))
+            )
+        }
+    }
+}
+
 
 @Composable
 fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () -> Unit) {
@@ -736,7 +873,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     val dialogs by viewModel.dialogs.collectAsState()
     val profile by viewModel.getProfileFlow(contactId).collectAsState(initial = null)
     val fallbackName = dialogs.find { it.conversationId == contactId }?.displayName
-    val displayName = peerListTitle(profile, fallbackName)
+    val displayName = peerListTitle(profile, fallbackName, contactId)
     val isStranger = profile?.isStranger == true
     val isContact = profile == null || profile?.isContact == true
     val needsQrVerify = profile?.isVerified != true
@@ -2050,7 +2187,20 @@ private fun openOfficialChannel(context: Context) {
     openTelegramLink(context, OFFICIAL_CHANNEL)
 }
 
-private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: String?): String {
+private fun peerListTitle(
+    profile: com.blink.dtn.db.UserProfile?,
+    fallback: String?,
+    conversationId: String? = null
+): String {
+    fun humanOrUnknown(raw: String?): String {
+        val value = raw?.trim().orEmpty()
+        if (value.isEmpty()) return S.unknownContact(AppLang.lang.value)
+        // Never show raw node id in the main dialog row.
+        if (conversationId != null && value == conversationId) {
+            return S.unknownContact(AppLang.lang.value)
+        }
+        return value
+    }
     if (profile != null) {
         val alias = profile.localAlias.trim()
         if (alias.isNotEmpty()) return alias
@@ -2058,10 +2208,10 @@ private fun peerListTitle(profile: com.blink.dtn.db.UserProfile?, fallback: Stri
         if (profile.isStranger) {
             return nick.ifEmpty { S.stranger(AppLang.lang.value) }
         }
-        if (nick.isNotEmpty()) return nick
-        return profile.userId
+        if (nick.isNotEmpty() && nick != profile.userId) return nick
+        return humanOrUnknown(fallback)
     }
-    return fallback?.takeIf { it.isNotBlank() } ?: S.unknownContact(AppLang.lang.value)
+    return humanOrUnknown(fallback)
 }
 
 @Composable

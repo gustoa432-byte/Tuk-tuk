@@ -10,5 +10,10 @@ data class Conversation(
     val displayName: String?,
     val lastMessage: String?,
     val lastTimestamp: Long,
-    val unreadCount: Int = 0
-)
+    val unreadCount: Int = 0,
+    /** Epoch millis when pinned; 0 = not pinned. Newer pins sort higher among pins. */
+    val pinnedAt: Long = 0L,
+    val isArchived: Boolean = false
+) {
+    val isPinned: Boolean get() = pinnedAt > 0L
+}

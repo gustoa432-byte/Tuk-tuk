@@ -117,6 +117,22 @@ class BLinkViewModel(
         }
     }
 
+    fun togglePinDialog(conversationId: String) {
+        if (conversationId.isBlank() || conversationId == "general") return
+        viewModelScope.launch(Dispatchers.IO) {
+            val conv = conversationDao.getConversationById(conversationId) ?: return@launch
+            val next = if (conv.isPinned) 0L else System.currentTimeMillis()
+            conversationDao.setPinnedAt(conversationId, next)
+        }
+    }
+
+    fun setDialogArchived(conversationId: String, archived: Boolean) {
+        if (conversationId.isBlank() || conversationId == "general") return
+        viewModelScope.launch(Dispatchers.IO) {
+            conversationDao.setArchived(conversationId, archived)
+        }
+    }
+
     val peerCount = bleMeshManager.peerCount
     val activePeers = bleMeshManager.activePeers
     

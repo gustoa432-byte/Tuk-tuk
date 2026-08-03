@@ -259,8 +259,25 @@ object S {
     fun equipped(lang: String) = if (lang == LANG_EN) "On" else "Надето"
     fun networkHelpStats(lang: String) = if (lang == LANG_EN) "Network help" else "Помощь сети"
     fun archive(lang: String) = if (lang == LANG_EN) "Archive" else "Архив"
+    fun unarchive(lang: String) = if (lang == LANG_EN) "Unarchive" else "Вернуть"
     fun pinned(lang: String) = if (lang == LANG_EN) "Pinned" else "Закрепы"
+    fun pin(lang: String) = if (lang == LANG_EN) "Pin" else "Закрепить"
+    fun unpin(lang: String) = if (lang == LANG_EN) "Unpin" else "Открепить"
     fun unreadOnly(lang: String) = if (lang == LANG_EN) "Unread" else "Непрочитанные"
+    fun searchDialogs(lang: String) = if (lang == LANG_EN) "Search dialogs..." else "Поиск диалогов..."
+    fun startDialog(lang: String) = if (lang == LANG_EN) "Start" else "Начать"
+    fun noArchivedDialogs(lang: String) = if (lang == LANG_EN)
+        "Archive is empty."
+    else
+        "В архиве пусто."
+    fun noUnreadDialogs(lang: String) = if (lang == LANG_EN)
+        "No unread dialogs."
+    else
+        "Нет непрочитанных."
+    fun noPinnedDialogs(lang: String) = if (lang == LANG_EN)
+        "No pinned dialogs."
+    else
+        "Нет закрепов."
     fun reply(lang: String) = if (lang == LANG_EN) "Reply" else "Ответить"
     fun forward(lang: String) = if (lang == LANG_EN) "Forward" else "Переслать"
     fun edit(lang: String) = if (lang == LANG_EN) "Edit" else "Изменить"
