@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.router.MessageRouter
+import com.blink.dtn.ui.theme.AccentLilac
 import com.blink.dtn.ui.theme.AccentLime
 import com.blink.dtn.ui.theme.DividerColor
 import com.blink.dtn.ui.theme.TextPrimary
@@ -36,7 +37,7 @@ import com.blink.dtn.ui.theme.glassPanel
 
 /**
  * Expedition / Delivery — gamification as courier work.
- * Emotion: "I helped the network." Cosmetics only.
+ * Cosmetics only.
  */
 @Composable
 fun ExpeditionTab(viewModel: BLinkViewModel) {
@@ -56,9 +57,7 @@ fun ExpeditionTab(viewModel: BLinkViewModel) {
             .padding(16.dp)
     ) {
         Text(S.expedition(lang), style = Typography.titleLarge, color = TextPrimary)
-        Text(S.expeditionTagline(lang), style = Typography.bodySmall, color = TextSecondary)
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(S.helpedFeeling(lang), style = Typography.labelSmall, color = AccentLime)
+        Text(S.expeditionTagline(lang), style = Typography.bodySmall, color = AccentLilac)
         if (System.currentTimeMillis() - snap.lastHelpedAt < 60_000L && snap.lastHelpedAt > 0) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(

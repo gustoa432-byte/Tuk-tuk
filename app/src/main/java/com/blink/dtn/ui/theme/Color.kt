@@ -12,6 +12,9 @@ val DividerColor = Color(0xFF2A2D36)
 /** Logo lime accent */
 val AccentLime = Color(0xFFC6FF3D)
 
+/** Soft lilac — expedition / courier cue */
+val AccentLilac = Color(0xFFC9A0FF)
+
 /** Translucent glass fills */
 val GlassFill = Color(0x33FFFFFF)
 val GlassFillStrong = Color(0x22FFFFFF)

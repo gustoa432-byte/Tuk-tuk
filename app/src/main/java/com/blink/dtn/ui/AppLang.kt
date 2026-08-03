@@ -228,13 +228,9 @@ object S {
     // Expedition / gamification
     fun expedition(lang: String) = if (lang == LANG_EN) "Expedition" else "Экспедиция"
     fun expeditionTagline(lang: String) = if (lang == LANG_EN)
-        "You’re a courier. A message is a package. Your phone helps the network."
+        "You’re a courier. Deliver the package. Help the network."
     else
-        "Ты курьер. Сообщение — посылка. Телефон помогает сети."
-    fun helpedFeeling(lang: String) = if (lang == LANG_EN)
-        "After a relay you should feel: I helped the network."
-    else
-        "После передачи должно быть чувство: я помог сети."
+        "Ты курьер. Отнеси посылку. Помоги сети."
     fun packagesWaiting(lang: String) = if (lang == LANG_EN) "Waiting" else "Ждут"
     fun packagesDelivered(lang: String) = if (lang == LANG_EN) "Helped" else "Передал"
     fun neighborsHelped(lang: String) = if (lang == LANG_EN) "Neighbors" else "Соседи"

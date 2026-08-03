@@ -21,7 +21,7 @@ interface ConversationDao {
     )
     fun getAllConversations(): Flow<List<Conversation>>
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY received_at ASC, id ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY local_seq ASC, id ASC")
     fun getMessagesForConversation(conversationId: String): Flow<List<Message>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

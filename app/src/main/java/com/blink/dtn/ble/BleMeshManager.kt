@@ -435,11 +435,18 @@ class BleMeshManager private constructor(
                         )
                     )
                 } else {
+                    // Never clobber local-only order/media fields from a wire/re-queue copy
+                    // (receivedAt/localSeq default to 0 on NetworkPacket → Message).
                     dao.updateMessageInternal(
                         updatedMsg.copy(
                             conversationId = existing.conversationId.ifEmpty { updatedMsg.conversationId },
                             replyToId = existing.replyToId ?: updatedMsg.replyToId,
-                            editedAt = if (existing.editedAt > 0L) existing.editedAt else updatedMsg.editedAt
+                            editedAt = if (existing.editedAt > 0L) existing.editedAt else updatedMsg.editedAt,
+                            receivedAt = if (existing.receivedAt > 0L) existing.receivedAt else updatedMsg.receivedAt,
+                            localSeq = if (existing.localSeq > 0L) existing.localSeq else updatedMsg.localSeq,
+                            mediaPath = existing.mediaPath ?: updatedMsg.mediaPath,
+                            isMine = existing.isMine || updatedMsg.isMine,
+                            isBridgeSynced = existing.isBridgeSynced || updatedMsg.isBridgeSynced
                         )
                     )
                 }

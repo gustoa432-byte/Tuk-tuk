@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 20, exportSchema = false)
+@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 21, exportSchema = false)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -243,6 +243,31 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // Monotonic local chat order (independent of wall clocks / peer timestamps).
+        // Also repairs received_at wiped to 0 by enqueue→update clobber on PUBLIC rows.
+        val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `local_seq` INTEGER NOT NULL DEFAULT 0"
+                )
+                // Preserve insert order via SQLite rowid; new inserts get MAX+1 in DAO.
+                database.execSQL(
+                    "UPDATE `messages` SET `local_seq` = `rowid` WHERE `local_seq` = 0"
+                )
+                database.execSQL(
+                    """
+                    UPDATE `messages`
+                    SET `received_at` = CASE
+                        WHEN `received_at` > 0 THEN `received_at`
+                        WHEN `timestamp` > 0 THEN `timestamp`
+                        ELSE `rowid`
+                    END
+                    WHERE `received_at` = 0
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = try {
@@ -281,7 +306,8 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_16_17,
                     MIGRATION_17_18,
                     MIGRATION_18_19,
-                    MIGRATION_19_20
+                    MIGRATION_19_20,
+                    MIGRATION_20_21
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)

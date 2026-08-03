@@ -51,11 +51,17 @@ data class Message(
     /** Local-only: when this message was last edited on this device (0 = never). */
     @Transient @ColumnInfo(name = "edited_at") val editedAt: Long = 0L,
     /**
-     * Local-only insertion / receive time on this device.
-     * Chat UI orders by this field so peer clock skew cannot invert the thread.
+     * Local-only insertion / receive time on this device (wall clock).
+     * Used for dialog previews and soft display-time correction — not for chat order.
      * Origin [timestamp] stays on the wire for TTL / display when clocks agree.
      */
     @Transient @ColumnInfo(name = "received_at") val receivedAt: Long = 0L,
+    /**
+     * Local-only monotonic insert sequence on this device.
+     * Chat UI orders strictly by this (ASC = oldest top, newest bottom).
+     * Never taken from the wire or peer clocks.
+     */
+    @Transient @ColumnInfo(name = "local_seq") val localSeq: Long = 0L,
     /** Local-only absolute path to image file for PRIVATE_IMAGE (never on mesh). */
     @Transient @ColumnInfo(name = "media_path") val mediaPath: String? = null,
 
@@ -85,6 +91,6 @@ data class Message(
         return if (kotlin.math.abs(timestamp - receivedAt) > DISPLAY_SKEW_MS) receivedAt else timestamp
     }
 
-    /** Local sort / dialog preview key. */
+    /** Dialog list preview key (activity time), not bubble order. */
     fun localOrderMs(): Long = if (receivedAt > 0L) receivedAt else timestamp
 }

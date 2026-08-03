@@ -27,8 +27,13 @@ abstract class BLinkDao {
         var normalisedMsg = if (msg.room == com.blink.dtn.ble.MeshRoom.LEGACY_GENERAL)
             msg.copy(room = com.blink.dtn.ble.MeshRoom.GENERAL)
         else msg
+        // Local receive time (previews / soft clock) — never used as chat sort key.
         if (normalisedMsg.receivedAt <= 0L) {
             normalisedMsg = normalisedMsg.copy(receivedAt = System.currentTimeMillis())
+        }
+        // Strict chat order: monotonic local_seq assigned once on this device.
+        if (normalisedMsg.localSeq <= 0L) {
+            normalisedMsg = normalisedMsg.copy(localSeq = maxLocalSeq() + 1L)
         }
         normalisedMsg.conversationId = convId
         val orderTs = normalisedMsg.localOrderMs()
@@ -81,8 +86,16 @@ abstract class BLinkDao {
         }
 
         msg.conversationId = RELAY_CONVERSATION_ID
-        insertMessage(msg)
-        android.util.Log.d("DB_INSERT", "RelayPacketId=${msg.id} Type=${msg.type} Status=${msg.status}")
+        val toStore = if (msg.localSeq <= 0L || msg.receivedAt <= 0L) {
+            msg.copy(
+                localSeq = if (msg.localSeq > 0L) msg.localSeq else maxLocalSeq() + 1L,
+                receivedAt = if (msg.receivedAt > 0L) msg.receivedAt else System.currentTimeMillis()
+            ).also { it.conversationId = RELAY_CONVERSATION_ID }
+        } else {
+            msg
+        }
+        insertMessage(toStore)
+        android.util.Log.d("DB_INSERT", "RelayPacketId=${toStore.id} Type=${toStore.type} Status=${toStore.status}")
     }
 
     @Query("SELECT * FROM conversations WHERE conversationId = :id LIMIT 1")
@@ -112,7 +125,7 @@ abstract class BLinkDao {
               WHERE blocked_users.blockedUserId = messages.senderId
                  OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
           )
-        ORDER BY received_at ASC, id ASC
+        ORDER BY local_seq ASC, id ASC
     """)
     abstract fun getPublicMessagesFlow(): Flow<List<Message>>
 
@@ -135,7 +148,7 @@ abstract class BLinkDao {
               WHERE blocked_users.blockedUserId = messages.senderId
                  OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
           )
-        ORDER BY received_at ASC, id ASC
+        ORDER BY local_seq ASC, id ASC
     """)
     abstract fun getPublicMessagesForRoomFlow(room: String): Flow<List<Message>>
 
@@ -179,8 +192,12 @@ abstract class BLinkDao {
     @Query("SELECT COUNT(*) FROM messages WHERE type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT'")
     abstract suspend fun countPublicMessages(): Int
 
-    @Query("SELECT * FROM messages WHERE (type = 'PRIVATE' OR type = 'PRIVATE_IMAGE') AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY received_at ASC, id ASC")
+    @Query("SELECT * FROM messages WHERE (type = 'PRIVATE' OR type = 'PRIVATE_IMAGE') AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY local_seq ASC, id ASC")
     abstract fun getPrivateMessagesFlow(myNodeId: String, myNick: String): Flow<List<Message>>
+
+    /** Next chat-order key — assigned only on first local insert. */
+    @Query("SELECT IFNULL(MAX(local_seq), 0) FROM messages")
+    abstract suspend fun maxLocalSeq(): Long
     
     @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
     abstract suspend fun getMessageById(id: String): Message?
@@ -200,7 +217,7 @@ abstract class BLinkDao {
     @Query("DELETE FROM messages WHERE id = :id")
     abstract suspend fun deleteMessageById(id: String)
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY received_at DESC, id DESC LIMIT 1")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY local_seq DESC, id DESC LIMIT 1")
     abstract suspend fun getLatestMessageInConversation(conversationId: String): Message?
 
     /** Local-only delete; refreshes conversation preview when needed. */
