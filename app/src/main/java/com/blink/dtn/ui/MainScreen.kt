@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -210,8 +211,8 @@ enum class MainTab {
 fun MainScreen(viewModel: BLinkViewModel) {
     var selectedTab by remember { mutableStateOf(MainTab.Dialogs) }
     var showDevPanel by remember { mutableStateOf(false) }
-    var showInfo by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     var clickCount by remember { mutableStateOf(0) }
     var lastClickTime by remember { mutableStateOf(0L) }
     val peerCount by viewModel.peerCount.collectAsState()
@@ -231,6 +232,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
     LaunchedEffect(selectedTab) {
         if (selectedTab != MainTab.Profile) {
             showSettings = false
+            showAbout = false
             AppWallpaper.discardDraft()
         }
     }
@@ -240,30 +242,11 @@ fun MainScreen(viewModel: BLinkViewModel) {
         return
     }
 
-    if (showInfo) {
-        AlertDialog(
-            onDismissRequest = { showInfo = false },
-            title = { Text(S.infoTitle(lang), color = TextPrimary) },
-            text = {
-                Box(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    InfoContent(compact = true)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showInfo = false }) {
-                    Text(S.close(lang), color = TextPrimary)
-                }
-            },
-            containerColor = GlassDialogContainer
-        )
-    }
-
     val imeVisible = WindowInsets.isImeVisible
     Box(modifier = Modifier.fillMaxSize().background(CosmeticApply.backdropTint(gm.themeId))) {
         AppRootBackdrop()
         Scaffold(
             containerColor = Color.Transparent,
-            // We handle system/IME insets ourselves (edge-to-edge + composer).
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
@@ -289,15 +272,14 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(7.dp)
-                                        .background(
-                                            color = if (isConnected) AccentLime else DividerColor,
-                                            shape = CircleShape
-                                        )
-                                )
+                                if (isConnected) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .background(color = AccentLime, shape = CircleShape)
+                                    )
+                                }
                             }
                             Text(
                                 S.slogan(lang),
@@ -308,37 +290,24 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         }
                     },
                     actions = {
-                        if (selectedTab == MainTab.Profile) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 4.dp)
-                                    .size(40.dp)
-                                    .glassPanel(corner = 20.dp)
-                                    .bounceClick { showInfo = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Info, contentDescription = S.infoTitle(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 4.dp)
-                                    .size(40.dp)
-                                    .glassPanel(corner = 20.dp)
-                                    .bounceClick { shareApk(context) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = S.shareTukTuk(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 12.dp)
-                                    .size(40.dp)
-                                    .glassPanel(corner = 20.dp)
-                                    .bounceClick { showSettings = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Settings, contentDescription = S.settings(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
-                            }
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .size(40.dp)
+                                .glassPanel(corner = 20.dp)
+                                .bounceClick {
+                                    selectedTab = MainTab.Profile
+                                    showAbout = false
+                                    showSettings = true
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = S.settings(lang),
+                                tint = TextPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -349,7 +318,6 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 )
             },
             bottomBar = {
-                // Hide tab bar while typing so the composer can sit on the keyboard.
                 if (!imeVisible) {
                     CustomBottomBar(selectedTab) { selectedTab = it }
                 }
@@ -361,7 +329,6 @@ fun MainScreen(viewModel: BLinkViewModel) {
                     .fillMaxSize()
                     .then(if (imeVisible) Modifier.imePadding() else Modifier)
             ) {
-                NetworkStatusBanner(isConnected = isConnected)
                 nearbyUpdate?.let { offer ->
                     NearbyUpdateBanner(
                         versionName = offer.versionName,
@@ -380,13 +347,22 @@ fun MainScreen(viewModel: BLinkViewModel) {
                             viewModel.setCurrentDialog(contactId)
                             selectedTab = MainTab.Dialogs
                         }
-                        MainTab.Profile -> if (showSettings) {
-                            SettingsScreen(onBack = {
-                                AppWallpaper.discardDraft()
-                                showSettings = false
-                            })
-                        } else {
-                            ProfileTab(viewModel, { selectedTab = MainTab.Dialogs })
+                        MainTab.Profile -> when {
+                            showSettings -> SettingsHub(
+                                onBack = {
+                                    AppWallpaper.discardDraft()
+                                    showSettings = false
+                                },
+                                viewModel = viewModel
+                            )
+                            showAbout -> AboutTukTukScreen(onBack = { showAbout = false })
+                            else -> ProfileTab(
+                                viewModel = viewModel,
+                                onScanSuccess = { selectedTab = MainTab.Dialogs },
+                                onOpenSettings = { showSettings = true },
+                                onOpenAbout = { showAbout = true },
+                                onOpenExpedition = { selectedTab = MainTab.Expedition }
+                            )
                         }
                     }
                 }
@@ -533,21 +509,43 @@ private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 fun PrivateTab(viewModel: BLinkViewModel) {
     val currentDialogId by viewModel.currentDialogId.collectAsState()
-    
-    if (currentDialogId == null) {
-        ChatListScreen(viewModel)
-    } else {
-        ConversationScreen(
+    var showContacts by remember { mutableStateOf(false) }
+    var showInvite by remember { mutableStateOf(false) }
+    var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
+
+    LaunchedEffect(Unit) {
+        contactQr = withContext(Dispatchers.IO) { viewModel.buildContactQr() }
+    }
+
+    if (showInvite) {
+        InviteFriendsSheet(contactQrPayload = contactQr, onDismiss = { showInvite = false })
+    }
+
+    when {
+        currentDialogId != null -> ConversationScreen(
             viewModel = viewModel,
             contactId = currentDialogId!!,
             onBack = { viewModel.setCurrentDialog(null) }
+        )
+        showContacts -> ContactsScreen(
+            viewModel = viewModel,
+            onBack = { showContacts = false },
+            onOpenChat = { id ->
+                viewModel.setCurrentDialog(id)
+                showContacts = false
+            },
+            onInvite = { showInvite = true }
+        )
+        else -> ChatListScreen(
+            viewModel = viewModel,
+            onOpenContacts = { showContacts = true }
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(viewModel: BLinkViewModel) {
+fun ChatListScreen(viewModel: BLinkViewModel, onOpenContacts: () -> Unit = {}) {
     val lang by AppLang.lang.collectAsState()
     val dialogs by viewModel.dialogs.collectAsState()
     val privateDialogs = dialogs.filter { it.conversationId != "general" }
@@ -628,13 +626,20 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
             }
             if (searchQuery.isNotBlank()) {
                 Text(
-                    text = S.startDialog(lang),
+                    S.get(lang),
                     color = AccentLime,
                     style = Typography.labelMedium,
-                    modifier = Modifier
-                        .bounceClick { startFromQuery() }
-                        .padding(horizontal = 4.dp, vertical = 8.dp)
+                    modifier = Modifier.bounceClick { startFromQuery() }
                 )
+            }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .glassPanel(corner = 12.dp)
+                    .bounceClick(onOpenContacts),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Person, contentDescription = S.contacts(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
             }
         }
 
@@ -1487,38 +1492,36 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
     }
 }
 
-// Compact auto-grow composer — maximize message area
+// Modern messenger composer — emoji · field · attach · mic↔send
 @Composable
 fun ChatInputArea(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
     sendLabel: String? = null,
-    onPickPhoto: (() -> Unit)? = null
+    onPickPhoto: (() -> Unit)? = null,
+    onEmoji: (() -> Unit)? = null
 ) {
     val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    val canSend = text.isNotBlank() || (sendLabel != null && sendLabel == S.edit(lang))
+    val editing = sendLabel != null && sendLabel == S.edit(lang)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Bottom
     ) {
-        if (onPickPhoto != null) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .glassPanel(corner = 18.dp)
-                    .bounceClick { onPickPhoto() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Image,
-                    contentDescription = S.attachPhoto(lang),
-                    tint = TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .bounceClick {
+                    onEmoji?.invoke() ?: Toast.makeText(context, S.emoji(lang), Toast.LENGTH_SHORT).show()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("😊", style = Typography.titleMedium)
         }
         BasicTextField(
             value = text,
@@ -1531,9 +1534,10 @@ fun ChatInputArea(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 36.dp)
-                        .glassPanel(corner = 18.dp)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(DividerColor.copy(alpha = 0.35f))
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     if (text.isEmpty()) {
                         Text(S.message(lang), color = TextSecondary, style = Typography.bodyMedium)
@@ -1543,18 +1547,48 @@ fun ChatInputArea(
             },
             modifier = Modifier.weight(1f)
         )
-        Spacer(modifier = Modifier.width(6.dp))
+        if (onPickPhoto != null && !canSend) {
+            Spacer(modifier = Modifier.width(2.dp))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .bounceClick { onPickPhoto() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Image,
+                    contentDescription = S.attach(lang),
+                    tint = TextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(2.dp))
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .glassPanel(corner = 18.dp)
-                .bounceClick { onSend() },
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (canSend) AccentLime.copy(alpha = 0.9f) else Color.Transparent)
+                .bounceClick {
+                    if (canSend) onSend()
+                    else Toast.makeText(context, S.voiceSoon(lang), Toast.LENGTH_SHORT).show()
+                },
             contentAlignment = Alignment.Center
         ) {
-            if (sendLabel != null && sendLabel == S.edit(lang)) {
-                Icon(Icons.Filled.Check, contentDescription = sendLabel, tint = AccentLime, modifier = Modifier.size(18.dp))
-            } else {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = sendLabel ?: S.send(lang), tint = TextPrimary, modifier = Modifier.size(18.dp))
+            androidx.compose.animation.AnimatedContent(
+                targetState = canSend,
+                label = "micSend"
+            ) { sendMode ->
+                if (sendMode) {
+                    Icon(
+                        if (editing) Icons.Filled.Check else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = sendLabel ?: S.send(lang),
+                        tint = if (editing) AccentLime else BackgroundDark,
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Text("🎤", style = Typography.titleMedium)
+                }
             }
         }
     }
@@ -1801,12 +1835,17 @@ fun shareApk(context: Context) {
 }
 
 @Composable
-fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
+fun ProfileTab(
+    viewModel: BLinkViewModel,
+    onScanSuccess: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenExpedition: () -> Unit
+) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
 
-    // Use TextFieldValue to preserve cursor position correctly
     var nickFieldValue by remember {
         mutableStateOf(TextFieldValue(viewModel.myNick))
     }
@@ -1815,6 +1854,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
     var showSavedFlash by remember { mutableStateOf(false) }
     val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
+    var showInvite by remember { mutableStateOf(false) }
 
     LaunchedEffect(showSavedFlash) {
         if (showSavedFlash) {
@@ -1845,7 +1885,7 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             }
         }
     )
-    
+
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned != null && scanned.isNotBlank()) {
@@ -1870,6 +1910,10 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         }
     }
 
+    if (showInvite) {
+        InviteFriendsSheet(contactQrPayload = contactQr, onDismiss = { showInvite = false })
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1877,91 +1921,74 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Fix #3: horizontal row — avatar left, nickname+ID right
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Avatar: 72dp, tappable
-            PeerAvatar(
-                avatarBlob = myProfile?.avatarBlob,
-                label = nickFieldValue.text.ifBlank { viewModel.myNodeId.take(4) },
-                size = 72.dp,
-                uid = viewModel.myNodeId,
-                modifier = Modifier.bounceClick { openAvatarPicker() }
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            // Right column: nickname field + short ID
-            Column(modifier = Modifier.weight(1f)) {
-                BasicTextField(
-                    value = nickFieldValue,
-                    onValueChange = { newVal ->
-                        if (newVal.text.length <= 20) {
-                            nickFieldValue = newVal
-                            showSavedFlash = false
-                        }
-                    },
-                    textStyle = Typography.titleMedium.copy(color = TextPrimary),
-                    cursorBrush = SolidColor(TextPrimary),
-                    singleLine = true,
-                    decorationBox = { innerTextField ->
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            if (nickFieldValue.text.isEmpty()) {
-                                Text(S.enterName(lang), color = TextSecondary, style = Typography.titleMedium)
-                            }
-                            innerTextField()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                // ID secondary — tap to copy (not a hero)
-                Text(
-                    text = if (lang == "en") "Tap to copy ID" else "Нажми, чтобы скопировать ID",
-                    color = TextSecondary,
-                    style = Typography.labelSmall,
-                    modifier = Modifier
-                        .bounceClick {
-                            clipboardManager.setText(AnnotatedString(viewModel.myNodeId))
-                            Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
-                        }
-                )
+        PeerAvatar(
+            avatarBlob = myProfile?.avatarBlob,
+            label = nickFieldValue.text.ifBlank { viewModel.myNodeId.take(4) },
+            size = 96.dp,
+            uid = viewModel.myNodeId,
+            modifier = Modifier.bounceClick { openAvatarPicker() }
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+        BasicTextField(
+            value = nickFieldValue,
+            onValueChange = { newVal ->
+                if (newVal.text.length <= 20) {
+                    nickFieldValue = newVal
+                    showSavedFlash = false
+                }
+            },
+            textStyle = Typography.headlineSmall.copy(color = TextPrimary),
+            cursorBrush = SolidColor(TextPrimary),
+            singleLine = true,
+            decorationBox = { innerTextField ->
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (nickFieldValue.text.isEmpty()) {
+                        Text(S.enterName(lang), color = TextSecondary, style = Typography.headlineSmall)
+                    }
+                    innerTextField()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        val nickHandle = nickFieldValue.text.trim().ifBlank { "user" }
+        Text(
+            "@$nickHandle",
+            color = TextSecondary,
+            style = Typography.bodyMedium,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        Text(
+            text = S.tapCopyId(lang),
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .bounceClick {
+                    clipboardManager.setText(AnnotatedString(viewModel.myNodeId))
+                    Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
+                }
+        )
+        if (nickDirty || showSavedFlash) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(onClick = {
+                if (!nickDirty) return@TukTukButton
+                val trimmed = nickFieldValue.text.trim()
+                if (trimmed.isEmpty()) {
+                    Toast.makeText(context, S.enterNameHint(lang), Toast.LENGTH_SHORT).show()
+                    return@TukTukButton
+                }
+                nickFieldValue = TextFieldValue(text = trimmed, selection = TextRange(trimmed.length))
+                viewModel.updateMyProfile(trimmed, false)
+                savedNick = trimmed
+                showSavedFlash = true
+            }) {
+                Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(S.save(lang), color = TextPrimary)
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        // Checkmark save button — visible when editing or briefly after save
-        if (nickDirty || showSavedFlash) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .bounceClick {
-                        if (!nickDirty) return@bounceClick
-                        val trimmed = nickFieldValue.text.trim()
-                        if (trimmed.isEmpty()) {
-                            Toast.makeText(context, S.enterNameHint(lang), Toast.LENGTH_SHORT).show()
-                            return@bounceClick
-                        }
-                        nickFieldValue = TextFieldValue(
-                            text = trimmed,
-                            selection = TextRange(trimmed.length)
-                        )
-                        viewModel.updateMyProfile(trimmed, false)
-                        savedNick = trimmed
-                        showSavedFlash = true
-                    }
-                    .padding(4.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Check,
-                    contentDescription = "Сохранить",
-                    tint = if (nickDirty) AccentLime else TextSecondary,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-        // Network help — Expedition mirror on profile
+        Spacer(modifier = Modifier.height(20.dp))
         val helpSnap by GamificationStore.snap.collectAsState()
         Column(
             modifier = Modifier
@@ -1985,15 +2012,29 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                     Text(S.livesSaved(lang), color = TextSecondary, style = Typography.labelSmall)
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(S.helpedFeeling(lang), color = TextSecondary, style = Typography.labelSmall)
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        SettingsNavRow(S.cosmetics(lang), onOpenExpedition)
+        SettingsNavRow(S.inviteFriends(lang)) { showInvite = true }
+        SettingsNavRow(S.settings(lang), onOpenSettings)
+        SettingsNavRow(S.aboutProject(lang), onOpenAbout)
+        SettingsNavRow(S.scanQr(lang)) {
+            val options = ScanOptions()
+            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            options.setCameraId(0)
+            options.setBeepEnabled(false)
+            options.setBarcodeImageEnabled(true)
+            options.setCaptureActivity(CustomScannerActivity::class.java)
+            scanLauncher.launch(options)
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
-        // QR encodes contact payload (id + public key + nick + optional av)
+        Text(S.showQr(lang), style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
         val qrBitmap = remember(contactQr) {
             generateQrCode(contactQr, 512)?.asImageBitmap()
         }
-        
         if (qrBitmap != null) {
             Box(
                 modifier = Modifier
@@ -2004,78 +2045,12 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             ) {
                 androidx.compose.foundation.Image(
                     bitmap = qrBitmap,
-                    contentDescription = "QR Code",
+                    contentDescription = null,
                     modifier = Modifier.fillMaxSize()
                 )
             }
         }
-        Spacer(modifier = Modifier.height(32.dp))
-        Text(S.scanContact(lang), style = Typography.bodyMedium, color = TextSecondary)
-        Text(
-            if (lang == "en") "QR is optional — contacts sync when you meet online or nearby."
-            else "QR — дополнительно. Контакты синхронизируются сами при встрече в сети или рядом.",
-            color = TextSecondary,
-            style = Typography.labelSmall,
-            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = { 
-            val options = ScanOptions()
-            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            options.setCameraId(0)
-            options.setBeepEnabled(false)
-            options.setBarcodeImageEnabled(true)
-            options.setCaptureActivity(CustomScannerActivity::class.java)
-            scanLauncher.launch(options)
-        }) {
-            Icon(Icons.Default.Search, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(24.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(S.scanQr(lang), color = TextPrimary, style = Typography.titleMedium)
-        }
-
-        Spacer(modifier = Modifier.height(28.dp))
-        Text(S.networkMode(lang), style = Typography.labelSmall, color = TextSecondary)
-        Spacer(modifier = Modifier.height(8.dp))
-        val dutyPreset by com.blink.dtn.ble.MeshDutyPrefs.preset.collectAsState()
-        LaunchedEffect(Unit) {
-            com.blink.dtn.ble.MeshDutyPrefs.init(context)
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            com.blink.dtn.ble.MeshDutyPreset.entries.forEach { p ->
-                val selected = dutyPreset == p
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .glassPanel(corner = 12.dp, strong = selected)
-                        .background(if (selected) AccentLime.copy(alpha = 0.22f) else Color.Transparent)
-                        .bounceClick {
-                            viewModel.setDutyPreset(p)
-                            Toast.makeText(context, S.modeSet(lang, if (lang == "en") p.labelEn else p.labelRu), Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (lang == "en") p.labelEn else p.labelRu,
-                        color = if (selected) AccentLime else TextSecondary,
-                        style = Typography.labelSmall
-                    )
-                }
-            }
-        }
-        Text(
-            when (dutyPreset) {
-                com.blink.dtn.ble.MeshDutyPreset.ECONOMY -> S.modeEconomy(lang)
-                com.blink.dtn.ble.MeshDutyPreset.MAX -> S.modeMax(lang)
-                else -> S.modeBalance(lang)
-            },
-            color = TextSecondary,
-            style = Typography.labelSmall,
-            modifier = Modifier.padding(top = 6.dp)
-        )
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 

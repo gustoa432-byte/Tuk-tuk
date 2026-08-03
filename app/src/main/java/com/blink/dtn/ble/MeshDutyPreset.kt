@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class MeshDutyPreset(val id: String, val labelRu: String, val labelEn: String) {
     ECONOMY("economy", "Экономия", "Economy"),
     NORMAL("normal", "Норма", "Normal"),
-    MAX("max", "Макс. сеть", "Max network");
+    MAX("max", "Максимум", "Maximum");
 
     companion object {
         fun fromId(id: String?): MeshDutyPreset =

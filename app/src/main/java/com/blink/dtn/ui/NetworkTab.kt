@@ -16,9 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -105,6 +103,13 @@ fun NetworkTab(viewModel: BLinkViewModel) {
         NetworkStatusBanner(isConnected = snap.sloganActive || peerCount > 0)
 
         Spacer(modifier = Modifier.height(16.dp))
+        Text(S.connectionStatus(lang), style = Typography.labelSmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        ConnectionStatusRow(S.connectionPeople(lang), peerCount > 0 || snap.blePeers > 0, lang)
+        ConnectionStatusRow(S.connectionNearby(lang), snap.wifiDirectReady, lang)
+        ConnectionStatusRow(S.connectionInternet(lang), snap.internetOnline && snap.vpsConfigured, lang)
+
+        Spacer(modifier = Modifier.height(16.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -115,7 +120,7 @@ fun NetworkTab(viewModel: BLinkViewModel) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text(S.howMessagesTravel(lang), style = Typography.labelSmall, color = TextSecondary)
+        Text(S.lastRoute(lang), style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -124,17 +129,6 @@ fun NetworkTab(viewModel: BLinkViewModel) {
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = when (snap.preferred) {
-                    RoutePath.INTERNET -> Icons.Default.Cloud
-                    RoutePath.WIFI_DIRECT -> Icons.Default.Wifi
-                    RoutePath.BLE -> Icons.Default.Bluetooth
-                },
-                contentDescription = null,
-                tint = AccentLime,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(
                     humanPathLabel(snap.preferred, lang),
@@ -235,9 +229,34 @@ private fun looksLikeTechId(s: String): Boolean {
 }
 
 fun humanPathLabel(path: RoutePath, lang: String): String = when (path) {
-    RoutePath.INTERNET -> if (lang == "en") "Through the internet" else "Через интернет"
-    RoutePath.WIFI_DIRECT -> if (lang == "en") "Through nearby Wi‑Fi" else "Через ближайший Wi‑Fi"
-    RoutePath.BLE -> if (lang == "en") "Through people nearby" else "Через людей рядом"
+    RoutePath.INTERNET -> S.pathInternet(lang)
+    RoutePath.WIFI_DIRECT -> S.pathNearbyGroup(lang)
+    RoutePath.BLE -> S.pathPeople(lang)
+}
+
+@Composable
+private fun ConnectionStatusRow(label: String, on: Boolean, lang: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .glassPanel(corner = 12.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(if (on) AccentLime else DividerColor, CircleShape)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(label, color = TextPrimary, style = Typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            if (on) S.connectionOn(lang) else S.connectionOff(lang),
+            color = if (on) AccentLime else TextSecondary,
+            style = Typography.labelSmall
+        )
+    }
 }
 
 @Composable
@@ -269,9 +288,9 @@ fun MessageTrackerStrip(
         TrackerLine()
         TrackerNode(
             when (path) {
-                RoutePath.INTERNET -> if (lang == "en") "Net" else "Сеть"
-                RoutePath.WIFI_DIRECT -> "Wi‑Fi"
-                RoutePath.BLE -> if (lang == "en") "People" else "Люди"
+                RoutePath.INTERNET -> S.pathInternetShort(lang)
+                RoutePath.WIFI_DIRECT -> S.pathNearbyShort(lang)
+                RoutePath.BLE -> S.pathPeopleShort(lang)
             },
             accent = true
         )

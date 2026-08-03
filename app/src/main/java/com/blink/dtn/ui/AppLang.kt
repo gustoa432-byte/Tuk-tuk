@@ -66,7 +66,7 @@ object S {
         "Example: https://your-server:8080 — leave empty; TukTuk will still find a path through people"
     else
         "Например: https://ваш-сервер:8080 — можно пусто; TukTuk всё равно найдёт путь через людей"
-    fun vpsSaved(lang: String) = if (lang == LANG_EN) "VPS URL saved" else "VPS URL сохранён"
+    fun vpsSaved(lang: String) = if (lang == LANG_EN) "Delivery server saved" else "Сервер доставки сохранён"
     fun messageTracker(lang: String) = if (lang == LANG_EN) "Delivery tracker" else "Трекер доставки"
 
     // Actions
@@ -228,9 +228,9 @@ object S {
     // Expedition / gamification
     fun expedition(lang: String) = if (lang == LANG_EN) "Expedition" else "Экспедиция"
     fun expeditionTagline(lang: String) = if (lang == LANG_EN)
-        "You’re a courier. A message is a package. Your phone is a network node."
+        "You’re a courier. A message is a package. Your phone helps the network."
     else
-        "Ты курьер. Сообщение — посылка. Телефон — узел сети."
+        "Ты курьер. Сообщение — посылка. Телефон помогает сети."
     fun helpedFeeling(lang: String) = if (lang == LANG_EN)
         "After a relay you should feel: I helped the network."
     else
@@ -324,5 +324,80 @@ object S {
     else
         "Помог передать $n"
     fun nearbyNow(lang: String) = if (lang == LANG_EN) "Nearby now" else "Сейчас рядом"
+
+    // Settings hub / invite / about / contacts (product UX)
+    fun settingsAccount(lang: String) = if (lang == LANG_EN) "Account" else "Аккаунт"
+    fun settingsPrivacy(lang: String) = if (lang == LANG_EN) "Privacy" else "Конфиденциальность"
+    fun settingsNotifications(lang: String) = if (lang == LANG_EN) "Notifications" else "Уведомления"
+    fun settingsAppearance(lang: String) = if (lang == LANG_EN) "Appearance" else "Внешний вид"
+    fun settingsNetwork(lang: String) = if (lang == LANG_EN) "Connection" else "Соединение"
+    fun settingsAbout(lang: String) = if (lang == LANG_EN) "About" else "О приложении"
+    fun settingsAccountBody(lang: String) = if (lang == LANG_EN)
+        "Language and your identity on this device."
+    else
+        "Язык и ваша личность на этом устройстве."
+    fun settingsPrivacyBody(lang: String) = if (lang == LANG_EN)
+        "Private chats are encrypted end-to-end. Public channels are open to people nearby."
+    else
+        "Личные диалоги шифруются на концах. Публичные каналы открыты людям рядом."
+    fun settingsNotificationsBody(lang: String) = if (lang == LANG_EN)
+        "System notifications for new messages. Fine-grained mute comes later."
+    else
+        "Системные уведомления о новых сообщениях. Тонкая настройка тишины — позже."
+    fun settingsNetworkHint(lang: String) = if (lang == LANG_EN)
+        "Optional delivery server and how actively the phone helps nearby. Status lives on the Network tab."
+    else
+        "Необязательный сервер доставки и активность телефона рядом. Статус — на вкладке Сеть."
+    fun deliveryServer(lang: String) = if (lang == LANG_EN) "Delivery server (optional)" else "Сервер доставки (необязательно)"
+    fun deliveryServerHint(lang: String) = if (lang == LANG_EN)
+        "Leave empty — Tuk-Tuk still finds a path through people"
+    else
+        "Можно пусто — Tuk-Tuk всё равно найдёт путь через людей"
+    fun deliveryServerSaved(lang: String) = if (lang == LANG_EN) "Delivery server saved" else "Сервер доставки сохранён"
+    fun aboutProject(lang: String) = if (lang == LANG_EN) "About the project" else "О проекте"
+    fun versionLabel(lang: String) = if (lang == LANG_EN) "Version" else "Версия"
+    fun openGithub(lang: String) = if (lang == LANG_EN) "GitHub" else "GitHub"
+    fun openSource(lang: String) = if (lang == LANG_EN) "Open source" else "Открытый код"
+    fun supportProject(lang: String) = if (lang == LANG_EN) "Support the project" else "Поддержать проект"
+    fun projectHistory(lang: String) = if (lang == LANG_EN) "Project history" else "История проекта"
+    fun licenseHint(lang: String) = if (lang == LANG_EN)
+        "License and source are on GitHub."
+    else
+        "Лицензия и исходники — на GitHub."
+    fun inviteFriends(lang: String) = if (lang == LANG_EN) "Invite friends" else "Пригласить друзей"
+    fun inviteFriendsHint(lang: String) = if (lang == LANG_EN)
+        "Share the app — more people nearby means stronger delivery."
+    else
+        "Поделитесь приложением — больше людей рядом значит надёжнее доставка."
+    fun shareApk(lang: String) = if (lang == LANG_EN) "Share APK" else "Поделиться APK"
+    fun shareLink(lang: String) = if (lang == LANG_EN) "Share link" else "Поделиться ссылкой"
+    fun showQr(lang: String) = if (lang == LANG_EN) "Show QR" else "Показать QR"
+    fun copyLink(lang: String) = if (lang == LANG_EN) "Copy link" else "Скопировать ссылку"
+    fun linkCopied(lang: String) = if (lang == LANG_EN) "Link copied" else "Ссылка скопирована"
+    fun sendViaTelegram(lang: String) = if (lang == LANG_EN) "Send via Telegram" else "Отправить через Telegram"
+    fun sendViaVk(lang: String) = if (lang == LANG_EN) "Send via VK" else "Отправить через VK"
+    fun sendViaWhatsApp(lang: String) = if (lang == LANG_EN) "Send via WhatsApp" else "Отправить через WhatsApp"
+    fun yourId(lang: String) = if (lang == LANG_EN) "Your ID" else "Ваш ID"
+    fun tapCopyId(lang: String) = if (lang == LANG_EN) "Tap to copy ID" else "Нажми, чтобы скопировать ID"
+    fun contacts(lang: String) = if (lang == LANG_EN) "Contacts" else "Контакты"
+    fun favorites(lang: String) = if (lang == LANG_EN) "Favorites" else "Избранные"
+    fun recent(lang: String) = if (lang == LANG_EN) "Recent" else "Недавние"
+    fun addById(lang: String) = if (lang == LANG_EN) "Add by ID" else "Добавить по ID"
+    fun connectionStatus(lang: String) = if (lang == LANG_EN) "Status" else "Статус"
+    fun lastRoute(lang: String) = if (lang == LANG_EN) "Last route" else "Последний маршрут"
+    fun pathInternet(lang: String) = if (lang == LANG_EN) "Through the internet" else "Через интернет"
+    fun pathNearbyGroup(lang: String) = if (lang == LANG_EN) "Through a nearby group" else "Через ближнюю группу"
+    fun pathPeople(lang: String) = if (lang == LANG_EN) "Through people nearby" else "Через людей рядом"
+    fun pathInternetShort(lang: String) = if (lang == LANG_EN) "Internet" else "Интернет"
+    fun pathNearbyShort(lang: String) = if (lang == LANG_EN) "Nearby" else "Рядом"
+    fun pathPeopleShort(lang: String) = if (lang == LANG_EN) "People" else "Люди"
+    fun connectionInternet(lang: String) = if (lang == LANG_EN) "Internet" else "Интернет"
+    fun connectionNearby(lang: String) = if (lang == LANG_EN) "Nearby link" else "Ближняя связь"
+    fun connectionPeople(lang: String) = if (lang == LANG_EN) "People nearby" else "Люди рядом"
+    fun connectionOn(lang: String) = if (lang == LANG_EN) "Available" else "Есть"
+    fun connectionOff(lang: String) = if (lang == LANG_EN) "Not now" else "Сейчас нет"
+    fun emoji(lang: String) = if (lang == LANG_EN) "Emoji" else "Эмодзи"
+    fun attach(lang: String) = if (lang == LANG_EN) "Attach" else "Вложение"
+    fun voiceSoon(lang: String) = if (lang == LANG_EN) "Voice messages soon" else "Голосовые — скоро"
 }
 
