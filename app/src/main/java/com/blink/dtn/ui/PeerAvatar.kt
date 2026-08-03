@@ -3,9 +3,12 @@ package com.blink.dtn.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,9 +38,18 @@ fun PeerAvatar(
     val dinoRes = remember(uid.ifBlank { label }) {
         AvatarHelper.getDefaultAvatarForUid(uid.ifBlank { label })
     }
+    val gm by GamificationStore.snap.collectAsState()
+    val frame = CosmeticApply.frameColor(gm.frameId)
     Box(
         modifier = modifier
             .size(size)
+            .then(
+                if (frame != null) Modifier
+                    .clip(CircleShape)
+                    .background(frame)
+                    .padding(2.dp)
+                else Modifier
+            )
             .clip(CircleShape)
             .background(DividerColor),
         contentAlignment = Alignment.Center

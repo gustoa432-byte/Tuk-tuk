@@ -140,12 +140,26 @@ fun MessageVoyageDialog(
         ?: report?.journey?.lastOrNull()?.elapsedMs
     val helpers = report?.route
         ?.mapNotNull { hop ->
-            hop.nodeId?.let { PeerDirectory.labelFor(it) }
-                ?.takeIf { !it.startsWith("Node ", ignoreCase = true) }
+            hop.nodeId?.let { PeerDirectory.humanLabel(it, lang) }
+                ?.takeIf { it.isNotBlank() }
         }
         ?.distinct()
-        ?.take(4)
+        ?.take(6)
         .orEmpty()
+    val accepted = helpers.firstOrNull()
+    val storySteps = remember(report, lang) {
+        val fromJourney = report?.journey.orEmpty().map { humanizeJourney(it.emojiTitle, lang) }
+        val fromEvents = report?.let { r ->
+            // Fall back to humanized event stages when journey is thin
+            emptyList<String>()
+        }.orEmpty()
+        (fromJourney + fromEvents).distinct().ifEmpty {
+            listOf(
+                if (lang == "en") "· Looking for a path" else "· Ищем путь",
+                if (lang == "en") "· Waiting for people nearby" else "· Ждём людей рядом"
+            )
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -186,10 +200,16 @@ fun MessageVoyageDialog(
                         formatDuration(elapsed, lang)
                     )
                 }
+                if (accepted != null) {
+                    StoryLine(
+                        if (lang == "en") "First to take it" else "Кто принял первым",
+                        accepted
+                    )
+                }
                 if (helpers.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        if (lang == "en") "People who helped" else "Кто помог",
+                        if (lang == "en") "Who carried / forwarded" else "Кто нёс / переслал",
                         style = Typography.labelMedium,
                         color = TextPrimary
                     )
@@ -207,20 +227,14 @@ fun MessageVoyageDialog(
                         style = Typography.labelSmall
                     )
                 }
-                if (report?.journey?.isNotEmpty() == true) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        if (lang == "en") "Story" else "История",
-                        style = Typography.labelMedium,
-                        color = TextPrimary
-                    )
-                    report.journey.take(8).forEach { step ->
-                        Text(
-                            humanizeJourney(step.emojiTitle, lang),
-                            color = TextSecondary,
-                            style = Typography.labelSmall
-                        )
-                    }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    if (lang == "en") "Full story" else "Полная история",
+                    style = Typography.labelMedium,
+                    color = TextPrimary
+                )
+                storySteps.take(12).forEach { step ->
+                    Text(step, color = TextSecondary, style = Typography.labelSmall)
                 }
             }
         },

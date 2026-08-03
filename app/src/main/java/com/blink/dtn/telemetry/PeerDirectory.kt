@@ -25,11 +25,40 @@ object PeerDirectory {
         load()
     }
 
-    fun labelFor(id: String): String = get(id)?.displayName ?: if (id.length <= 8) "Node $id" else "Node ${id.takeLast(4)}"
+    fun labelFor(id: String): String {
+        val name = get(id)?.displayName?.trim().orEmpty()
+        if (name.isNotEmpty() && !name.startsWith("Node ", ignoreCase = true) && !looksLikeMac(name)) {
+            return name
+        }
+        return "" // UI maps empty → Neighbor / Friend — never show Node/MAC/UUID
+    }
+
+    fun humanLabel(id: String, lang: String = "ru"): String {
+        val raw = labelFor(id)
+        if (raw.isNotEmpty()) return raw
+        return if (lang == "en") "Neighbor" else "Сосед"
+    }
+
+    private fun looksLikeMac(s: String): Boolean =
+        s.contains(':') && s.length >= 11
 
     fun get(id: String): DeviceHistoryEntry? = peers[id]
 
     fun snapshot(): List<DeviceHistoryEntry> = peers.values.sortedByDescending { it.lastSeen }
+
+    /** Recent human-facing neighbors (no MAC / Node ids in display). */
+    fun liveNeighbors(limit: Int = 16): List<Pair<String, String>> {
+        return snapshot()
+            .asSequence()
+            .filter { entry ->
+                val ageOk = System.currentTimeMillis() - entry.lastSeen < 15 * 60_000L
+                val name = entry.displayName
+                ageOk && name.isNotBlank() && !name.startsWith("Node ", ignoreCase = true) && !looksLikeMac(name)
+            }
+            .take(limit)
+            .map { it.nodeId to it.displayName }
+            .toList()
+    }
 
     fun noteBleDevice(device: BluetoothDevice, rssi: Int? = null) {
         val id = device.address
@@ -129,7 +158,7 @@ object PeerDirectory {
         persist()
     }
 
-    private fun short(id: String) = if (id.length <= 8) "Node $id" else "Node ${id.takeLast(4)}"
+    private fun short(id: String) = "peer"
 
     private fun load() {
         val f = file ?: return

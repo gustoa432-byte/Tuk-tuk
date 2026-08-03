@@ -19,6 +19,7 @@ object GamificationStore {
     private const val KEY_FRAME = "gm_frame"
     private const val KEY_NICK_COLOR = "gm_nick_color"
     private const val KEY_UNLOCKED = "gm_unlocked"
+    private const val KEY_DINO = "gm_dino"
 
     @Volatile
     private var appContext: Context? = null
@@ -30,7 +31,9 @@ object GamificationStore {
         val themeId: String = "default",
         val frameId: String = "none",
         val nickColorId: String = "default",
-        val unlocked: Set<String> = setOf("default", "none", "dino_basic")
+        val dinoId: String = "dino_basic",
+        val unlocked: Set<String> = setOf("default", "none", "dino_basic"),
+        val lastHelpedAt: Long = 0L
     )
 
     private val _snap = MutableStateFlow(Snapshot())
@@ -49,6 +52,7 @@ object GamificationStore {
             themeId = p.getString(KEY_THEME, "default") ?: "default",
             frameId = p.getString(KEY_FRAME, "none") ?: "none",
             nickColorId = p.getString(KEY_NICK_COLOR, "default") ?: "default",
+            dinoId = p.getString(KEY_DINO, "dino_basic") ?: "dino_basic",
             unlocked = unlocked
         )
         maybeUnlock(context)
@@ -58,7 +62,9 @@ object GamificationStore {
     fun noteHelpedRelay(context: Context? = appContext) {
         val ctx = context ?: return
         if (appContext == null) init(ctx)
-        bump(ctx, KEY_HELPED) { it.copy(helped = it.helped + 1) }
+        bump(ctx, KEY_HELPED) {
+            it.copy(helped = it.helped + 1, lastHelpedAt = System.currentTimeMillis())
+        }
     }
 
     fun noteReceived(context: Context? = appContext) {
@@ -88,6 +94,10 @@ object GamificationStore {
             "nick" -> {
                 p.edit().putString(KEY_NICK_COLOR, id).apply()
                 _snap.value.copy(nickColorId = id)
+            }
+            "dino" -> {
+                p.edit().putString(KEY_DINO, id).apply()
+                _snap.value.copy(dinoId = id)
             }
             else -> _snap.value
         }

@@ -215,10 +215,12 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val isConnected = vkActive || peerCount > 0 || networkLive.sloganActive
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
+    val gm by GamificationStore.snap.collectAsState()
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
         GamificationStore.init(context)
+        ReactionStore.init(context)
     }
     LaunchedEffect(selectedTab) {
         if (selectedTab != MainTab.Profile) {
@@ -250,7 +252,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().background(CosmeticApply.backdropTint(gm.themeId))) {
         AppRootBackdrop()
         Scaffold(
             containerColor = Color.Transparent,
@@ -1336,6 +1338,32 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
 
 
 @Composable
+private fun ChannelChip(
+    meta: com.blink.dtn.ble.MeshRoom.RoomMeta,
+    selected: Boolean,
+    lang: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .glassPanel(corner = 14.dp, strong = selected)
+            .background(
+                if (selected) AccentLime.copy(alpha = 0.22f)
+                else Color.Transparent
+            )
+            .bounceClick(onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            if (lang == "en") meta.titleEn else meta.titleRu,
+            color = if (selected) AccentLime else TextSecondary,
+            style = Typography.labelSmall
+        )
+    }
+}
+
+@Composable
 fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Unit) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
@@ -1361,25 +1389,20 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
                 .padding(top = 6.dp, bottom = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            items(com.blink.dtn.ble.MeshRoom.ALL) { meta ->
-                val isSelected = selectedRoom == meta.id
-                Box(
-                    modifier = Modifier
-                        .glassPanel(corner = 14.dp, strong = isSelected)
-                        .background(
-                            if (isSelected) com.blink.dtn.ui.theme.AccentLime.copy(alpha = 0.22f)
-                            else androidx.compose.ui.graphics.Color.Transparent
-                        )
-                        .bounceClick { viewModel.selectRoom(meta.id) }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (lang == "en") meta.titleEn else meta.titleRu,
-                        color = if (isSelected) com.blink.dtn.ui.theme.AccentLime else TextSecondary,
-                        style = Typography.labelSmall
-                    )
-                }
+            items(com.blink.dtn.ble.MeshRoom.PRIMARY) { meta ->
+                ChannelChip(meta, selectedRoom == meta.id, lang) { viewModel.selectRoom(meta.id) }
+            }
+            item {
+                Text(
+                    "·",
+                    color = TextSecondary,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 5.dp)
+                )
+            }
+            items(com.blink.dtn.ble.MeshRoom.ALL.filter { room ->
+                com.blink.dtn.ble.MeshRoom.PRIMARY.none { it.id == room.id }
+            }) { meta ->
+                ChannelChip(meta, selectedRoom == meta.id, lang) { viewModel.selectRoom(meta.id) }
             }
         }
         Text(
@@ -1512,7 +1535,12 @@ fun MessageBubble(
     senderAvatarBlob: ByteArray? = null
 ) {
     val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    val reactions by ReactionStore.map.collectAsState()
+    val reaction = reactions[msg.id]
     val isMine = msg.senderId == myNodeId || msg.isMine
+    val gm by GamificationStore.snap.collectAsState()
+    val nickTint = if (isMine) CosmeticApply.nickColor(gm.nickColorId) else TextPrimary
     val canBlockSender = !isMine && msg.type == "PUBLIC" && onBlockUser != null
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = formatter.format(Date(msg.timestamp))
@@ -1547,7 +1575,10 @@ fun MessageBubble(
             onSelect = onLongPressSelect,
             onDeleteLocal = onDeleteLocal,
             onCancelSend = onCancelSend,
-            onBlockUser = onBlockUser
+            onBlockUser = onBlockUser,
+            onReact = { emoji ->
+                ReactionStore.set(context, msg.id, emoji)
+            }
         )
     }
 
@@ -1560,7 +1591,7 @@ fun MessageBubble(
                 onClick = {
                     when {
                         selecting -> onToggleSelect?.invoke()
-                        isMine -> showVoyage = true
+                        else -> showVoyage = true
                     }
                 },
                 onLongClick = {
@@ -1628,8 +1659,18 @@ fun MessageBubble(
                 EmojiText(
                     text = msg.text,
                     style = Typography.bodyLarge,
-                    color = TextPrimary
+                    color = nickTint
                 )
+                if (!reaction.isNullOrBlank()) {
+                    Text(
+                        reaction,
+                        style = Typography.titleMedium,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .background(AccentLime.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
                 Row(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
@@ -1792,12 +1833,11 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                // Full ID — tap to copy
+                // ID secondary — tap to copy (not a hero)
                 Text(
-                    text = viewModel.myNodeId,
+                    text = if (lang == "en") "Tap to copy ID" else "Нажми, чтобы скопировать ID",
                     color = TextSecondary,
                     style = Typography.labelSmall,
-                    maxLines = 2,
                     modifier = Modifier
                         .bounceClick {
                             clipboardManager.setText(AnnotatedString(viewModel.myNodeId))

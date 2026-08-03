@@ -81,7 +81,10 @@ data class DeviceHistoryEntry(
     val averageDelayMs: Long? = null,
     val errorCount: Int = 0
 ) {
-    val displayName: String get() = device.ifBlank { "Node ${nodeId.takeLast(4)}" }
+    val displayName: String
+        get() = device.trim().takeIf {
+            it.isNotBlank() && !it.startsWith("Node ", ignoreCase = true) && !it.contains(':')
+        }.orEmpty()
 }
 
 @Serializable

@@ -8,6 +8,7 @@ Endpoints:
   POST /v1/register   {nodeId, nick, pubkey}
   POST /v1/push       {envelopes:[...]}
   GET  /v1/pull?nodeId=&since=
+  GET  /v1/directory  → known nodes (contact sync)
   GET  /v1/health
 """
 
@@ -65,6 +66,23 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/health":
             with LOCK:
                 self._send(200, {"ok": True, "nodes": len(NODES), "envelopes": len(ENVELOPES)})
+            return
+        if parsed.path == "/v1/directory":
+            with LOCK:
+                self._send(
+                    200,
+                    {
+                        "nodes": [
+                            {
+                                "nodeId": n["nodeId"],
+                                "nick": n.get("nick") or "",
+                                "pubkey": n.get("pubkey") or "",
+                                "seenAt": n.get("seenAt") or 0,
+                            }
+                            for n in NODES.values()
+                        ]
+                    },
+                )
             return
         if parsed.path == "/v1/pull":
             qs = parse_qs(parsed.query)

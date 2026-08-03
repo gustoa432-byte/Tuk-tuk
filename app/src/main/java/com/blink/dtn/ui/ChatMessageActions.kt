@@ -61,7 +61,8 @@ fun MessageActionSheet(
     onSelect: (() -> Unit)?,
     onDeleteLocal: (() -> Unit)?,
     onCancelSend: (() -> Unit)?,
-    onBlockUser: (() -> Unit)?
+    onBlockUser: (() -> Unit)?,
+    onReact: ((String) -> Unit)? = null
 ) {
     val lang by AppLang.lang.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -101,6 +102,38 @@ fun MessageActionSheet(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(bottom = 10.dp)
             )
+            if (onReact != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ReactionStore.palette.forEach { emoji ->
+                        Text(
+                            emoji,
+                            style = Typography.titleLarge,
+                            modifier = Modifier.bounceClick {
+                                onReact(emoji)
+                                onDismiss()
+                            }.padding(4.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StickerPack.stickers.take(6).forEach { sticker ->
+                        Text(
+                            sticker,
+                            style = Typography.titleMedium,
+                            modifier = Modifier.bounceClick {
+                                onReact(sticker)
+                                onDismiss()
+                            }.padding(2.dp)
+                        )
+                    }
+                }
+            }
             HorizontalDivider(color = DividerColor.copy(alpha = 0.6f))
             Spacer(Modifier.height(4.dp))
             if (onReply != null) {

@@ -79,12 +79,11 @@ fun NetworkTab(viewModel: BLinkViewModel) {
     val shipment by MessageRouter.activeShipment.collectAsState()
     val peerCount by viewModel.peerCount.collectAsState()
     val pending by viewModel.pendingCount.collectAsState(0)
-    val peers = remember {
-        PeerDirectory.snapshot()
-            .filter { !it.device.contains(":", ignoreCase = false) || it.device.length < 20 }
-            .take(16)
+    // Live: re-read when peer count / router snap changes (not a one-shot remember).
+    val peers = remember(peerCount, snap.sloganActive, snap.blePeers) {
+        PeerDirectory.liveNeighbors(16)
     }
-    val hopsToday = remember {
+    val hopsToday = remember(peerCount, pending) {
         TraceStore.listRecent(80).sumOf { t ->
             t.events.count { e ->
                 e.stage.contains("TX", ignoreCase = true) ||
@@ -183,8 +182,8 @@ fun NetworkTab(viewModel: BLinkViewModel) {
         if (peers.isEmpty() && peerCount == 0) {
             Text(S.noPeopleNearby(lang), color = TextSecondary, style = Typography.bodySmall)
         } else {
-            peers.forEach { peer ->
-                val name = peer.displayName
+            peers.forEach { (nodeId, nameRaw) ->
+                val name = nameRaw
                     .takeIf { it.isNotBlank() && !looksLikeTechId(it) }
                     ?: (if (lang == "en") "Neighbor" else "Сосед")
                 Row(
@@ -206,10 +205,7 @@ fun NetworkTab(viewModel: BLinkViewModel) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(name, color = TextPrimary, style = Typography.bodyMedium)
                         Text(
-                            if (peer.packetsForwarded > 0)
-                                S.helpedRelayCount(lang, peer.packetsForwarded)
-                            else
-                                S.nearbyNow(lang),
+                            S.nearbyNow(lang),
                             color = TextSecondary,
                             style = Typography.labelSmall
                         )

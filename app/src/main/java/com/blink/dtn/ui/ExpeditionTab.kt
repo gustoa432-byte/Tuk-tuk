@@ -59,6 +59,24 @@ fun ExpeditionTab(viewModel: BLinkViewModel) {
         Text(S.expeditionTagline(lang), style = Typography.bodySmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(6.dp))
         Text(S.helpedFeeling(lang), style = Typography.labelSmall, color = AccentLime)
+        if (System.currentTimeMillis() - snap.lastHelpedAt < 60_000L && snap.lastHelpedAt > 0) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                if (lang == "en") "You just helped the network — thank you."
+                else "Ты только что помог сети — спасибо.",
+                color = AccentLime,
+                style = Typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 12.dp, strong = true)
+                    .padding(12.dp)
+            )
+        }
+        Text(
+            CosmeticApply.dinoBadge(snap.dinoId),
+            style = Typography.titleLarge,
+            modifier = Modifier.padding(top = 8.dp)
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
         Row(
@@ -132,6 +150,7 @@ fun ExpeditionTab(viewModel: BLinkViewModel) {
                 "theme" -> snap.themeId == item.id
                 "frame" -> snap.frameId == item.id
                 "nick" -> snap.nickColorId == item.id
+                "dino" -> snap.dinoId == item.id
                 else -> false
             }
             Row(

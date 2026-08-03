@@ -80,6 +80,7 @@ class VpsBridge private constructor(
                 refreshRouterSnapshot()
                 if (isConfigured() && VpsConfig.isOnline(context)) {
                     runCatching { register() }
+                    runCatching { syncDirectory() }
                     runCatching { performSync() }
                 } else {
                     reachable.set(false)
@@ -145,6 +146,49 @@ class VpsBridge private constructor(
             .build()
         client.newCall(req).execute().use { resp ->
             reachable.set(resp.isSuccessful)
+        }
+    }
+
+    /** Pull online directory → local contacts (same identity online ↔ mesh). */
+    private suspend fun syncDirectory() {
+        val req = Request.Builder()
+            .url("${baseUrl()}/v1/directory")
+            .get()
+            .header("X-Node-Id", myNodeId)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                reachable.set(false)
+                return
+            }
+            reachable.set(true)
+            val text = resp.body?.string().orEmpty()
+            if (text.isBlank()) return
+            val dir = json.decodeFromString<DirectoryResponse>(text)
+            for (node in dir.nodes) {
+                if (node.nodeId.isBlank() || node.nodeId == myNodeId) continue
+                val existing = dao.getProfileById(node.nodeId)
+                if (existing?.isBlocked == true) continue
+                val nick = node.nick.ifBlank { existing?.nickname.orEmpty() }
+                val profile = existing?.copy(
+                    nickname = if (node.nick.isNotBlank()) node.nick else existing.nickname,
+                    lastSeen = maxOf(existing.lastSeen, node.seenAt),
+                    publicKey = node.pubkey.ifBlank { existing.publicKey },
+                    trustStatus = if (existing.trustStatus == com.blink.dtn.db.UserProfile.TRUST_BLOCKED)
+                        existing.trustStatus
+                    else
+                        com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                ) ?: com.blink.dtn.db.UserProfile(
+                    userId = node.nodeId,
+                    nickname = nick.ifBlank { "Friend" },
+                    lastSeen = if (node.seenAt > 0) node.seenAt else System.currentTimeMillis(),
+                    isVip = false,
+                    publicKey = node.pubkey,
+                    trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
+                )
+                dao.insertOrUpdateProfile(profile)
+                com.blink.dtn.telemetry.PeerDirectory.noteNode(node.nodeId, profile.nickname)
+            }
         }
     }
 
@@ -267,6 +311,17 @@ class VpsBridge private constructor(
         val payloadB64: String,
         val ts: Long,
         val kind: String = "mesh_bytes"
+    )
+
+    @Serializable
+    private data class DirectoryResponse(val nodes: List<DirectoryNode> = emptyList())
+
+    @Serializable
+    private data class DirectoryNode(
+        val nodeId: String = "",
+        val nick: String = "",
+        val pubkey: String = "",
+        val seenAt: Long = 0L
     )
 
     @Serializable

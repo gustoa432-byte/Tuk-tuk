@@ -57,13 +57,13 @@ object MessageRouter {
             )
             blePeers > 0 -> RouteDecision(
                 RoutePath.BLE,
-                "Соседи по Bluetooth ($blePeers)",
-                "Bluetooth neighbors ($blePeers)"
+                "Люди рядом ($blePeers)",
+                "People nearby ($blePeers)"
             )
             else -> RouteDecision(
                 RoutePath.BLE,
-                "Ждём людей рядом (BLE DTN)",
-                "Waiting for nearby people (BLE DTN)"
+                "Ждём людей рядом",
+                "Waiting for people nearby"
             )
         }
     }
