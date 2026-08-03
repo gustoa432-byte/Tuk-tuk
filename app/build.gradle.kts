@@ -150,7 +150,7 @@ android {
         outputs.configureEach {
             val out = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
             out.outputFileName = if (name.contains("release", ignoreCase = true)) {
-                "tuktuk.v.0.2.apk"
+                "tuktuk.v.0.3.apk"
             } else {
                 "Tuktuk.apk"
             }
