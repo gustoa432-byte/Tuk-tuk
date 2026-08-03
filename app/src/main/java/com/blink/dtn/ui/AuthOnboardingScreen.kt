@@ -25,6 +25,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
@@ -37,6 +38,8 @@ import com.blink.dtn.auth.DinoNameGenerator
 import com.blink.dtn.auth.StubSocialAuth
 import com.blink.dtn.ui.theme.AccentLilac
 import com.blink.dtn.ui.theme.AccentLime
+import com.blink.dtn.ui.theme.BackgroundDark
+import com.blink.dtn.ui.theme.BackgroundMid
 import com.blink.dtn.ui.theme.DividerColor
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
@@ -66,6 +69,15 @@ fun AuthOnboardingScreen(
         onComplete(name, nick, provider)
     }
 
+    val bg = remember {
+        Brush.verticalGradient(listOf(BackgroundDark, BackgroundMid, BackgroundDark))
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(bg)
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -221,6 +233,7 @@ fun AuthOnboardingScreen(
             Text(S.authContinue(lang), color = AccentLime, style = Typography.titleMedium)
         }
         Spacer(modifier = Modifier.height(24.dp))
+    }
     }
 }
 

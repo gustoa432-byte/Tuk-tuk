@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.1.91"
+        versionCode = 22
+        versionName = "0.1.92"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
