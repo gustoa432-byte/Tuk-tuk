@@ -235,6 +235,11 @@ internal class BleRelayEngine(
             return
         }
 
+        if (message.type == Message.TYPE_PRIVATE_IMAGE) {
+            Log.w("ROUTE", "Skip mesh relay for PRIVATE_IMAGE ${message.id}")
+            return
+        }
+
         Log.d("ROUTE", "Processing message ${message.id} type=${message.type}")
         val peers = deps.peerDevices()
         deps.trace(

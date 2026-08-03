@@ -586,16 +586,101 @@ class BLinkViewModel(
     }
 
     /**
+     * Send a photo in a 1:1 chat via internet/VPS only. Never meshes.
+     * Without internet or VPS URL → toast + FAILED local row.
+     */
+    fun sendPrivatePhoto(uri: android.net.Uri, targetId: String, caption: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            try {
+                val online = com.blink.dtn.net.VpsConfig.isOnline(app)
+                val vpsConfigured = com.blink.dtn.net.VpsConfig.isConfigured(app)
+                if (!online || !vpsConfigured) {
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            app,
+                            if (!vpsConfigured)
+                                "Фото только через интернет — укажите VPS в профиле"
+                            else
+                                "Фото только через интернет — нет сети",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return@launch
+                }
+                val jpeg = ChatPhotoCompressor.compressToBytes(app, uri)
+                if (jpeg == null) {
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(app, "Не удалось сжать фото", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+                val draftId = MeshIdGenerator.next(myNodeId)
+                val file = ChatPhotoCompressor.writeBytes(app, draftId, jpeg) ?: run {
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(app, "Не удалось сохранить фото", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+                // Re-create with stable id matching file name
+                val msg = Message(
+                    id = draftId,
+                    type = Message.TYPE_PRIVATE_IMAGE,
+                    senderId = myNodeId,
+                    senderNick = myNick,
+                    targetId = targetId,
+                    text = caption.ifBlank { "📷" }.let { com.blink.dtn.ble.MeshLimits.clampText(it) },
+                    timestamp = System.currentTimeMillis(),
+                    ttl = 1,
+                    isMine = true,
+                    status = Message.STATUS_PENDING,
+                    receivedAt = System.currentTimeMillis(),
+                    mediaPath = file.absolutePath
+                )
+                dao.insertMessageWithConversation(msg)
+
+                val vps = com.blink.dtn.net.VpsBridge.getInstance(app, dao, bleMeshManager, myNodeId)
+                val ok = com.blink.dtn.router.MessageRouter.sendPhotoInternetOnly(
+                    messageId = msg.id,
+                    internetOnline = online,
+                    vpsConfigured = true
+                ) {
+                    vps.pushPrivateImage(msg, jpeg)
+                }
+                if (!ok) {
+                    dao.updateMessageStatus(msg.id, Message.STATUS_FAILED)
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(app, "Не удалось отправить фото", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("SEND", "Photo send crash", t)
+                com.blink.dtn.telemetry.ErrorJournal.record("SEND_PHOTO", t, context = app)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        app,
+                        "Photo failed: ${t.message ?: t.javaClass.simpleName}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    /**
      * Edit an own message on this device.
      * Still-queued / failed → update text and resend from queue.
      * Already sent/delivered → local edit only (mesh has no edit protocol yet).
      */
     fun editOwnMessage(messageId: String, newText: String) {
-        val trimmed = newText.trim()
+        val trimmed = com.blink.dtn.ble.MeshLimits.clampText(newText.trim())
         if (trimmed.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             val msg = dao.getMessageById(messageId) ?: return@launch
             if (msg.senderId != myNodeId && !msg.isMine) return@launch
+            if (msg.type == Message.TYPE_PRIVATE_IMAGE) return@launch
             val editedAt = System.currentTimeMillis()
             val resend = msg.status == Message.STATUS_PENDING ||
                 msg.status == Message.STATUS_IN_FLIGHT ||

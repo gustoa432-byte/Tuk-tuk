@@ -50,6 +50,14 @@ data class Message(
     @Transient @ColumnInfo(name = "reply_to_id") val replyToId: String? = null,
     /** Local-only: when this message was last edited on this device (0 = never). */
     @Transient @ColumnInfo(name = "edited_at") val editedAt: Long = 0L,
+    /**
+     * Local-only insertion / receive time on this device.
+     * Chat UI orders by this field so peer clock skew cannot invert the thread.
+     * Origin [timestamp] stays on the wire for TTL / display when clocks agree.
+     */
+    @Transient @ColumnInfo(name = "received_at") val receivedAt: Long = 0L,
+    /** Local-only absolute path to image file for PRIVATE_IMAGE (never on mesh). */
+    @Transient @ColumnInfo(name = "media_path") val mediaPath: String? = null,
 
     @Transient @ColumnInfo(name = "conversationId") var conversationId: String = ""
 ) {
@@ -62,5 +70,21 @@ data class Message(
         const val STATUS_PENDING_KEY = 4
         // End-to-end ACK received from the destination. Terminal good state for PRIVATE.
         const val STATUS_DELIVERED = 5
+
+        const val TYPE_PRIVATE = "PRIVATE"
+        const val TYPE_PRIVATE_IMAGE = "PRIVATE_IMAGE"
+        const val TYPE_PUBLIC = "PUBLIC"
+
+        /** Skew window: if origin clock differs from local order by more than this, show local time. */
+        const val DISPLAY_SKEW_MS = 2L * 60L * 60L * 1000L
     }
+
+    /** Clock shown on the bubble — origin time unless peer clock is badly skewed. */
+    fun displayClockMs(): Long {
+        if (receivedAt <= 0L) return timestamp
+        return if (kotlin.math.abs(timestamp - receivedAt) > DISPLAY_SKEW_MS) receivedAt else timestamp
+    }
+
+    /** Local sort / dialog preview key. */
+    fun localOrderMs(): Long = if (receivedAt > 0L) receivedAt else timestamp
 }

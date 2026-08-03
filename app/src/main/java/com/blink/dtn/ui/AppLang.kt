@@ -222,6 +222,8 @@ object S {
     else
         "® Разработано в Крыму. Для работы в любых условиях"
     fun feedbackBody(lang: String) = if (lang == LANG_EN) "Describe the bug or idea:\n\n" else "Опишите ошибку или идею:\n\n"
+    fun attachPhoto(lang: String) = if (lang == LANG_EN) "Photo" else "Фото"
+    fun photo(lang: String) = if (lang == LANG_EN) "Photo" else "Фото"
 
     // Expedition / gamification
     fun expedition(lang: String) = if (lang == LANG_EN) "Expedition" else "Экспедиция"

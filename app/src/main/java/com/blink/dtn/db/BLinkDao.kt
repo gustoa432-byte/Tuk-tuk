@@ -24,10 +24,20 @@ abstract class BLinkDao {
         }
         
         // Normalise legacy "general" room wire value → "1" on the way in
-        val normalisedMsg = if (msg.room == com.blink.dtn.ble.MeshRoom.LEGACY_GENERAL)
+        var normalisedMsg = if (msg.room == com.blink.dtn.ble.MeshRoom.LEGACY_GENERAL)
             msg.copy(room = com.blink.dtn.ble.MeshRoom.GENERAL)
         else msg
+        if (normalisedMsg.receivedAt <= 0L) {
+            normalisedMsg = normalisedMsg.copy(receivedAt = System.currentTimeMillis())
+        }
         normalisedMsg.conversationId = convId
+        val orderTs = normalisedMsg.localOrderMs()
+        val previewText = when {
+            normalisedMsg.type == Message.TYPE_PRIVATE_IMAGE ->
+                if (normalisedMsg.text.isBlank() || normalisedMsg.text == "📷") "📷 Фото"
+                else normalisedMsg.text
+            else -> normalisedMsg.text
+        }
 
         var conv = getConversationByIdInternal(convId)
         if (conv == null) {
@@ -37,15 +47,15 @@ abstract class BLinkDao {
                 conversationId = convId,
                 peerId = peerId,
                 displayName = displayName,
-                lastMessage = normalisedMsg.text,
-                lastTimestamp = normalisedMsg.timestamp,
+                lastMessage = previewText,
+                lastTimestamp = orderTs,
                 unreadCount = if (normalisedMsg.isMine) 0 else 1
             )
             insertConversationInternal(conv)
         } else {
             conv = conv.copy(
-                lastMessage = normalisedMsg.text,
-                lastTimestamp = maxOf(normalisedMsg.timestamp, conv.lastTimestamp),
+                lastMessage = previewText,
+                lastTimestamp = maxOf(orderTs, conv.lastTimestamp),
                 unreadCount = conv.unreadCount + if (normalisedMsg.isMine) 0 else 1
             )
             updateConversationInternal(conv)
@@ -102,7 +112,7 @@ abstract class BLinkDao {
               WHERE blocked_users.blockedUserId = messages.senderId
                  OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
           )
-        ORDER BY timestamp ASC
+        ORDER BY received_at ASC, id ASC
     """)
     abstract fun getPublicMessagesFlow(): Flow<List<Message>>
 
@@ -125,7 +135,7 @@ abstract class BLinkDao {
               WHERE blocked_users.blockedUserId = messages.senderId
                  OR (blocked_users.blockedUserId = '' AND blocked_users.blockedNick = messages.senderNick)
           )
-        ORDER BY timestamp ASC
+        ORDER BY received_at ASC, id ASC
     """)
     abstract fun getPublicMessagesForRoomFlow(room: String): Flow<List<Message>>
 
@@ -169,7 +179,7 @@ abstract class BLinkDao {
     @Query("SELECT COUNT(*) FROM messages WHERE type = 'PUBLIC' OR type = 'SYSTEM_ANNOUNCEMENT'")
     abstract suspend fun countPublicMessages(): Int
 
-    @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE (type = 'PRIVATE' OR type = 'PRIVATE_IMAGE') AND (targetId = :myNodeId OR senderNick = :myNick) ORDER BY received_at ASC, id ASC")
     abstract fun getPrivateMessagesFlow(myNodeId: String, myNick: String): Flow<List<Message>>
     
     @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
@@ -190,7 +200,7 @@ abstract class BLinkDao {
     @Query("DELETE FROM messages WHERE id = :id")
     abstract suspend fun deleteMessageById(id: String)
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY received_at DESC, id DESC LIMIT 1")
     abstract suspend fun getLatestMessageInConversation(conversationId: String): Message?
 
     /** Local-only delete; refreshes conversation preview when needed. */
@@ -204,8 +214,12 @@ abstract class BLinkDao {
         val latest = getLatestMessageInConversation(convId)
         updateConversationInternal(
             conv.copy(
-                lastMessage = latest?.text,
-                lastTimestamp = latest?.timestamp ?: conv.lastTimestamp
+                lastMessage = latest?.let {
+                    if (it.type == Message.TYPE_PRIVATE_IMAGE) {
+                        if (it.text.isBlank() || it.text == "📷") "📷 Фото" else it.text
+                    } else it.text
+                },
+                lastTimestamp = latest?.localOrderMs() ?: conv.lastTimestamp
             )
         )
     }
@@ -262,7 +276,7 @@ abstract class BLinkDao {
     @Query("SELECT * FROM messages WHERE status = 0")
     abstract suspend fun getPendingMessages(): List<Message>
 
-    @Query("SELECT * FROM messages WHERE status IN (0, 1) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE status IN (0, 1) AND type != 'PRIVATE_IMAGE' ORDER BY timestamp ASC")
     abstract suspend fun getQueuedMessages(): List<Message>
 
     

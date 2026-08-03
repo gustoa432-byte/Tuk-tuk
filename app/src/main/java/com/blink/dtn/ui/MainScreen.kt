@@ -45,6 +45,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Archive
@@ -55,6 +56,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -1328,10 +1331,22 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             }
         }
         
+        val photoPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null) {
+                viewModel.sendPrivatePhoto(uri, contactId, caption = messageText.trim())
+                messageText = ""
+            }
+        }
+
         ChatInputArea(
             text = messageText,
-            onTextChange = { if (it.length <= 140) messageText = it },
+            onTextChange = { if (it.length <= com.blink.dtn.ble.MeshLimits.MAX_TEXT_CHARS) messageText = it },
             sendLabel = if (editing != null) S.edit(lang) else S.send(lang),
+            onPickPhoto = if (editing == null) {
+                { photoPicker.launch("image/*") }
+            } else null,
             onSend = {
                 if (messageText.isNotBlank()) {
                     val editTarget = editing
@@ -1461,7 +1476,7 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
 
         ChatInputArea(
             text = messageText,
-            onTextChange = { if (it.length <= 140) messageText = it },
+            onTextChange = { if (it.length <= com.blink.dtn.ble.MeshLimits.MAX_TEXT_CHARS) messageText = it },
             onSend = {
                 if (messageText.isNotBlank()) {
                     viewModel.sendPublicMessage(messageText, selectedRoom)
@@ -1478,7 +1493,8 @@ fun ChatInputArea(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    sendLabel: String? = null
+    sendLabel: String? = null,
+    onPickPhoto: (() -> Unit)? = null
 ) {
     val lang by AppLang.lang.collectAsState()
     Row(
@@ -1487,6 +1503,23 @@ fun ChatInputArea(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.Bottom
     ) {
+        if (onPickPhoto != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .glassPanel(corner = 18.dp)
+                    .bounceClick { onPickPhoto() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Image,
+                    contentDescription = S.attachPhoto(lang),
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
         BasicTextField(
             value = text,
             onValueChange = onTextChange,
@@ -1558,7 +1591,7 @@ fun MessageBubble(
     val nickTint = if (isMine) CosmeticApply.nickColor(gm.nickColorId) else TextPrimary
     val canBlockSender = !isMine && msg.type == "PUBLIC" && onBlockUser != null
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-    val timeString = formatter.format(Date(msg.timestamp))
+    val timeString = formatter.format(Date(msg.displayClockMs()))
     var showActions by remember { mutableStateOf(false) }
     var showVoyage by remember { mutableStateOf(false) }
     val canCancel = isMine && (
@@ -1671,11 +1704,45 @@ fun MessageBubble(
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
-                EmojiText(
-                    text = msg.text,
-                    style = Typography.bodyLarge,
-                    color = nickTint
-                )
+                if (msg.type == Message.TYPE_PRIVATE_IMAGE && !msg.mediaPath.isNullOrBlank()) {
+                    val bmp = remember(msg.mediaPath) {
+                        runCatching {
+                            android.graphics.BitmapFactory.decodeFile(msg.mediaPath)
+                                ?.asImageBitmap()
+                        }.getOrNull()
+                    }
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = S.photo(lang),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                        )
+                        if (msg.text.isNotBlank() && msg.text != "📷") {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            EmojiText(
+                                text = msg.text,
+                                style = Typography.bodyLarge,
+                                color = nickTint
+                            )
+                        }
+                    } else {
+                        EmojiText(
+                            text = msg.text.ifBlank { "📷" },
+                            style = Typography.bodyLarge,
+                            color = nickTint
+                        )
+                    }
+                } else {
+                    EmojiText(
+                        text = msg.text,
+                        style = Typography.bodyLarge,
+                        color = nickTint
+                    )
+                }
                 if (!reaction.isNullOrBlank()) {
                     Text(
                         reaction,

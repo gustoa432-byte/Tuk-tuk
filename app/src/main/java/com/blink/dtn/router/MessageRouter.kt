@@ -150,4 +150,27 @@ object MessageRouter {
         notePath(messageId, RoutePath.BLE, if (blePeers > 0) "через Bluetooth" else "ждём соседей")
         return false
     }
+
+    /**
+     * Photos never fall back to mesh. Requires configured VPS + online.
+     * [push] performs the actual VPS upload; returns whether it left the device.
+     */
+    suspend fun sendPhotoInternetOnly(
+        messageId: String,
+        internetOnline: Boolean,
+        vpsConfigured: Boolean,
+        push: suspend () -> Boolean
+    ): Boolean {
+        if (!internetOnline || !vpsConfigured) {
+            notePath(messageId, RoutePath.INTERNET, "фото: нет интернета")
+            return false
+        }
+        val ok = push()
+        if (ok) {
+            notePath(messageId, RoutePath.INTERNET, "фото через интернет")
+        } else {
+            notePath(messageId, RoutePath.INTERNET, "фото: ошибка отправки")
+        }
+        return ok
+    }
 }

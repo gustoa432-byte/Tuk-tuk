@@ -131,6 +131,61 @@ class VpsBridge private constructor(
         }
     }
 
+    /**
+     * Internet-only photo: never meshes. Store-and-forward to [msg.targetId].
+     */
+    suspend fun pushPrivateImage(msg: Message, jpegBytes: ByteArray): Boolean {
+        val to = msg.targetId ?: return false
+        if (!isConfigured() || !VpsConfig.isOnline(context)) return false
+        if (jpegBytes.isEmpty() || jpegBytes.size > 400_000) return false
+        return try {
+            val payload = PrivateImagePayload(
+                id = msg.id,
+                from = msg.senderId.ifBlank { myNodeId },
+                to = to,
+                senderNick = msg.senderNick,
+                caption = msg.text,
+                timestamp = msg.timestamp,
+                imageB64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+            )
+            val envelope = VpsEnvelope(
+                id = msg.id,
+                from = myNodeId,
+                to = to,
+                payloadB64 = Base64.encodeToString(
+                    json.encodeToString(payload).toByteArray(Charsets.UTF_8),
+                    Base64.NO_WRAP
+                ),
+                ts = System.currentTimeMillis(),
+                kind = "private_image"
+            )
+            val body = json.encodeToString(PushRequest(listOf(envelope)))
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val req = Request.Builder()
+                .url("${baseUrl()}/v1/push")
+                .post(body)
+                .header("X-Node-Id", myNodeId)
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val ok = resp.isSuccessful
+                reachable.set(ok)
+                if (ok) {
+                    dao.updateMessageStatus(msg.id, Message.STATUS_SENT)
+                    dao.getMessageById(msg.id)?.let {
+                        it.isBridgeSynced = true
+                        dao.updateMessageInternal(it)
+                    }
+                    MessageRouter.notePath(msg.id, com.blink.dtn.router.RoutePath.INTERNET, "фото через интернет")
+                }
+                ok
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "pushPrivateImage failed: ${e.message}")
+            reachable.set(false)
+            false
+        }
+    }
+
     private fun baseUrl(): String = VpsConfig.baseUrl.value.trimEnd('/')
 
     private fun register() {
@@ -194,7 +249,10 @@ class VpsBridge private constructor(
 
     private suspend fun performSync() {
         // 1) Push unsynced DB messages as opaque best-effort JSON fallback
-        val unsynced = dao.getUnsyncedMessages().take(40)
+        //    (PRIVATE_IMAGE is pushed only via [pushPrivateImage] with JPEG bytes).
+        val unsynced = dao.getUnsyncedMessages()
+            .filter { it.type != Message.TYPE_PRIVATE_IMAGE }
+            .take(40)
         if (unsynced.isNotEmpty()) {
             val envelopes = unsynced.map { msg ->
                 VpsEnvelope(
@@ -262,10 +320,45 @@ class VpsBridge private constructor(
             return
         }
         when (env.kind) {
+            "private_image" -> {
+                val payload = runCatching {
+                    json.decodeFromString<PrivateImagePayload>(String(raw, Charsets.UTF_8))
+                }.getOrNull() ?: return
+                if (payload.to != myNodeId && payload.to.isNotBlank()) return
+                val jpeg = try {
+                    Base64.decode(payload.imageB64, Base64.DEFAULT)
+                } catch (_: Exception) {
+                    return
+                }
+                if (jpeg.isEmpty()) return
+                val file = com.blink.dtn.ui.ChatPhotoCompressor.writeBytes(context, payload.id, jpeg)
+                val now = System.currentTimeMillis()
+                val msg = Message(
+                    id = payload.id,
+                    type = Message.TYPE_PRIVATE_IMAGE,
+                    senderId = payload.from,
+                    senderNick = payload.senderNick,
+                    targetId = payload.to.ifBlank { myNodeId },
+                    text = payload.caption.ifBlank { "📷" },
+                    timestamp = payload.timestamp,
+                    ttl = 1,
+                    isMine = false,
+                    status = Message.STATUS_DELIVERED,
+                    receivedAt = now,
+                    mediaPath = file?.absolutePath,
+                    isBridgeSynced = true
+                )
+                dao.insertMessageWithConversation(msg)
+                // No mesh relay for photos.
+            }
             "message_json" -> {
                 val msg = runCatching {
                     json.decodeFromString<Message>(String(raw, Charsets.UTF_8))
                 }.getOrNull() ?: return
+                if (msg.type == Message.TYPE_PRIVATE_IMAGE) {
+                    // Image bytes missing in JSON fallback — ignore.
+                    return
+                }
                 msg.isBridgeSynced = true
                 dao.insertMessageWithConversation(msg)
                 if (msg.ttl > 1) {
@@ -311,6 +404,17 @@ class VpsBridge private constructor(
         val payloadB64: String,
         val ts: Long,
         val kind: String = "mesh_bytes"
+    )
+
+    @Serializable
+    private data class PrivateImagePayload(
+        val id: String,
+        val from: String,
+        val to: String,
+        val senderNick: String = "",
+        val caption: String = "📷",
+        val timestamp: Long = 0L,
+        val imageB64: String
     )
 
     @Serializable

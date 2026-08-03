@@ -375,6 +375,17 @@ class BleMeshManager private constructor(
 
     fun enqueueMessage(message: Message) {
         scope.launch {
+            // Photos are internet-only — never enter the BLE/Wi‑Fi Direct queue.
+            if (message.type == Message.TYPE_PRIVATE_IMAGE) {
+                Log.w("BLE_QUEUE", "Refused mesh enqueue for PRIVATE_IMAGE ${message.id}")
+                return@launch
+            }
+            // Mesh chat text hard cap (ciphertext for PRIVATE is not clamped here).
+            val message = if (message.type == "PUBLIC" && MeshLimits.exceedsTextLimit(message.text)) {
+                message.copy(text = MeshLimits.clampText(message.text))
+            } else {
+                message
+            }
             ensureTrace(message.id, message.type, message.senderId, message.targetId)
             // Mark messages we originate as already "seen" so that when the mesh
             // floods them back to us we drop the echo instead of re-inserting a

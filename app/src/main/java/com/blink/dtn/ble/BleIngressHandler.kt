@@ -83,6 +83,16 @@ internal class BleIngressHandler(
                 return@launch
             }
 
+            // Photos must never enter mesh chat ingress.
+            if (packet.type == Message.TYPE_PRIVATE_IMAGE) {
+                Log.w("DTN", "Dropped PRIVATE_IMAGE on mesh ingress ${packet.id}")
+                com.blink.dtn.telemetry.ErrorJournal.record(
+                    "MESH_DROP_IMAGE",
+                    detail = "id=${packet.id} from=${packet.senderId}"
+                )
+                return@launch
+            }
+
             if (com.blink.dtn.security.SecurityConfig.requiresAuthorSignature(packet.type)) {
                 val isValid = withContext(Dispatchers.Default) {
                     SecurityConfig.verifySignature(packet.text, packet.authorSignature)
@@ -112,6 +122,14 @@ internal class BleIngressHandler(
                     }
                 }
                 "PUBLIC", "SYSTEM_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT" -> {
+                    if (packet.type == "PUBLIC" && MeshLimits.exceedsTextLimit(packet.text)) {
+                        Log.w("DTN", "Dropped oversized PUBLIC ${packet.id} len=${packet.text.length}")
+                        com.blink.dtn.telemetry.ErrorJournal.record(
+                            "MESH_DROP_OVERSIZE",
+                            detail = "PUBLIC id=${packet.id} len=${packet.text.length}"
+                        )
+                        return@launch
+                    }
                     dao.insertMessageWithConversation(packet)
                     if (packet.type == "PUBLIC") {
                         com.blink.dtn.ui.GamificationStore.noteReceived()
@@ -382,6 +400,19 @@ internal class BleIngressHandler(
                 com.blink.dtn.telemetry.detailsOf("reason" to "decrypt_failed")
             )
             deps.enqueueProfileBroadcast()
+            return
+        }
+        if (MeshLimits.exceedsTextLimit(plainText)) {
+            Log.w("DTN", "Dropped oversized PRIVATE plaintext ${packet.id} len=${plainText.length}")
+            com.blink.dtn.telemetry.ErrorJournal.record(
+                "MESH_DROP_OVERSIZE",
+                detail = "PRIVATE id=${packet.id} len=${plainText.length}"
+            )
+            com.blink.dtn.telemetry.TraceStore.finish(
+                packet.id,
+                "Dropped",
+                com.blink.dtn.telemetry.detailsOf("reason" to "oversize_plaintext")
+            )
             return
         }
         deps.trace(

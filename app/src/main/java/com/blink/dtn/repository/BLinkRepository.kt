@@ -31,17 +31,19 @@ class BLinkRepository(
     }
 
     suspend fun createAndSavePublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL): Message {
+        val now = System.currentTimeMillis()
         val msg = Message(
             id = MeshIdGenerator.next(myNodeId),
             type = "PUBLIC",
             senderId = myNodeId,
             senderNick = myNick,
             targetId = null,
-            text = text,
+            text = com.blink.dtn.ble.MeshLimits.clampText(text),
             room = com.blink.dtn.ble.MeshRoom.normalise(room),
-            timestamp = System.currentTimeMillis(),
+            timestamp = now,
             ttl = 7,
-            isMine = true
+            isMine = true,
+            receivedAt = now
         )
         bLinkDao.insertMessageWithConversation(msg)
         return msg
@@ -54,18 +56,20 @@ class BLinkRepository(
         encryptedText: String? = null,
         replyToId: String? = null
     ): Pair<Message, Message?> {
+        val now = System.currentTimeMillis()
         val localMsg = Message(
             id = MeshIdGenerator.next(myNodeId),
             type = "PRIVATE",
             senderId = myNodeId,
             senderNick = myNick,
             targetId = targetId,
-            text = text, // Save plain text locally
-            timestamp = System.currentTimeMillis(),
+            text = com.blink.dtn.ble.MeshLimits.clampText(text),
+            timestamp = now,
             ttl = 7,
             isMine = true,
             status = if (isPendingKey) Message.STATUS_PENDING_KEY else Message.STATUS_PENDING,
-            replyToId = replyToId
+            replyToId = replyToId,
+            receivedAt = now
         )
         bLinkDao.insertMessageWithConversation(localMsg)
         
@@ -74,5 +78,29 @@ class BLinkRepository(
         } else null
         
         return Pair(localMsg, networkMsg)
+    }
+
+    suspend fun createAndSavePrivateImage(
+        caption: String,
+        targetId: String,
+        mediaPath: String
+    ): Message {
+        val now = System.currentTimeMillis()
+        val localMsg = Message(
+            id = MeshIdGenerator.next(myNodeId),
+            type = Message.TYPE_PRIVATE_IMAGE,
+            senderId = myNodeId,
+            senderNick = myNick,
+            targetId = targetId,
+            text = caption.ifBlank { "📷" },
+            timestamp = now,
+            ttl = 1, // never mesh-relay
+            isMine = true,
+            status = Message.STATUS_PENDING,
+            receivedAt = now,
+            mediaPath = mediaPath
+        )
+        bLinkDao.insertMessageWithConversation(localMsg)
+        return localMsg
     }
 }
