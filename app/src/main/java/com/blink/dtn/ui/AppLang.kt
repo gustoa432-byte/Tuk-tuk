@@ -57,12 +57,15 @@ object S {
     fun currentShipment(lang: String) = if (lang == LANG_EN) "Current message" else "Текущее сообщение"
     fun noShipment(lang: String) = if (lang == LANG_EN) "No message in flight" else "Сейчас ничего не летит"
     fun neighbors(lang: String) = if (lang == LANG_EN) "Neighbors" else "Соседи"
-    fun noNeighbors(lang: String) = if (lang == LANG_EN) "No peers yet — walk, wait, or open Wi‑Fi Direct" else "Пока нет соседей — подойдите ближе или откройте Wi‑Fi Direct"
-    fun vpsUrl(lang: String) = if (lang == LANG_EN) "VPS URL (online path)" else "VPS URL (онлайн-путь)"
-    fun vpsUrlHint(lang: String) = if (lang == LANG_EN)
-        "Example: https://your-server:8080 — leave empty to use only mesh"
+    fun noNeighbors(lang: String) = if (lang == LANG_EN)
+        "No one nearby yet — come closer or wait"
     else
-        "Например: https://ваш-сервер:8080 — пусто = только mesh"
+        "Пока никого рядом — подойдите ближе или подождите"
+    fun vpsUrl(lang: String) = if (lang == LANG_EN) "Delivery server (optional)" else "Сервер доставки (необязательно)"
+    fun vpsUrlHint(lang: String) = if (lang == LANG_EN)
+        "Example: https://your-server:8080 — leave empty; TukTuk will still find a path through people"
+    else
+        "Например: https://ваш-сервер:8080 — можно пусто; TukTuk всё равно найдёт путь через людей"
     fun vpsSaved(lang: String) = if (lang == LANG_EN) "VPS URL saved" else "VPS URL сохранён"
     fun messageTracker(lang: String) = if (lang == LANG_EN) "Delivery tracker" else "Трекер доставки"
 
@@ -160,12 +163,12 @@ object S {
     else
         "Доступна версия $version рядом"
     fun updatePeer(lang: String, nick: String) = if (lang == LANG_EN)
-        "From $nick · fast transfer via Wi-Fi Direct (experimental)"
+        "From $nick · faster nearby transfer (experimental)"
     else
-        "У $nick · быстрая передача по Wi‑Fi Direct (экспериментально)"
+        "У $nick · быстрая передача рядом (экспериментально)"
 
     // Network mode (battery)
-    fun networkMode(lang: String) = if (lang == LANG_EN) "Network mode (battery)" else "Режим сети (батарея)"
+    fun networkMode(lang: String) = if (lang == LANG_EN) "Battery / nearby activity" else "Батарея / активность рядом"
     fun modeEconomy(lang: String) = if (lang == LANG_EN)
         "Rare scan — network stays up, battery lasts."
     else

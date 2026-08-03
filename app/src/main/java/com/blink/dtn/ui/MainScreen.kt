@@ -40,6 +40,8 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Explore
@@ -47,7 +49,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WifiTethering
@@ -174,10 +175,22 @@ fun CustomBackIcon(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * V3 Phase 1 — product shell tabs.
+ * User thinks in people/messages, not transports.
+ */
+enum class MainTab {
+    Dialogs,
+    Network,
+    Expedition,
+    Channels,
+    Profile
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: BLinkViewModel) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableStateOf(MainTab.Dialogs) }
     var showDevPanel by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
@@ -186,7 +199,8 @@ fun MainScreen(viewModel: BLinkViewModel) {
     val peerCount by viewModel.peerCount.collectAsState()
     val vkActive by viewModel.vkActive.collectAsState()
     val nearbyUpdate by viewModel.nearbyUpdate.collectAsState()
-    val isConnected = vkActive || peerCount > 0
+    val networkLive by com.blink.dtn.router.MessageRouter.networkLive.collectAsState()
+    val isConnected = vkActive || peerCount > 0 || networkLive.sloganActive
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
     LaunchedEffect(Unit) {
@@ -195,7 +209,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
         GamificationStore.init(context)
     }
     LaunchedEffect(selectedTab) {
-        if (selectedTab != 4) {
+        if (selectedTab != MainTab.Profile) {
             showSettings = false
             AppWallpaper.discardDraft()
         }
@@ -231,8 +245,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
             topBar = {
                 TopAppBar(
                     title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
                             modifier = Modifier.pointerInput(Unit) {
                                 detectTapGestures(
                                     onTap = {
@@ -251,20 +264,28 @@ fun MainScreen(viewModel: BLinkViewModel) {
                                 )
                             }
                         ) {
-                            Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .background(
-                                        color = if (isConnected) AccentLime else DividerColor,
-                                        shape = CircleShape
-                                    )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .background(
+                                            color = if (isConnected) AccentLime else DividerColor,
+                                            shape = CircleShape
+                                        )
+                                )
+                            }
+                            Text(
+                                S.slogan(lang),
+                                style = Typography.labelSmall,
+                                color = TextSecondary,
+                                maxLines = 1
                             )
                         }
                     },
                     actions = {
-                        if (selectedTab == 4) {
+                        if (selectedTab == MainTab.Profile) {
                             Box(
                                 modifier = Modifier
                                     .padding(end = 4.dp)
@@ -320,21 +341,21 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedTab) {
-                        0 -> PrivateTab(viewModel)
-                        1 -> NetworkTab(viewModel)
-                        2 -> ExpeditionTab(viewModel)
-                        3 -> PublicTab(viewModel) { contactId ->
+                        MainTab.Dialogs -> PrivateTab(viewModel)
+                        MainTab.Network -> NetworkTab(viewModel)
+                        MainTab.Expedition -> ExpeditionTab(viewModel)
+                        MainTab.Channels -> PublicTab(viewModel) { contactId ->
                             viewModel.ensureContact(contactId)
                             viewModel.setCurrentDialog(contactId)
-                            selectedTab = 0
+                            selectedTab = MainTab.Dialogs
                         }
-                        4 -> if (showSettings) {
+                        MainTab.Profile -> if (showSettings) {
                             SettingsScreen(onBack = {
                                 AppWallpaper.discardDraft()
                                 showSettings = false
                             })
                         } else {
-                            ProfileTab(viewModel, { selectedTab = 0 })
+                            ProfileTab(viewModel, { selectedTab = MainTab.Dialogs })
                         }
                     }
                 }
@@ -387,26 +408,36 @@ private fun NearbyUpdateBanner(
 }
 
 @Composable
-fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+fun CustomBottomBar(selectedTab: MainTab, onTabSelected: (MainTab) -> Unit) {
     val lang by AppLang.lang.collectAsState()
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
+            .padding(bottom = 12.dp, start = 10.dp, end = 10.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .glassPanel(corner = 24.dp, strong = true)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .glassPanel(corner = 22.dp, strong = true)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BottomBarItem(Icons.Default.Person, S.dialogs(lang), selectedTab == 0) { onTabSelected(0) }
-            BottomBarItem(Icons.Default.WifiTethering, S.network(lang), selectedTab == 1) { onTabSelected(1) }
-            BottomBarItem(Icons.Default.Explore, S.expedition(lang), selectedTab == 2) { onTabSelected(2) }
-            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 3) { onTabSelected(3) }
-            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 4) { onTabSelected(4) }
+            BottomBarItem(Icons.AutoMirrored.Filled.Chat, S.dialogs(lang), selectedTab == MainTab.Dialogs) {
+                onTabSelected(MainTab.Dialogs)
+            }
+            BottomBarItem(Icons.Default.WifiTethering, S.network(lang), selectedTab == MainTab.Network) {
+                onTabSelected(MainTab.Network)
+            }
+            BottomBarItem(Icons.Default.Explore, S.expedition(lang), selectedTab == MainTab.Expedition) {
+                onTabSelected(MainTab.Expedition)
+            }
+            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == MainTab.Channels) {
+                onTabSelected(MainTab.Channels)
+            }
+            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == MainTab.Profile) {
+                onTabSelected(MainTab.Profile)
+            }
         }
     }
 }
@@ -418,17 +449,22 @@ fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(bgColor)
             .bounceClick { onClick() }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(18.dp))
             if (isSelected) {
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(label, color = contentColor, style = Typography.labelMedium)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    label,
+                    color = contentColor,
+                    style = Typography.labelSmall,
+                    maxLines = 1
+                )
             }
         }
     }
