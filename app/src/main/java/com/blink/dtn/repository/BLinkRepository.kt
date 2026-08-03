@@ -47,7 +47,13 @@ class BLinkRepository(
         return msg
     }
 
-    suspend fun createAndSavePrivateMessage(text: String, targetId: String, isPendingKey: Boolean = false, encryptedText: String? = null): Pair<Message, Message?> {
+    suspend fun createAndSavePrivateMessage(
+        text: String,
+        targetId: String,
+        isPendingKey: Boolean = false,
+        encryptedText: String? = null,
+        replyToId: String? = null
+    ): Pair<Message, Message?> {
         val localMsg = Message(
             id = MeshIdGenerator.next(myNodeId),
             type = "PRIVATE",
@@ -58,7 +64,8 @@ class BLinkRepository(
             timestamp = System.currentTimeMillis(),
             ttl = 7,
             isMine = true,
-            status = if (isPendingKey) Message.STATUS_PENDING_KEY else Message.STATUS_PENDING
+            status = if (isPendingKey) Message.STATUS_PENDING_KEY else Message.STATUS_PENDING,
+            replyToId = replyToId
         )
         bLinkDao.insertMessageWithConversation(localMsg)
         

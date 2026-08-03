@@ -215,6 +215,44 @@ abstract class BLinkDao {
 
     @Query("UPDATE messages SET status = :status, retryCount = :retryCount WHERE id = :msgId")
     abstract suspend fun updateMessageStatusAndRetryCount(msgId: String, status: Int, retryCount: Int)
+
+    @Query("UPDATE messages SET text = :text, edited_at = :editedAt WHERE id = :msgId")
+    abstract suspend fun updateMessageText(msgId: String, text: String, editedAt: Long)
+
+    @Query(
+        "UPDATE messages SET text = :text, edited_at = :editedAt, status = :status, retryCount = :retryCount WHERE id = :msgId"
+    )
+    abstract suspend fun updateMessageTextStatus(
+        msgId: String,
+        text: String,
+        editedAt: Long,
+        status: Int,
+        retryCount: Int
+    )
+
+    /** Edit local message text and refresh conversation preview when this was the latest. */
+    @androidx.room.Transaction
+    open suspend fun editMessageLocally(msgId: String, text: String, editedAt: Long, resend: Boolean) {
+        val msg = getMessageById(msgId) ?: return
+        if (resend) {
+            updateMessageTextStatus(msgId, text, editedAt, Message.STATUS_PENDING, 0)
+        } else {
+            updateMessageText(msgId, text, editedAt)
+        }
+        val convId = msg.conversationId
+        if (convId.isEmpty() || convId == RELAY_CONVERSATION_ID) return
+        val conv = getConversationByIdInternal(convId) ?: return
+        val latest = getLatestMessageInConversation(convId)
+        if (latest?.id == msgId) {
+            updateConversationInternal(
+                conv.copy(lastMessage = text, lastTimestamp = latest.timestamp)
+            )
+        }
+    }
+
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    abstract suspend fun deleteMessagesByIds(ids: List<String>)
+
     @androidx.room.Update
     abstract suspend fun updateMessageInternal(message: Message)
 

@@ -67,6 +67,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -76,7 +77,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -885,9 +888,27 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var replyTo by remember { mutableStateOf<Message?>(null) }
+    var editing by remember { mutableStateOf<Message?>(null) }
+    var forwardQueue by remember { mutableStateOf<List<Message>?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val messageById = remember(messages) { messages.associateBy { it.id } }
+
+    BackHandler(enabled = selecting || editing != null || replyTo != null || forwardQueue != null) {
+        when {
+            forwardQueue != null -> forwardQueue = null
+            selecting -> {
+                selecting = false
+                selectedIds = emptySet()
+            }
+            editing != null -> {
+                editing = null
+                messageText = ""
+            }
+            replyTo != null -> replyTo = null
+        }
+    }
 
     val verifyScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
@@ -931,6 +952,22 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             onCopyId = {
                 clipboardManager.setText(AnnotatedString(contactId))
                 Toast.makeText(context, "ID скопирован", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    forwardQueue?.let { queued ->
+        ForwardPickerSheet(
+            dialogs = dialogs,
+            excludeId = contactId,
+            profiles = emptyMap(),
+            onDismiss = { forwardQueue = null },
+            onConfirm = { targets ->
+                viewModel.forwardMessagesToPeers(queued.map { it.text }, targets)
+                Toast.makeText(context, S.forwarded(lang), Toast.LENGTH_SHORT).show()
+                selecting = false
+                selectedIds = emptySet()
+                forwardQueue = null
             }
         )
     }
@@ -995,13 +1032,18 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
                     .clip(CircleShape)
-                    .bounceClick { onBack() }
+                    .bounceClick {
+                        if (selecting) {
+                            selecting = false
+                            selectedIds = emptySet()
+                        } else onBack()
+                    }
                     .padding(8.dp)
             ) {
                 CustomBackIcon()
@@ -1011,91 +1053,89 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .bounceClick { showPeerProfile = true }
+                    .bounceClick { if (!selecting) showPeerProfile = true }
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 PeerAvatar(
                     avatarBlob = profile?.avatarBlob,
                     label = displayName,
-                    size = 40.dp,
+                    size = 36.dp,
                     uid = contactId
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = displayName,
+                        text = if (selecting) S.selectedCount(lang, selectedIds.size) else displayName,
                         style = Typography.titleMedium,
                         color = TextPrimary,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = profile?.trustBadge(lang) ?: S.fromNetwork(lang),
-                            style = Typography.labelSmall,
-                            color = TextSecondary,
-                            modifier = Modifier
-                                .background(DividerColor, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "id ${(profile?.shortId() ?: contactId.take(8))}",
-                            style = Typography.labelSmall,
-                            color = TextSecondary
-                        )
+                    if (!selecting) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = profile?.trustBadge(lang) ?: S.fromNetwork(lang),
+                                style = Typography.labelSmall,
+                                color = TextSecondary,
+                                modifier = Modifier
+                                    .background(DividerColor, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                            )
+                        }
                     }
                 }
             }
-            Box {
-                Icon(
-                    Icons.Default.MoreVert,
-                    contentDescription = "Меню",
-                    tint = TextPrimary,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .bounceClick { menuExpanded = true }
-                        .padding(8.dp)
-                        .size(22.dp)
-                )
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    if (isContact || profile?.localAlias?.isNotBlank() == true) {
-                        DropdownMenuItem(
-                            text = { Text(S.rename(lang), color = TextPrimary) },
-                            onClick = {
-                                menuExpanded = false
-                                renameDraft = profile?.localAlias.orEmpty()
-                                showRename = true
-                            }
-                        )
-                    }
-                    if (isStranger) {
-                        DropdownMenuItem(
-                            text = { Text(S.addToContacts(lang), color = TextPrimary) },
-                            onClick = {
-                                menuExpanded = false
-                                viewModel.acceptContact(contactId)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(S.ignore(lang), color = DangerColor) },
-                            onClick = {
-                                menuExpanded = false
-                                viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
-                            }
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text(S.ignore(lang), color = DangerColor) },
-                            onClick = {
-                                menuExpanded = false
-                                viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
-                            }
-                        )
+            if (!selecting) {
+                Box {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "Меню",
+                        tint = TextPrimary,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .bounceClick { menuExpanded = true }
+                            .padding(8.dp)
+                            .size(22.dp)
+                    )
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        if (isContact || profile?.localAlias?.isNotBlank() == true) {
+                            DropdownMenuItem(
+                                text = { Text(S.rename(lang), color = TextPrimary) },
+                                onClick = {
+                                    menuExpanded = false
+                                    renameDraft = profile?.localAlias.orEmpty()
+                                    showRename = true
+                                }
+                            )
+                        }
+                        if (isStranger) {
+                            DropdownMenuItem(
+                                text = { Text(S.addToContacts(lang), color = TextPrimary) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.acceptContact(contactId)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(S.ignore(lang), color = DangerColor) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
+                                }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text(S.ignore(lang), color = DangerColor) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -1164,17 +1204,17 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(S.selectedCount(lang, selectedIds.size), color = TextPrimary, style = Typography.labelMedium, modifier = Modifier.weight(1f))
                 Text(S.copy(lang), color = AccentLime, style = Typography.labelSmall, modifier = Modifier.bounceClick {
                     val texts = messages.filter { it.id in selectedIds }.joinToString("\n") { it.text }
                     clipboardManager.setText(AnnotatedString(texts))
-                    Toast.makeText(context, S.saved(lang), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, S.copied(lang), Toast.LENGTH_SHORT).show()
                 })
                 Text(S.forward(lang), color = AccentLime, style = Typography.labelSmall, modifier = Modifier.bounceClick {
-                    Toast.makeText(context, if (lang == "en") "Forward coming soon" else "Пересылка скоро", Toast.LENGTH_SHORT).show()
+                    val picked = messages.filter { it.id in selectedIds }
+                    if (picked.isNotEmpty()) forwardQueue = picked
                 })
                 Text(S.deleteLocal(lang), color = DangerColor, style = Typography.labelSmall, modifier = Modifier.bounceClick {
-                    selectedIds.forEach { viewModel.deleteMessageLocally(it) }
+                    viewModel.deleteMessagesLocally(selectedIds)
                     selectedIds = emptySet()
                     selecting = false
                 })
@@ -1196,11 +1236,13 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 reverseLayout = false
             ) {
                 items(messages, key = { it.id }) { msg ->
+                    val replyPreview = msg.replyToId?.let { messageById[it]?.text }
                     MessageBubble(
                         msg = msg,
                         myNodeId = viewModel.myNodeId,
                         selected = msg.id in selectedIds,
                         selecting = selecting,
+                        replyPreview = replyPreview,
                         onToggleSelect = {
                             selectedIds = if (msg.id in selectedIds) selectedIds - msg.id else selectedIds + msg.id
                             if (selectedIds.isEmpty()) selecting = false
@@ -1209,16 +1251,45 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                             selecting = true
                             selectedIds = selectedIds + msg.id
                         },
-                        onReply = { replyTo = msg },
+                        onReply = {
+                            editing = null
+                            replyTo = msg
+                        },
+                        onForward = { forwardQueue = listOf(msg) },
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(msg.text))
-                            Toast.makeText(context, S.saved(lang), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, S.copied(lang), Toast.LENGTH_SHORT).show()
+                        },
+                        onEdit = {
+                            replyTo = null
+                            editing = msg
+                            messageText = msg.text
                         },
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
                         onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
                         onRetrySend = { viewModel.retryOutgoingMessage(msg.id) }
                     )
                 }
+            }
+        }
+
+        editing?.let { target ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp)
+                    .glassPanel(corner = 10.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(S.edit(lang), color = AccentLime, style = Typography.labelSmall)
+                    Text(target.text, color = TextSecondary, style = Typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                Text("×", color = TextSecondary, modifier = Modifier.bounceClick {
+                    editing = null
+                    messageText = ""
+                }.padding(6.dp))
             }
         }
 
@@ -1242,12 +1313,21 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
         ChatInputArea(
             text = messageText,
             onTextChange = { if (it.length <= 140) messageText = it },
+            sendLabel = if (editing != null) S.edit(lang) else S.send(lang),
             onSend = {
                 if (messageText.isNotBlank()) {
-                    val body = replyTo?.let { "↪ ${it.text.take(40)}\n$messageText" } ?: messageText
-                    viewModel.sendPrivateMessage(body, contactId)
-                    messageText = ""
-                    replyTo = null
+                    val editTarget = editing
+                    if (editTarget != null) {
+                        viewModel.editOwnMessage(editTarget.id, messageText)
+                        editing = null
+                        messageText = ""
+                    } else {
+                        val quoted = replyTo
+                        val body = quoted?.let { "↪ ${it.text.take(40)}\n$messageText" } ?: messageText
+                        viewModel.sendPrivateMessage(body, contactId, replyToId = quoted?.id)
+                        messageText = ""
+                        replyTo = null
+                    }
                 }
             }
         )
@@ -1355,12 +1435,17 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
 
 // Compact auto-grow composer — maximize message area
 @Composable
-fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Unit) {
+fun ChatInputArea(
+    text: String,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+    sendLabel: String? = null
+) {
     val lang by AppLang.lang.collectAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp)
+            .padding(vertical = 4.dp)
             .imePadding(),
         verticalAlignment = Alignment.Bottom
     ) {
@@ -1375,7 +1460,7 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 40.dp)
+                        .heightIn(min = 36.dp)
                         .glassPanel(corner = 18.dp)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
@@ -1390,12 +1475,16 @@ fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Un
         Spacer(modifier = Modifier.width(6.dp))
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .glassPanel(corner = 20.dp)
+                .size(36.dp)
+                .glassPanel(corner = 18.dp)
                 .bounceClick { onSend() },
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = S.send(lang), tint = TextPrimary, modifier = Modifier.size(18.dp))
+            if (sendLabel != null && sendLabel == S.edit(lang)) {
+                Icon(Icons.Filled.Check, contentDescription = sendLabel, tint = AccentLime, modifier = Modifier.size(18.dp))
+            } else {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = sendLabel ?: S.send(lang), tint = TextPrimary, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
@@ -1412,11 +1501,14 @@ fun MessageBubble(
     onRetrySend: (() -> Unit)? = null,
     onBlockUser: (() -> Unit)? = null,
     onReply: (() -> Unit)? = null,
+    onForward: (() -> Unit)? = null,
     onCopy: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
     selected: Boolean = false,
     selecting: Boolean = false,
     onToggleSelect: (() -> Unit)? = null,
     onLongPressSelect: (() -> Unit)? = null,
+    replyPreview: String? = null,
     senderAvatarBlob: ByteArray? = null
 ) {
     val lang by AppLang.lang.collectAsState()
@@ -1442,74 +1534,20 @@ fun MessageBubble(
     }
 
     if (showActions) {
-        AlertDialog(
-            onDismissRequest = { showActions = false },
-            title = { Text(S.msgActionTitle(lang), color = TextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (onReply != null) {
-                        Text(S.reply(lang), color = TextPrimary, modifier = Modifier
-                            .fillMaxWidth()
-                            .bounceClick { showActions = false; onReply() }
-                            .padding(vertical = 8.dp))
-                    }
-                    if (onCopy != null) {
-                        Text(S.copy(lang), color = TextPrimary, modifier = Modifier
-                            .fillMaxWidth()
-                            .bounceClick { showActions = false; onCopy() }
-                            .padding(vertical = 8.dp))
-                    }
-                    Text(S.forward(lang), color = TextPrimary, modifier = Modifier
-                        .fillMaxWidth()
-                        .bounceClick {
-                            showActions = false
-                            // Forward UI stub — same emotion as Telegram without TG code
-                        }
-                        .padding(vertical = 8.dp))
-                    if (onLongPressSelect != null) {
-                        Text(S.select(lang), color = TextPrimary, modifier = Modifier
-                            .fillMaxWidth()
-                            .bounceClick { showActions = false; onLongPressSelect() }
-                            .padding(vertical = 8.dp))
-                    }
-                    Text(
-                        when {
-                            canBlockSender -> S.blockUser(lang)
-                            canCancel -> S.msgDeleteHintCanCancel(lang)
-                            else -> S.msgDeleteHint(lang)
-                        },
-                        color = TextSecondary,
-                        style = Typography.labelSmall
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showActions = false
-                    if (canBlockSender) onBlockUser?.invoke() else onDeleteLocal?.invoke()
-                }) {
-                    Text(
-                        if (canBlockSender) S.blockUser(lang) else S.deleteLocal(lang),
-                        color = DangerColor
-                    )
-                }
-            },
-            dismissButton = {
-                Row {
-                    if (canCancel && !canBlockSender) {
-                        TextButton(onClick = {
-                            showActions = false
-                            onCancelSend?.invoke()
-                        }) {
-                            Text(S.cancelSend(lang), color = TextPrimary)
-                        }
-                    }
-                    TextButton(onClick = { showActions = false }) {
-                        Text(S.close(lang), color = TextSecondary)
-                    }
-                }
-            },
-            containerColor = GlassDialogContainer
+        MessageActionSheet(
+            msg = msg,
+            isMine = isMine,
+            canCancel = canCancel,
+            canBlockSender = canBlockSender,
+            onDismiss = { showActions = false },
+            onReply = onReply,
+            onForward = onForward,
+            onCopy = onCopy,
+            onEdit = onEdit,
+            onSelect = onLongPressSelect,
+            onDeleteLocal = onDeleteLocal,
+            onCancelSend = onCancelSend,
+            onBlockUser = onBlockUser
         )
     }
 
@@ -1526,7 +1564,11 @@ fun MessageBubble(
                     }
                 },
                 onLongClick = {
-                    if (onLongPressSelect != null) onLongPressSelect() else showActions = true
+                    if (selecting) {
+                        onToggleSelect?.invoke()
+                    } else {
+                        showActions = true
+                    }
                 }
             ),
         horizontalAlignment = if (isMine) Alignment.End else Alignment.Start
@@ -1555,9 +1597,34 @@ fun MessageBubble(
         Box(
             modifier = Modifier
                 .glassBubble(isMine = isMine)
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Column {
+                val preview = replyPreview ?: msg.text.lines().firstOrNull()
+                    ?.takeIf { it.startsWith("↪ ") || it.startsWith("↗") }
+                    ?.removePrefix("↪ ")
+                if (!replyPreview.isNullOrBlank()) {
+                    Text(
+                        replyPreview,
+                        color = AccentLime.copy(alpha = 0.9f),
+                        style = Typography.labelSmall,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(bottom = 4.dp)
+                            .background(AccentLime.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                } else if (preview != null && msg.replyToId != null) {
+                    Text(
+                        preview,
+                        color = AccentLime.copy(alpha = 0.9f),
+                        style = Typography.labelSmall,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
                 EmojiText(
                     text = msg.text,
                     style = Typography.bodyLarge,
@@ -1566,8 +1633,12 @@ fun MessageBubble(
                 Row(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 4.dp).align(Alignment.End)
+                    modifier = Modifier.padding(top = 3.dp).align(Alignment.End)
                 ) {
+                    if (msg.editedAt > 0L) {
+                        Text(S.edited(lang), style = Typography.labelSmall, color = TextSecondary)
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     Text(text = timeString, style = Typography.labelSmall, color = TextSecondary)
                     if (isMine) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -2187,7 +2258,7 @@ private fun openOfficialChannel(context: Context) {
     openTelegramLink(context, OFFICIAL_CHANNEL)
 }
 
-private fun peerListTitle(
+internal fun peerListTitle(
     profile: com.blink.dtn.db.UserProfile?,
     fallback: String?,
     conversationId: String? = null

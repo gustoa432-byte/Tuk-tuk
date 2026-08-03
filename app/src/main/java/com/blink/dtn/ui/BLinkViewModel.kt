@@ -430,7 +430,7 @@ class BLinkViewModel(
     }
     }
 
-    fun sendPrivateMessage(text: String, targetId: String) {
+    fun sendPrivateMessage(text: String, targetId: String, replyToId: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             // Outbound private = user-initiated → contact (not a stranger request).
             upsertPeerAsContact(targetId)
@@ -469,7 +469,9 @@ class BLinkViewModel(
                 if (pubKey.isNullOrEmpty()) {
                     val dbStart = System.currentTimeMillis()
                     TraceStore.stage(trace.traceId, TraceStages.DB_INSERT_START)
-                    val (pendingMsg, _) = repository.createAndSavePrivateMessage(text, targetId, isPendingKey = true)
+                    val (pendingMsg, _) = repository.createAndSavePrivateMessage(
+                        text, targetId, isPendingKey = true, replyToId = replyToId
+                    )
                     TraceStore.attachMessageId(trace.traceId, pendingMsg.id)
                     TraceStore.stage(
                         pendingMsg.id,
@@ -517,7 +519,9 @@ class BLinkViewModel(
 
                 val dbStart = System.currentTimeMillis()
                 TraceStore.stage(trace.traceId, TraceStages.DB_INSERT_START)
-                val (localMsg, _) = repository.createAndSavePrivateMessage(text, targetId)
+                val (localMsg, _) = repository.createAndSavePrivateMessage(
+                    text, targetId, replyToId = replyToId
+                )
                 TraceStore.attachMessageId(trace.traceId, localMsg.id)
                 TraceStore.stage(
                     localMsg.id,
@@ -542,6 +546,56 @@ class BLinkViewModel(
                 }
             }
     }
+    }
+
+    /** Forward plain texts to one or more private chats via Router/send path. */
+    fun forwardMessagesToPeers(texts: List<String>, targetIds: List<String>) {
+        val cleaned = texts.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleaned.isEmpty() || targetIds.isEmpty()) return
+        for (targetId in targetIds.distinct()) {
+            if (targetId.isBlank() || targetId == "general" || targetId == myNodeId) continue
+            for (body in cleaned) {
+                val wire = if (body.startsWith("↗")) body else "↗\n$body"
+                sendPrivateMessage(wire, targetId)
+            }
+        }
+    }
+
+    /**
+     * Edit an own message on this device.
+     * Still-queued / failed → update text and resend from queue.
+     * Already sent/delivered → local edit only (mesh has no edit protocol yet).
+     */
+    fun editOwnMessage(messageId: String, newText: String) {
+        val trimmed = newText.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = dao.getMessageById(messageId) ?: return@launch
+            if (msg.senderId != myNodeId && !msg.isMine) return@launch
+            val editedAt = System.currentTimeMillis()
+            val resend = msg.status == Message.STATUS_PENDING ||
+                msg.status == Message.STATUS_IN_FLIGHT ||
+                msg.status == Message.STATUS_PENDING_KEY ||
+                msg.status == Message.STATUS_FAILED
+            if (resend) {
+                bleMeshManager.abortOutgoingTx(messageId)
+            }
+            dao.editMessageLocally(messageId, trimmed, editedAt, resend = resend)
+            if (resend && msg.status != Message.STATUS_PENDING_KEY) {
+                bleMeshManager.triggerRelay()
+            }
+            com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
+        }
+    }
+
+    fun deleteMessagesLocally(messageIds: Collection<String>) {
+        if (messageIds.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            for (id in messageIds) {
+                bleMeshManager.cancelOutgoing(id)
+                dao.deleteMessageLocally(id)
+            }
+        }
     }
 
     fun blockUser(peerId: String, nick: String = "") {

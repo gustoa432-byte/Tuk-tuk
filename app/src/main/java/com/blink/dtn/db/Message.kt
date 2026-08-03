@@ -46,6 +46,11 @@ data class Message(
     val status: Int = STATUS_PENDING,
     var retryCount: Int = 0,
 
+    /** Local-only: id of the message this one replies to (quote still goes in [text] for the wire). */
+    @Transient @ColumnInfo(name = "reply_to_id") val replyToId: String? = null,
+    /** Local-only: when this message was last edited on this device (0 = never). */
+    @Transient @ColumnInfo(name = "edited_at") val editedAt: Long = 0L,
+
     @Transient @ColumnInfo(name = "conversationId") var conversationId: String = ""
 ) {
     companion object {

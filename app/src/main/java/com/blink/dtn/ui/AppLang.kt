@@ -280,9 +280,17 @@ object S {
         "Нет закрепов."
     fun reply(lang: String) = if (lang == LANG_EN) "Reply" else "Ответить"
     fun forward(lang: String) = if (lang == LANG_EN) "Forward" else "Переслать"
+    fun forwardTo(lang: String) = if (lang == LANG_EN) "Forward to…" else "Переслать…"
     fun edit(lang: String) = if (lang == LANG_EN) "Edit" else "Изменить"
+    fun edited(lang: String) = if (lang == LANG_EN) "edited" else "изм."
     fun select(lang: String) = if (lang == LANG_EN) "Select" else "Выбрать"
     fun selectedCount(lang: String, n: Int) = if (lang == LANG_EN) "$n selected" else "Выбрано: $n"
+    fun noChatsToForward(lang: String) = if (lang == LANG_EN)
+        "No other chats yet — open a dialog first."
+    else
+        "Пока нет других чатов — сначала открой диалог."
+    fun forwarded(lang: String) = if (lang == LANG_EN) "Forwarded" else "Переслано"
+    fun copied(lang: String) = if (lang == LANG_EN) "Copied" else "Скопировано"
     fun channelsDistrict(lang: String) = if (lang == LANG_EN) "District" else "Район"
     fun channelsCity(lang: String) = if (lang == LANG_EN) "City" else "Город"
     fun channelsEmergency(lang: String) = if (lang == LANG_EN) "Emergency" else "Экстренные"

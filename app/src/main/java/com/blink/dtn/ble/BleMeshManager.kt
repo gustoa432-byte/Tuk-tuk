@@ -469,6 +469,20 @@ class BleMeshManager private constructor(
         return true
     }
 
+    /**
+     * Drop in-flight TX / batch for [messageId] without deleting the DB row.
+     * Used when the user edits a still-queued outgoing message before resend.
+     */
+    suspend fun abortOutgoingTx(messageId: String) {
+        relayEngine.dropBatch(messageId)
+        txQueue.forEachQueue { queue ->
+            val it = queue.iterator()
+            while (it.hasNext()) {
+                if (it.next().messageId == messageId) it.remove()
+            }
+        }
+    }
+
     private fun shouldStoreAsRelayPacket(message: Message): Boolean {
         if (message.isAck || message.type == "ACK") return true
         if (message.type == "IDENTITY_ANNOUNCEMENT" ||
