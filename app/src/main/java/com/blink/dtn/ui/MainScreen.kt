@@ -1905,11 +1905,17 @@ fun ProfileTab(
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
 
+    var nameFieldValue by remember {
+        mutableStateOf(TextFieldValue(viewModel.displayName()))
+    }
     var nickFieldValue by remember {
         mutableStateOf(TextFieldValue(viewModel.myNick))
     }
+    var savedName by remember { mutableStateOf(viewModel.displayName()) }
     var savedNick by remember { mutableStateOf(viewModel.myNick) }
-    val nickDirty = nickFieldValue.text.trim() != savedNick.trim()
+    val profileDirty =
+        nameFieldValue.text.trim() != savedName.trim() ||
+            nickFieldValue.text.trim() != savedNick.trim()
     var showSavedFlash by remember { mutableStateOf(false) }
     val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
@@ -1983,17 +1989,25 @@ fun ProfileTab(
     ) {
         PeerAvatar(
             avatarBlob = myProfile?.avatarBlob,
-            label = nickFieldValue.text.ifBlank { viewModel.myNodeId.take(4) },
+            label = nameFieldValue.text.ifBlank {
+                nickFieldValue.text.ifBlank { viewModel.myNodeId.take(4) }
+            },
             size = 96.dp,
             uid = viewModel.myNodeId,
             modifier = Modifier.bounceClick { openAvatarPicker() }
         )
         Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            S.authDisplayName(lang),
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.fillMaxWidth()
+        )
         BasicTextField(
-            value = nickFieldValue,
+            value = nameFieldValue,
             onValueChange = { newVal ->
                 if (newVal.text.length <= 20) {
-                    nickFieldValue = newVal
+                    nameFieldValue = newVal
                     showSavedFlash = false
                 }
             },
@@ -2002,15 +2016,45 @@ fun ProfileTab(
             singleLine = true,
             decorationBox = { innerTextField ->
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    if (nickFieldValue.text.isEmpty()) {
-                        Text(S.enterName(lang), color = TextSecondary, style = Typography.headlineSmall)
+                    if (nameFieldValue.text.isEmpty()) {
+                        Text(S.authDisplayNameHint(lang), color = TextSecondary, style = Typography.headlineSmall)
                     }
                     innerTextField()
                 }
             },
             modifier = Modifier.fillMaxWidth()
         )
-        val nickHandle = nickFieldValue.text.trim().ifBlank { "user" }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            S.authNickname(lang),
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.fillMaxWidth()
+        )
+        BasicTextField(
+            value = nickFieldValue,
+            onValueChange = { newVal ->
+                if (newVal.text.length <= 20) {
+                    nickFieldValue = newVal
+                    showSavedFlash = false
+                }
+            },
+            textStyle = Typography.titleMedium.copy(color = TextPrimary),
+            cursorBrush = SolidColor(TextPrimary),
+            singleLine = true,
+            decorationBox = { innerTextField ->
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (nickFieldValue.text.isEmpty()) {
+                        Text(S.enterName(lang), color = TextSecondary, style = Typography.titleMedium)
+                    }
+                    innerTextField()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        val nickHandle = nickFieldValue.text.trim().ifBlank {
+            nameFieldValue.text.trim().ifBlank { "user" }
+        }
         Text(
             "@$nickHandle",
             color = TextSecondary,
@@ -2028,18 +2072,16 @@ fun ProfileTab(
                     Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
                 }
         )
-        if (nickDirty || showSavedFlash) {
+        if (profileDirty || showSavedFlash) {
             Spacer(modifier = Modifier.height(8.dp))
             TukTukButton(onClick = {
-                if (!nickDirty) return@TukTukButton
-                val trimmed = nickFieldValue.text.trim()
-                if (trimmed.isEmpty()) {
-                    Toast.makeText(context, S.enterNameHint(lang), Toast.LENGTH_SHORT).show()
-                    return@TukTukButton
-                }
-                nickFieldValue = TextFieldValue(text = trimmed, selection = TextRange(trimmed.length))
-                viewModel.updateMyProfile(trimmed, false)
-                savedNick = trimmed
+                if (!profileDirty) return@TukTukButton
+                viewModel.updateMyNameAndNick(nameFieldValue.text, nickFieldValue.text)
+                val resolvedName = viewModel.displayName()
+                nameFieldValue = TextFieldValue(text = resolvedName, selection = TextRange(resolvedName.length))
+                nickFieldValue = TextFieldValue(text = viewModel.myNick, selection = TextRange(viewModel.myNick.length))
+                savedName = resolvedName
+                savedNick = viewModel.myNick
                 showSavedFlash = true
             }) {
                 Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))

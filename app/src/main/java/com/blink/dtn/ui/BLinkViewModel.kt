@@ -174,6 +174,40 @@ class BLinkViewModel(
     }
 
     /**
+     * First-run auth completion. Empty [displayName] → random dino stub.
+     * Mesh nick = trimmed [nick] if set, otherwise the resolved display name.
+     */
+    fun completeOnboarding(
+        displayName: String,
+        nick: String,
+        provider: com.blink.dtn.auth.AuthProvider
+    ) {
+        val lang = com.blink.dtn.ui.AppLang.lang.value
+        val name = com.blink.dtn.auth.DinoNameGenerator.resolveDisplayName(displayName, lang)
+        val trimmedNick = nick.trim().take(com.blink.dtn.auth.DinoNameGenerator.MAX_LEN)
+        val meshNick = trimmedNick.ifEmpty { name }
+        val app = getApplication<Application>()
+        com.blink.dtn.auth.AuthSessionStore.complete(app, name, meshNick, provider)
+        updateMyProfile(meshNick, false)
+    }
+
+    fun displayName(): String {
+        val stored = com.blink.dtn.auth.AuthSessionStore.displayName(getApplication())
+        return stored.ifBlank { myNick }
+    }
+
+    /** Save profile name + optional nick from Profile tab. Empty name → dino stub. */
+    fun updateMyNameAndNick(displayName: String, nick: String) {
+        val lang = com.blink.dtn.ui.AppLang.lang.value
+        val name = com.blink.dtn.auth.DinoNameGenerator.resolveDisplayName(displayName, lang)
+        val trimmedNick = nick.trim().take(com.blink.dtn.auth.DinoNameGenerator.MAX_LEN)
+        val meshNick = trimmedNick.ifEmpty { name }
+        val app = getApplication<Application>()
+        com.blink.dtn.auth.AuthSessionStore.setDisplayName(app, name)
+        updateMyProfile(meshNick, false)
+    }
+
+    /**
      * Save a mesh-compressed avatar for [userId] (own profile or peer).
      * Returns false via [onDone] if the profile row could not be updated.
      */

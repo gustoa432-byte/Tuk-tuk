@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blink.dtn.ble.BleMeshManager
 import com.blink.dtn.db.BLinkDatabase
+import com.blink.dtn.auth.AuthSessionStore
+import com.blink.dtn.ui.AuthOnboardingScreen
 import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.BLinkViewModelFactory
 import com.blink.dtn.ui.MainScreen
@@ -55,14 +57,15 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
         val myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
         prefs.edit().putString("node_id", myNodeId).apply()
-        
+
         var myNick = prefs.getString("nick", null)
         // Migrate old auto-generated "User-..." nicks → empty so the placeholder shows
         if (myNick == null || myNick.startsWith("User-")) {
             myNick = ""
             prefs.edit().putString("nick", myNick).apply()
         }
-        
+        AuthSessionStore.migrateLegacyIfNeeded(this)
+
         val conversationDao = BLinkDatabase.getDatabase(this).conversationDao()
         val bleManager = BleMeshManager.getInstance(this, dao, myNodeId)
         val factory = BLinkViewModelFactory(application, dao, conversationDao, bleManager, myNodeId, myNick)
@@ -84,7 +87,10 @@ class MainActivity : ComponentActivity() {
 fun BLinkApp(bleManager: BleMeshManager, factory: BLinkViewModelFactory) {
     val context = LocalContext.current
     var permissionsGranted by remember { mutableStateOf(false) }
-    
+    var onboardingDone by remember {
+        mutableStateOf(AuthSessionStore.isOnboardingDone(context))
+    }
+
     val mandatoryBlePermissions = mutableListOf(
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION
@@ -126,17 +132,27 @@ fun BLinkApp(bleManager: BleMeshManager, factory: BLinkViewModelFactory) {
         }
     }
 
-    if (permissionsGranted) {
-        val viewModel: BLinkViewModel = viewModel(factory = factory)
-        MainScreen(viewModel)
-    } else {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Bluetooth & Location permissions are required for Mesh.")
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { permissionLauncher.launch(allRequired) }) {
-                    Text("Grant Permissions")
+    when {
+        !permissionsGranted -> {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Bluetooth & Location permissions are required for Mesh.")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = { permissionLauncher.launch(allRequired) }) {
+                        Text("Grant Permissions")
+                    }
                 }
+            }
+        }
+        else -> {
+            val viewModel: BLinkViewModel = viewModel(factory = factory)
+            if (!onboardingDone) {
+                AuthOnboardingScreen { displayName, nick, provider ->
+                    viewModel.completeOnboarding(displayName, nick, provider)
+                    onboardingDone = true
+                }
+            } else {
+                MainScreen(viewModel)
             }
         }
     }

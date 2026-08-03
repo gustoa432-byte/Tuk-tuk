@@ -97,6 +97,25 @@ object S {
     fun findOrStartDialog(lang: String) = if (lang == LANG_EN) "Find or start a dialog..." else "Найти или начать диалог..."
     fun renameHint(lang: String) = if (lang == LANG_EN) "E.g. Vasya from work" else "Например, Вася с работы"
 
+    // Auth / onboarding
+    fun authSignInWith(lang: String) = if (lang == LANG_EN) "Sign in with" else "Войти через"
+    fun authOrOffline(lang: String) = if (lang == LANG_EN) "or continue offline" else "или продолжить офлайн"
+    fun authOfflineContinue(lang: String) = if (lang == LANG_EN) "Continue offline" else "Войти офлайн"
+    fun authSocialSoon(lang: String) = if (lang == LANG_EN)
+        "Social login coming soon — fill name below or continue offline"
+    else
+        "Соцвход скоро — заполните имя ниже или продолжите офлайн"
+    fun authProfileTitle(lang: String) = if (lang == LANG_EN) "Your profile" else "Твой профиль"
+    fun authProfileHint(lang: String) = if (lang == LANG_EN)
+        "Name and nickname are optional. Empty name becomes a random dinosaur."
+    else
+        "Имя и ник необязательны. Пустое имя — случайный динозавр."
+    fun authDisplayName(lang: String) = if (lang == LANG_EN) "Name" else "Имя"
+    fun authDisplayNameHint(lang: String) = if (lang == LANG_EN) "Up to 20 characters" else "До 20 символов"
+    fun authNickname(lang: String) = if (lang == LANG_EN) "Nickname" else "Никнейм"
+    fun authNicknameHint(lang: String) = if (lang == LANG_EN) "Optional @handle" else "Необязательный @ник"
+    fun authContinue(lang: String) = if (lang == LANG_EN) "Continue" else "Продолжить"
+
     // Notifications / toasts
     fun idCopied(lang: String) = if (lang == LANG_EN) "ID copied" else "ID скопирован"
     fun contactAccepted(lang: String) = if (lang == LANG_EN) "Contact accepted" else "Контакт принят"
