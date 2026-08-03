@@ -601,14 +601,24 @@ class BleMeshManager private constructor(
             ttl = DEFAULT_TTL
         )
         enqueueMessage(msg)
-        showToast("Запрос обновления отправлен (нужен Wi‑Fi Direct)")
+        showToast(
+            if (com.blink.dtn.ui.AppLang.lang.value == "en")
+                "Update requested. Keep phones nearby — the install screen opens when the file arrives."
+            else
+                "Запрос отправлен. Держите телефоны рядом — откроется установка, когда файл придёт."
+        )
     }
 
     private fun handleApkUpdateRequest(fromPeerId: String) {
         scope.launch {
             val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
             if (wifi == null || !wifi.isGroupReady()) {
-                showToast("Запрос APK: нет группы Wi‑Fi Direct — откройте сеть рядом")
+                showToast(
+                    if (com.blink.dtn.ui.AppLang.lang.value == "en")
+                        "Need a nearby link. Open Network on both phones and stay close, then try again."
+                    else
+                        "Нужна ближняя связь. Откройте «Сеть» на обоих телефонах, подойдите ближе и повторите."
+                )
                 Log.i(TAG, "UPDATE_REQUEST from $fromPeerId but Wi‑Fi Direct group not ready")
                 return@launch
             }
@@ -617,12 +627,21 @@ class BleMeshManager private constructor(
                 showToast("Не удалось прочитать свой APK")
                 return@launch
             }
-            showToast("Отправляю APK по Wi‑Fi Direct (экспериментально)…")
+            showToast(
+                if (com.blink.dtn.ui.AppLang.lang.value == "en") "Sending update to neighbor…"
+                else "Отправляю обновление соседу…"
+            )
             val ok = wifi.sendApkFile(src)
             if (ok) {
-                showToast("APK отправлен")
+                showToast(
+                    if (com.blink.dtn.ui.AppLang.lang.value == "en") "Update sent — neighbor should see the installer"
+                    else "Обновление отправлено — у соседа должен открыться установщик"
+                )
             } else {
-                showToast("Передача APK не удалась")
+                showToast(
+                    if (com.blink.dtn.ui.AppLang.lang.value == "en") "Could not send update — stay closer and retry"
+                    else "Не удалось отправить — подойдите ближе и повторите"
+                )
             }
         }
     }

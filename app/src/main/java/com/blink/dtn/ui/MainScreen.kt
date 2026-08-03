@@ -158,7 +158,9 @@ fun Modifier.bounceClick(onClick: () -> Unit) = composed {
             scaleX = scale
             scaleY = scale
         }
-        .pointerInput(Unit) {
+        // Key on onClick so Send/emoji/nav rows always use the latest lambda
+        // (Unit froze the first composition — empty field kept "voice soon").
+        .pointerInput(onClick) {
             detectTapGestures(
                 onPress = {
                     isPressed = true
@@ -396,11 +398,17 @@ private fun NearbyUpdateBanner(
             color = TextSecondary,
             style = Typography.labelSmall
         )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            S.updateHint(lang),
+            color = TextSecondary,
+            style = Typography.labelSmall
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 S.get(lang),
-                color = TextPrimary,
+                color = AccentLime,
                 style = Typography.labelMedium,
                 modifier = Modifier.bounceClick { onRequest() }
             )
@@ -1493,6 +1501,7 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
 }
 
 // Modern messenger composer — emoji · field · attach · mic↔send
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatInputArea(
     text: String,
@@ -1504,8 +1513,55 @@ fun ChatInputArea(
 ) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
+    var showEmojiSheet by remember { mutableStateOf(false) }
     val canSend = text.isNotBlank() || (sendLabel != null && sendLabel == S.edit(lang))
     val editing = sendLabel != null && sendLabel == S.edit(lang)
+    val quickEmoji = remember {
+        listOf("😀", "😂", "❤️", "👍", "🔥", "🎉", "🙏", "😎", "😢", "🤝", "💪", "✨")
+    }
+
+    if (showEmojiSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showEmojiSheet = false },
+            containerColor = GlassDialogContainer
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp).padding(bottom = 24.dp)) {
+                Text(S.emoji(lang), color = TextPrimary, style = Typography.titleMedium)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    quickEmoji.take(6).forEach { e ->
+                        Text(
+                            e,
+                            style = Typography.headlineSmall,
+                            modifier = Modifier.bounceClick {
+                                onTextChange(text + e)
+                                showEmojiSheet = false
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    quickEmoji.drop(6).forEach { e ->
+                        Text(
+                            e,
+                            style = Typography.headlineSmall,
+                            modifier = Modifier.bounceClick {
+                                onTextChange(text + e)
+                                showEmojiSheet = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     Row(
         modifier = Modifier
@@ -1517,7 +1573,8 @@ fun ChatInputArea(
             modifier = Modifier
                 .size(40.dp)
                 .bounceClick {
-                    onEmoji?.invoke() ?: Toast.makeText(context, S.emoji(lang), Toast.LENGTH_SHORT).show()
+                    if (onEmoji != null) onEmoji()
+                    else showEmojiSheet = true
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -1570,8 +1627,10 @@ fun ChatInputArea(
                 .clip(CircleShape)
                 .background(if (canSend) AccentLime.copy(alpha = 0.9f) else Color.Transparent)
                 .bounceClick {
-                    if (canSend) onSend()
-                    else Toast.makeText(context, S.voiceSoon(lang), Toast.LENGTH_SHORT).show()
+                    when {
+                        canSend -> onSend()
+                        else -> Toast.makeText(context, S.typeToSend(lang), Toast.LENGTH_SHORT).show()
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -1855,6 +1914,7 @@ fun ProfileTab(
     val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
     var showInvite by remember { mutableStateOf(false) }
+    var showQrZoom by remember { mutableStateOf(false) }
 
     LaunchedEffect(showSavedFlash) {
         if (showSavedFlash) {
@@ -2030,17 +2090,72 @@ fun ProfileTab(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        Text(S.showQr(lang), style = Typography.labelSmall, color = TextSecondary)
-        Spacer(modifier = Modifier.height(8.dp))
         val qrBitmap = remember(contactQr) {
             generateQrCode(contactQr, 512)?.asImageBitmap()
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(S.showQr(lang), style = Typography.labelSmall, color = TextSecondary, modifier = Modifier.weight(1f))
+            if (qrBitmap != null) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .glassPanel(corner = 18.dp)
+                        .bounceClick { showQrZoom = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = S.zoomQr(lang), tint = TextPrimary, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (showQrZoom && qrBitmap != null) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { showQrZoom = false },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.94f))
+                ) {
+                    Text(
+                        S.closeScanner(lang),
+                        color = AccentLime,
+                        style = Typography.titleMedium,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(20.dp)
+                            .bounceClick { showQrZoom = false }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
+                            .aspectRatio(1f)
+                            .align(Alignment.Center)
+                            .background(Color.White, RoundedCornerShape(16.dp))
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.foundation.Image(
+                            bitmap = qrBitmap,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
         }
         if (qrBitmap != null) {
             Box(
                 modifier = Modifier
                     .size(200.dp)
                     .background(Color.White, RoundedCornerShape(24.dp))
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .bounceClick { showQrZoom = true },
                 contentAlignment = Alignment.Center
             ) {
                 androidx.compose.foundation.Image(
@@ -2481,8 +2596,13 @@ fun InfoContent(compact: Boolean = false) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .then(if (compact) Modifier else Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp))
+            .then(
+                if (compact) Modifier
+                else Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
     ) {
         if (!compact) {
             Text(S.infoTitle(lang), style = Typography.titleLarge, color = TextPrimary)

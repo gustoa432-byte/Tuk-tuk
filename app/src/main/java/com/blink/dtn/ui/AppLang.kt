@@ -396,6 +396,21 @@ object S {
     fun connectionPeople(lang: String) = if (lang == LANG_EN) "People nearby" else "Люди рядом"
     fun connectionOn(lang: String) = if (lang == LANG_EN) "Available" else "Есть"
     fun connectionOff(lang: String) = if (lang == LANG_EN) "Not now" else "Сейчас нет"
+    fun typeToSend(lang: String) = if (lang == LANG_EN) "Type a message first" else "Сначала введите сообщение"
+    fun zoomQr(lang: String) = if (lang == LANG_EN) "Enlarge QR" else "Увеличить QR"
+    fun closeScanner(lang: String) = if (lang == LANG_EN) "Close" else "Закрыть"
+    fun updateHint(lang: String) = if (lang == LANG_EN)
+        "1) Stay next to each other  2) Tap Download  3) Confirm install when the package arrives"
+    else
+        "1) Будьте рядом  2) Нажмите «Получить»  3) Подтвердите установку, когда придёт файл"
+    fun updateRequestSent(lang: String) = if (lang == LANG_EN)
+        "Update requested. Keep phones nearby — the install screen opens when the file arrives."
+    else
+        "Запрос отправлен. Держите телефоны рядом — откроется установка, когда файл придёт."
+    fun updateNeedNearby(lang: String) = if (lang == LANG_EN)
+        "Need a nearby link. Open Network on both phones and stay close, then try again."
+    else
+        "Нужна ближняя связь. Откройте «Сеть» на обоих телефонах, подойдите ближе и повторите."
     fun emoji(lang: String) = if (lang == LANG_EN) "Emoji" else "Эмодзи"
     fun attach(lang: String) = if (lang == LANG_EN) "Attach" else "Вложение"
     fun voiceSoon(lang: String) = if (lang == LANG_EN) "Voice messages soon" else "Голосовые — скоро"

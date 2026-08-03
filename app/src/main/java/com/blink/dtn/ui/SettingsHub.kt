@@ -150,6 +150,7 @@ fun AboutTukTukScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         Text("${S.versionLabel(lang)}: $version", color = TextSecondary, style = Typography.bodySmall)
         Spacer(modifier = Modifier.height(16.dp))
+        // compact=true → no nested verticalScroll (was collapsing About)
         InfoContent(compact = true)
         Spacer(modifier = Modifier.height(12.dp))
         SettingsNavRow(S.openGithub(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }

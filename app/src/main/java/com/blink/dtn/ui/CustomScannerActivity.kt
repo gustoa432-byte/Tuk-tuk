@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,12 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
+import com.blink.dtn.ui.theme.AccentLime
 import com.journeyapps.barcodescanner.CaptureManager
 import com.journeyapps.barcodescanner.DecoratedBarcodeView
 
 /**
- * QR capture with a centered viewport. Avoids top-heavy Spacer layouts that
- * push the preview off-screen on short / cutout / gesture-nav devices.
+ * QR capture with a centered viewport + close control.
  */
 class CustomScannerActivity : ComponentActivity() {
     private lateinit var captureManager: CaptureManager
@@ -45,7 +47,6 @@ class CustomScannerActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         barcodeScannerView = DecoratedBarcodeView(this).apply {
-            // Hide the library's own status / torch chrome — we draw our own.
             setStatusText("")
         }
         captureManager = CaptureManager(this, barcodeScannerView)
@@ -53,8 +54,9 @@ class CustomScannerActivity : ComponentActivity() {
         captureManager.decode()
 
         setContent {
+            val lang by AppLang.lang.collectAsState()
             DisposableEffect(Unit) {
-                onDispose { /* CaptureManager lifecycle via Activity callbacks */ }
+                onDispose { }
             }
             Box(
                 modifier = Modifier
@@ -63,6 +65,16 @@ class CustomScannerActivity : ComponentActivity() {
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
             ) {
+                Text(
+                    text = S.closeScanner(lang),
+                    color = AccentLime,
+                    fontSize = 16.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .bounceClick { finish() }
+                        .padding(8.dp)
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -84,7 +96,7 @@ class CustomScannerActivity : ComponentActivity() {
                     }
                     Spacer(modifier = Modifier.height(20.dp))
                     Text(
-                        text = "Наведите камеру на QR код",
+                        text = if (lang == "en") "Point the camera at a QR code" else "Наведите камеру на QR код",
                         color = Color.White,
                         fontSize = 16.sp
                     )
