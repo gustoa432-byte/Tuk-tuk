@@ -89,7 +89,7 @@ object FeedbackMailer {
                 val fallback = Intent(Intent.ACTION_SEND).apply {
                     type = "application/zip"
                     putExtra(Intent.EXTRA_SUBJECT, subject)
-                    putExtra(Intent.EXTRA_TEXT, "Отправьте этот ZIP на $FEEDBACK_EMAIL")
+                    putExtra(Intent.EXTRA_TEXT, "Отправьте этот ZIP на $FEEDBACK_EMAIL или в Telegram @b6dmachine")
                     putExtra(Intent.EXTRA_STREAM, uri)
                     clipData = ClipData.newUri(context.contentResolver, shareFile.name, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -97,13 +97,83 @@ object FeedbackMailer {
                 }
                 grantUriToResolvers(context, fallback, uri)
                 context.startActivity(
-                    Intent.createChooser(fallback, "Поделиться ZIP → $FEEDBACK_EMAIL")
+                    Intent.createChooser(fallback, "Поделиться ZIP → @b6dmachine")
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             } catch (e2: Exception) {
                 Log.e(TAG, "fallback share failed: ${e2.message}", e2)
-                Toast.makeText(context, "Не удалось открыть почту. Адрес: $FEEDBACK_EMAIL", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Не удалось открыть отправку. Telegram: @b6dmachine", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    /**
+     * Share [zip] into an installed Telegram client. User picks the chat
+     * (hint: @b6dmachine). Returns false if no Telegram package is available.
+     */
+    fun sendZipToTelegram(
+        context: Context,
+        zip: File,
+        subject: String = "TukTuk error report"
+    ): Boolean {
+        if (!zip.exists() || zip.length() <= 0L) return false
+        val shareFile = ensureUnderCache(context, zip)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", shareFile)
+        val telegramPackages = listOf(
+            "org.telegram.messenger",
+            "org.telegram.messenger.web",
+            "org.thunderdog.challegram"
+        )
+        val pm = context.packageManager
+        for (pkg in telegramPackages) {
+            try {
+                pm.getPackageInfo(pkg, 0)
+            } catch (_: PackageManager.NameNotFoundException) {
+                continue
+            }
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                setPackage(pkg)
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                putExtra(
+                    Intent.EXTRA_TEXT,
+                    "TukTuk error report ZIP.\nPlease send to @b6dmachine\n${shareFile.name}"
+                )
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newUri(context.contentResolver, shareFile.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.startActivity(intent)
+                Toast.makeText(
+                    context,
+                    "Telegram → отправьте ZIP @b6dmachine",
+                    Toast.LENGTH_LONG
+                ).show()
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "Telegram package $pkg failed: ${e.message}")
+            }
+        }
+        return false
+    }
+
+    /** Build journal+telemetry ZIP and open Telegram (or share fallback). */
+    fun sendErrorReport(
+        context: Context,
+        peerCount: Int = 0,
+        peers: List<String> = emptyList()
+    ) {
+        val zip = ErrorJournal.buildReportZip(context, peerCount, peers)
+        if (zip == null) {
+            Toast.makeText(context, "Не удалось собрать отчёт", Toast.LENGTH_LONG).show()
+            return
+        }
+        val subject = "TukTuk error report ${zip.name}"
+        if (!sendZipToTelegram(context, zip, subject)) {
+            sendTraceZip(context, zip, subject)
         }
     }
 

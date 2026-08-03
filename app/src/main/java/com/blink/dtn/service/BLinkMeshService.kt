@@ -36,6 +36,7 @@ class BLinkMeshService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        com.blink.dtn.telemetry.ErrorJournal.install(this)
         com.blink.dtn.crypto.RsaUtils.generateAndStoreKeyPair()
         val dao = BLinkDatabase.getDatabase(this).bLinkDao()
         runBlocking(Dispatchers.IO) {

@@ -423,6 +423,7 @@ class BLinkViewModel(
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
             } catch (t: Throwable) {
                 android.util.Log.e("SEND", "Public send crash", t)
+                com.blink.dtn.telemetry.ErrorJournal.record("SEND_PUBLIC", t, context = getApplication())
                 runCatching {
                     TraceStore.finish(
                         trace.traceId,
@@ -552,6 +553,7 @@ class BLinkViewModel(
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
             } catch (t: Throwable) {
                 android.util.Log.e("SEND", "Private send crash", t)
+                com.blink.dtn.telemetry.ErrorJournal.record("SEND_PRIVATE", t, context = getApplication())
                 runCatching {
                     TraceStore.finish(
                         trace.traceId,

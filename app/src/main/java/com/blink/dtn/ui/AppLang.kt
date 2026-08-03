@@ -212,6 +212,11 @@ object S {
     fun infoContacts(lang: String) = if (lang == LANG_EN) "Contacts" else "Контакты"
     fun infoChannel(lang: String) = if (lang == LANG_EN) "• Project channel:" else "• Канал проекта:"
     fun infoBugs(lang: String) = if (lang == LANG_EN) "• Ideas and bug reports:" else "• Идеи и баг-репорты:"
+    fun errorReportButton(lang: String) = if (lang == LANG_EN) "Error report" else "Отчет об ошибках"
+    fun errorReportHint(lang: String) = if (lang == LANG_EN)
+        "Opens Telegram with a ZIP (error journal + telemetry). Send it to @b6dmachine."
+    else
+        "Откроет Telegram с ZIP (журнал ошибок + телеметрия). Отправьте @b6dmachine."
     fun infoFooter(lang: String) = if (lang == LANG_EN)
         "® Built in Crimea. Works under any conditions."
     else
