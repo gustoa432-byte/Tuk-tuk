@@ -1,20 +1,54 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tuk-Tuk
 
-# Run and deploy your AI Studio app
+**Связь там где есть люди.**
 
-This contains everything you need to run your app locally.
+Гуманитарный мессенджер для Android: сообщения идут через людей рядом, когда интернета нет, и через обычную сеть, когда она есть. Пользователь пишет текст — путь доставки выбирается сам.
 
-View your app in AI Studio: https://ai.studio/apps/4dcbebae-53ff-4e7c-aa68-9045ddc3e7e8
+## Зачем это нужно
 
-## Run Locally
+Когда молчат вышки и падает интернет, телефоны всё равно могут передавать короткие сообщения друг другу — от человека к человеку. Tuk-Tuk делает из этого привычный чат: диалоги, каналы-комнаты рядом, доставка как «посылка», которую помог пронести сосед.
 
-**Prerequisites:**  Node.js
+Это не замена Telegram на каждый день. Это связь в условиях, где облачные мессенджеры не работают.
 
+## Что умеет сейчас
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Личные диалоги (шифруются на концах)
+- Публичные комнаты рядом (район / город / экстренные и др.)
+- Доставка без выбора транспорта: интернет → ближняя связь → люди рядом → очередь на устройстве
+- Фото в личке — только при интернете (в офлайн-сеть фото не уходит)
+- Текст в офлайн-сети — до 140 символов
+- Пригласить друзей, QR контакта, обновление с телефона рядом
+
+Актуальная версия: **0.1.9**
+
+## Скачать
+
+APK (GitHub Releases):  
+https://github.com/gustoa432-byte/Tuk-tuk/releases/latest
+
+Канал проекта: [t.me/tuk_tuk_official](https://t.me/tuk_tuk_official)
+
+## Принципы
+
+1. Технологии — способ, люди — смысл.
+2. Без инженерного жаргона в интерфейсе.
+3. UX близок к привычным мессенджерам, код и архитектура — свои (не копия Telegram).
+4. Разработано в Крыму. Для работы в любых условиях.
+
+Подробнее: [`docs/V3_CONSTITUTION.md`](docs/V3_CONSTITUTION.md), [`docs/V3_UX_BASELINE.md`](docs/V3_UX_BASELINE.md).
+
+## Сборка (для разработчиков)
+
+Android-проект в каталоге `app/`. Нужны Android SDK и JDK.
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+Готовый APK: `app/build/outputs/apk/release/`.
+
+Подпись релиза и ключи: [`docs/SIGNING.md`](docs/SIGNING.md), [`docs/OFFICIAL_BUILD.md`](docs/OFFICIAL_BUILD.md).
+
+## Лицензия и код
+
+Исходники открыты в этом репозитории. Обратная связь и идеи: через приложение (Инфо / отчёт об ошибках) или канал проекта.
