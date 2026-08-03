@@ -392,6 +392,17 @@ class BleMeshManager private constructor(
                 } else {
                     dao.insertMessageWithConversation(updatedMsg)
                 }
+            } else if (
+                existing.senderId == myUniqueNodeId &&
+                (
+                    existing.status == Message.STATUS_PENDING ||
+                        existing.status == Message.STATUS_PENDING_KEY ||
+                        existing.status == Message.STATUS_IN_FLIGHT ||
+                        existing.status == Message.STATUS_FAILED
+                    )
+            ) {
+                // Already inserted by repository/UI path — do not rewrite the row
+                // (avoids clobbering local reply/edit fields and FK races on send).
             } else {
                 val userVisible = existing.conversationId != BLinkDao.RELAY_CONVERSATION_ID &&
                     existing.conversationId.isNotEmpty()
@@ -413,7 +424,13 @@ class BleMeshManager private constructor(
                         )
                     )
                 } else {
-                    dao.updateMessageInternal(updatedMsg)
+                    dao.updateMessageInternal(
+                        updatedMsg.copy(
+                            conversationId = existing.conversationId.ifEmpty { updatedMsg.conversationId },
+                            replyToId = existing.replyToId ?: updatedMsg.replyToId,
+                            editedAt = if (existing.editedAt > 0L) existing.editedAt else updatedMsg.editedAt
+                        )
+                    )
                 }
             }
             val queued = dao.getQueuedMessages()

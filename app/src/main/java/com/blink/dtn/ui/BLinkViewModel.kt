@@ -421,10 +421,21 @@ class BLinkViewModel(
                 )
                 bleMeshManager.enqueueMessage(msg)
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
-            } catch (e: Exception) {
-                TraceStore.finish(trace.traceId, "Failed", detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(1500)))
+            } catch (t: Throwable) {
+                android.util.Log.e("SEND", "Public send crash", t)
+                runCatching {
+                    TraceStore.finish(
+                        trace.traceId,
+                        "Failed",
+                        detailsOf("error" to t.message, "stack" to t.stackTraceToString().take(1500))
+                    )
+                }
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(getApplication(), "Public message error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Send failed: ${t.message ?: t.javaClass.simpleName}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             }
     }
@@ -539,10 +550,21 @@ class BLinkViewModel(
                 TraceStore.stage(localMsg.id, TraceStages.ID_USED, detailsOf("keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pubKey)))
                 bleMeshManager.enqueueMessage(localMsg)
                 com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
-            } catch (e: Exception) {
-                TraceStore.finish(trace.traceId, "Failed", detailsOf("error" to e.message, "stack" to e.stackTraceToString().take(1500)))
+            } catch (t: Throwable) {
+                android.util.Log.e("SEND", "Private send crash", t)
+                runCatching {
+                    TraceStore.finish(
+                        trace.traceId,
+                        "Failed",
+                        detailsOf("error" to t.message, "stack" to t.stackTraceToString().take(1500))
+                    )
+                }
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(getApplication(), "Private message error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Send failed: ${t.message ?: t.javaClass.simpleName}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             }
     }

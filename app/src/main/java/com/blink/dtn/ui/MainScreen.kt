@@ -57,7 +57,10 @@ import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -199,7 +202,7 @@ enum class MainTab {
     Profile
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(viewModel: BLinkViewModel) {
     var selectedTab by remember { mutableStateOf(MainTab.Dialogs) }
@@ -252,10 +255,13 @@ fun MainScreen(viewModel: BLinkViewModel) {
         )
     }
 
+    val imeVisible = WindowInsets.isImeVisible
     Box(modifier = Modifier.fillMaxSize().background(CosmeticApply.backdropTint(gm.themeId))) {
         AppRootBackdrop()
         Scaffold(
             containerColor = Color.Transparent,
+            // We handle system/IME insets ourselves (edge-to-edge + composer).
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
                     title = {
@@ -340,10 +346,18 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 )
             },
             bottomBar = {
-                CustomBottomBar(selectedTab) { selectedTab = it }
+                // Hide tab bar while typing so the composer can sit on the keyboard.
+                if (!imeVisible) {
+                    CustomBottomBar(selectedTab) { selectedTab = it }
+                }
             }
         ) { paddingValues ->
-            Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .padding(paddingValues)
+                    .fillMaxSize()
+                    .then(if (imeVisible) Modifier.imePadding() else Modifier)
+            ) {
                 NetworkStatusBanner(isConnected = isConnected)
                 nearbyUpdate?.let { offer ->
                     NearbyUpdateBanner(
@@ -427,7 +441,9 @@ fun CustomBottomBar(selectedTab: MainTab, onTabSelected: (MainTab) -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 12.dp, start = 10.dp, end = 10.dp)
+            // Lift above system gesture/nav buttons.
+            .navigationBarsPadding()
+            .padding(bottom = 8.dp, start = 10.dp, end = 10.dp, top = 2.dp)
     ) {
         Row(
             modifier = Modifier
@@ -1468,8 +1484,7 @@ fun ChatInputArea(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .imePadding(),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.Bottom
     ) {
         BasicTextField(
