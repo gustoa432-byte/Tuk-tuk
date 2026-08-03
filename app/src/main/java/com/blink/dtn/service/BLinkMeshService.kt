@@ -47,6 +47,7 @@ class BLinkMeshService : Service() {
         // as MainActivity → identical id). Overwrites any legacy random id.
         myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
         prefs.edit().putString("node_id", myNodeId).apply()
+        com.blink.dtn.ui.GamificationStore.init(this)
 
         // ZOMBIE SWEEP
         serviceScope.launch {
@@ -143,6 +144,12 @@ class BLinkMeshService : Service() {
                                 dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_SENT)
                             }
                             com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "в пути")
+                            // Courier emotion: this phone helped move a package (relay of others' mail)
+                            if (currentMsg == null ||
+                                (!currentMsg.isMine && currentMsg.senderId != myNodeId)
+                            ) {
+                                com.blink.dtn.ui.GamificationStore.noteHelpedRelay(this@BLinkMeshService)
+                            }
                         }
                         is com.blink.dtn.ble.TxResult.Failure -> {
                             val currentMsg = dao.getMessageById(result.msgId)

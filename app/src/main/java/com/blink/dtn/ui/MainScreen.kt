@@ -42,6 +42,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
@@ -50,6 +51,12 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -185,9 +192,10 @@ fun MainScreen(viewModel: BLinkViewModel) {
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
+        GamificationStore.init(context)
     }
     LaunchedEffect(selectedTab) {
-        if (selectedTab != 3) {
+        if (selectedTab != 4) {
             showSettings = false
             AppWallpaper.discardDraft()
         }
@@ -256,7 +264,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         }
                     },
                     actions = {
-                        if (selectedTab == 3) {
+                        if (selectedTab == 4) {
                             Box(
                                 modifier = Modifier
                                     .padding(end = 4.dp)
@@ -314,12 +322,13 @@ fun MainScreen(viewModel: BLinkViewModel) {
                     when (selectedTab) {
                         0 -> PrivateTab(viewModel)
                         1 -> NetworkTab(viewModel)
-                        2 -> PublicTab(viewModel) { contactId ->
+                        2 -> ExpeditionTab(viewModel)
+                        3 -> PublicTab(viewModel) { contactId ->
                             viewModel.ensureContact(contactId)
                             viewModel.setCurrentDialog(contactId)
                             selectedTab = 0
                         }
-                        3 -> if (showSettings) {
+                        4 -> if (showSettings) {
                             SettingsScreen(onBack = {
                                 AppWallpaper.discardDraft()
                                 showSettings = false
@@ -395,8 +404,9 @@ fun CustomBottomBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
         ) {
             BottomBarItem(Icons.Default.Person, S.dialogs(lang), selectedTab == 0) { onTabSelected(0) }
             BottomBarItem(Icons.Default.WifiTethering, S.network(lang), selectedTab == 1) { onTabSelected(1) }
-            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 2) { onTabSelected(2) }
-            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 3) { onTabSelected(3) }
+            BottomBarItem(Icons.Default.Explore, S.expedition(lang), selectedTab == 2) { onTabSelected(2) }
+            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == 3) { onTabSelected(3) }
+            BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == 4) { onTabSelected(4) }
         }
     }
 }
@@ -408,14 +418,14 @@ fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(bgColor)
             .bounceClick { onClick() }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = label, tint = contentColor, modifier = Modifier.size(18.dp))
             if (isSelected) {
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(label, color = contentColor, style = Typography.labelMedium)
@@ -435,6 +445,20 @@ fun TukTukButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) 
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, content = content)
     }
+}
+
+@Composable
+private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (selected) BackgroundDark else TextSecondary,
+        style = Typography.labelSmall,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) AccentLime else DividerColor.copy(alpha = 0.35f))
+            .bounceClick(onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    )
 }
 
 @Composable
@@ -459,28 +483,56 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
     val privateDialogs = dialogs.filter { it.conversationId != "general" }
     var showSearch by remember { mutableStateOf(false) }
     var searchId by remember { mutableStateOf("") }
+    var filterUnread by remember { mutableStateOf(false) }
+    var filterPinned by remember { mutableStateOf(false) }
+    val query = searchId.trim().lowercase()
+    val filtered = privateDialogs.filter { dialog ->
+        val unreadOk = !filterUnread || dialog.unreadCount > 0
+        val pinnedOk = !filterPinned || dialog.unreadCount > 0 // stub pin: reuse unread until pin store
+        val textOk = query.isEmpty() ||
+            dialog.displayName.orEmpty().lowercase().contains(query) ||
+            dialog.conversationId.lowercase().contains(query) ||
+            dialog.lastMessage.orEmpty().lowercase().contains(query)
+        unreadOk && pinnedOk && textOk
+    }
     
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            // Search / New Chat Capsule
-            Box(
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 8.dp)
-                    .glassPanel(corner = 24.dp)
-                    .bounceClick { showSearch = true }
-                    .padding(16.dp),
-                contentAlignment = Alignment.CenterStart
+                    .padding(top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(
-                    text = S.findOrStartDialog(lang),
-                    color = TextSecondary,
-                    style = Typography.bodyLarge
-                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .glassPanel(corner = 16.dp)
+                        .bounceClick { showSearch = true }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(
+                        text = S.findOrStartDialog(lang),
+                        color = TextSecondary,
+                        style = Typography.bodyMedium
+                    )
+                }
             }
-            
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(S.unreadOnly(lang), filterUnread) { filterUnread = !filterUnread }
+                FilterChip(S.pinned(lang), filterPinned) { filterPinned = !filterPinned }
+                FilterChip(S.archive(lang), false) { /* stub archive */ }
+            }
 
-            if (privateDialogs.isEmpty()) {
+            if (filtered.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(S.noDialogs(lang), color = TextSecondary, style = Typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
@@ -490,7 +542,7 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                 }
             } else {
                 LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(privateDialogs) { dialog ->
+                    items(filtered) { dialog ->
                         val profile by viewModel.getProfileFlow(dialog.conversationId).collectAsState(initial = null)
                         val formatter = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
                         val timeString = if (dialog.lastTimestamp > 0) formatter.format(java.util.Date(dialog.lastTimestamp)) else ""
@@ -500,20 +552,18 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .glassPanel(corner = 16.dp)
                                 .bounceClick { viewModel.setCurrentDialog(dialog.conversationId) }
-                                .padding(16.dp),
+                                .padding(horizontal = 4.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             PeerAvatar(
                                 avatarBlob = profile?.avatarBlob,
                                 label = title,
-                                size = 44.dp,
+                                size = 42.dp,
                                 uid = dialog.conversationId
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -525,23 +575,14 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
                                     if (trustBadge != null) {
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = trustBadge,
                                             color = TextSecondary,
-                                            style = Typography.labelSmall,
-                                            modifier = Modifier
-                                                .background(DividerColor, RoundedCornerShape(8.dp))
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            style = Typography.labelSmall
                                         )
                                     }
                                 }
-                                Text(
-                                    text = "id ${profile?.shortId() ?: dialog.conversationId.take(8)}",
-                                    color = TextSecondary,
-                                    style = Typography.labelSmall,
-                                    maxLines = 1
-                                )
                                 if (!dialog.lastMessage.isNullOrEmpty()) {
                                     Text(
                                         text = dialog.lastMessage,
@@ -557,18 +598,30 @@ fun ChatListScreen(viewModel: BLinkViewModel) {
                                     Text(text = timeString, color = TextSecondary, style = Typography.labelSmall)
                                 }
                                 if (dialog.unreadCount > 0) {
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Box(
                                         modifier = Modifier
-                                            .size(20.dp)
-                                            .background(TextPrimary, CircleShape),
+                                            .height(18.dp)
+                                            .padding(horizontal = 0.dp)
+                                            .background(AccentLime, RoundedCornerShape(9.dp))
+                                            .padding(horizontal = 6.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(text = dialog.unreadCount.toString(), color = BackgroundDark, style = Typography.labelSmall)
+                                        Text(
+                                            text = dialog.unreadCount.toString(),
+                                            color = BackgroundDark,
+                                            style = Typography.labelSmall
+                                        )
                                     }
                                 }
                             }
                         }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(DividerColor.copy(alpha = 0.45f))
+                        )
                     }
                 }
             }
@@ -656,6 +709,9 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     var renameDraft by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
     var showPeerProfile by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var replyTo by remember { mutableStateOf<Message?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -764,9 +820,9 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
         )
     }
     
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -925,6 +981,37 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        if (selecting) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .glassPanel(corner = 12.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(S.selectedCount(lang, selectedIds.size), color = TextPrimary, style = Typography.labelMedium, modifier = Modifier.weight(1f))
+                Text(S.copy(lang), color = AccentLime, style = Typography.labelSmall, modifier = Modifier.bounceClick {
+                    val texts = messages.filter { it.id in selectedIds }.joinToString("\n") { it.text }
+                    clipboardManager.setText(AnnotatedString(texts))
+                    Toast.makeText(context, S.saved(lang), Toast.LENGTH_SHORT).show()
+                })
+                Text(S.forward(lang), color = AccentLime, style = Typography.labelSmall, modifier = Modifier.bounceClick {
+                    Toast.makeText(context, if (lang == "en") "Forward coming soon" else "Пересылка скоро", Toast.LENGTH_SHORT).show()
+                })
+                Text(S.deleteLocal(lang), color = DangerColor, style = Typography.labelSmall, modifier = Modifier.bounceClick {
+                    selectedIds.forEach { viewModel.deleteMessageLocally(it) }
+                    selectedIds = emptySet()
+                    selecting = false
+                })
+                Text(S.cancel(lang), color = TextSecondary, style = Typography.labelSmall, modifier = Modifier.bounceClick {
+                    selecting = false
+                    selectedIds = emptySet()
+                })
+            }
+        }
+
         if (messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(S.noMessages(lang), color = TextSecondary, style = Typography.bodyMedium)
@@ -939,6 +1026,21 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     MessageBubble(
                         msg = msg,
                         myNodeId = viewModel.myNodeId,
+                        selected = msg.id in selectedIds,
+                        selecting = selecting,
+                        onToggleSelect = {
+                            selectedIds = if (msg.id in selectedIds) selectedIds - msg.id else selectedIds + msg.id
+                            if (selectedIds.isEmpty()) selecting = false
+                        },
+                        onLongPressSelect = {
+                            selecting = true
+                            selectedIds = selectedIds + msg.id
+                        },
+                        onReply = { replyTo = msg },
+                        onCopy = {
+                            clipboardManager.setText(AnnotatedString(msg.text))
+                            Toast.makeText(context, S.saved(lang), Toast.LENGTH_SHORT).show()
+                        },
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
                         onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
                         onRetrySend = { viewModel.retryOutgoingMessage(msg.id) }
@@ -947,14 +1049,32 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             }
         }
 
+        replyTo?.let { target ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp)
+                    .glassPanel(corner = 10.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(S.reply(lang), color = AccentLime, style = Typography.labelSmall)
+                    Text(target.text, color = TextSecondary, style = Typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                Text("×", color = TextSecondary, modifier = Modifier.bounceClick { replyTo = null }.padding(6.dp))
+            }
+        }
         
         ChatInputArea(
             text = messageText,
             onTextChange = { if (it.length <= 140) messageText = it },
             onSend = {
                 if (messageText.isNotBlank()) {
-                    viewModel.sendPrivateMessage(messageText, contactId)
+                    val body = replyTo?.let { "↪ ${it.text.take(40)}\n$messageText" } ?: messageText
+                    viewModel.sendPrivateMessage(body, contactId)
                     messageText = ""
+                    replyTo = null
                 }
             }
         )
@@ -980,25 +1100,25 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        // Room selector — horizontal scroll strip
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
+        // Primary humanitarian groups first, then the rest
         androidx.compose.foundation.lazy.LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(top = 6.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(com.blink.dtn.ble.MeshRoom.ALL) { meta ->
                 val isSelected = selectedRoom == meta.id
                 Box(
                     modifier = Modifier
-                        .glassPanel(corner = 16.dp, strong = isSelected)
+                        .glassPanel(corner = 14.dp, strong = isSelected)
                         .background(
                             if (isSelected) com.blink.dtn.ui.theme.AccentLime.copy(alpha = 0.22f)
                             else androidx.compose.ui.graphics.Color.Transparent
                         )
                         .bounceClick { viewModel.selectRoom(meta.id) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -1060,49 +1180,54 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
     }
 }
 
-// 4. ChatInputArea with custom BasicTextField and send button
+// Compact auto-grow composer — maximize message area
 @Composable
 fun ChatInputArea(text: String, onTextChange: (String) -> Unit, onSend: () -> Unit) {
     val lang by AppLang.lang.collectAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 6.dp)
+            .imePadding(),
+        verticalAlignment = Alignment.Bottom
     ) {
         BasicTextField(
             value = text,
             onValueChange = onTextChange,
-            textStyle = Typography.bodyLarge.copy(color = TextPrimary),
+            textStyle = Typography.bodyLarge.copy(color = TextPrimary, fontSize = 16.sp, lineHeight = 20.sp),
             cursorBrush = SolidColor(TextPrimary),
+            maxLines = 5,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             decorationBox = { innerTextField ->
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .glassPanel(corner = 24.dp)
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .heightIn(min = 40.dp)
+                        .glassPanel(corner = 18.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     if (text.isEmpty()) {
-                        Text(S.message(lang), color = TextSecondary, style = Typography.bodyLarge)
+                        Text(S.message(lang), color = TextSecondary, style = Typography.bodyMedium)
                     }
                     innerTextField()
                 }
             },
             modifier = Modifier.weight(1f)
         )
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(6.dp))
         Box(
             modifier = Modifier
-                .glassPanel(corner = 22.dp)
-                .bounceClick { onSend() }
-                .padding(12.dp),
+                .size(40.dp)
+                .glassPanel(corner = 20.dp)
+                .bounceClick { onSend() },
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = S.send(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = S.send(lang), tint = TextPrimary, modifier = Modifier.size(18.dp))
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
     msg: Message,
@@ -1113,6 +1238,12 @@ fun MessageBubble(
     onCancelSend: (() -> Unit)? = null,
     onRetrySend: (() -> Unit)? = null,
     onBlockUser: (() -> Unit)? = null,
+    onReply: (() -> Unit)? = null,
+    onCopy: (() -> Unit)? = null,
+    selected: Boolean = false,
+    selecting: Boolean = false,
+    onToggleSelect: (() -> Unit)? = null,
+    onLongPressSelect: (() -> Unit)? = null,
     senderAvatarBlob: ByteArray? = null
 ) {
     val lang by AppLang.lang.collectAsState()
@@ -1142,14 +1273,42 @@ fun MessageBubble(
             onDismissRequest = { showActions = false },
             title = { Text(S.msgActionTitle(lang), color = TextPrimary) },
             text = {
-                Text(
-                    when {
-                        canBlockSender -> S.blockUser(lang)
-                        canCancel -> S.msgDeleteHintCanCancel(lang)
-                        else -> S.msgDeleteHint(lang)
-                    },
-                    color = TextSecondary
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (onReply != null) {
+                        Text(S.reply(lang), color = TextPrimary, modifier = Modifier
+                            .fillMaxWidth()
+                            .bounceClick { showActions = false; onReply() }
+                            .padding(vertical = 8.dp))
+                    }
+                    if (onCopy != null) {
+                        Text(S.copy(lang), color = TextPrimary, modifier = Modifier
+                            .fillMaxWidth()
+                            .bounceClick { showActions = false; onCopy() }
+                            .padding(vertical = 8.dp))
+                    }
+                    Text(S.forward(lang), color = TextPrimary, modifier = Modifier
+                        .fillMaxWidth()
+                        .bounceClick {
+                            showActions = false
+                            // Forward UI stub — same emotion as Telegram without TG code
+                        }
+                        .padding(vertical = 8.dp))
+                    if (onLongPressSelect != null) {
+                        Text(S.select(lang), color = TextPrimary, modifier = Modifier
+                            .fillMaxWidth()
+                            .bounceClick { showActions = false; onLongPressSelect() }
+                            .padding(vertical = 8.dp))
+                    }
+                    Text(
+                        when {
+                            canBlockSender -> S.blockUser(lang)
+                            canCancel -> S.msgDeleteHintCanCancel(lang)
+                            else -> S.msgDeleteHint(lang)
+                        },
+                        color = TextSecondary,
+                        style = Typography.labelSmall
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -1184,15 +1343,19 @@ fun MessageBubble(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .pointerInput(msg.id) {
-                detectTapGestures(
-                    onLongPress = { showActions = true },
-                    onTap = {
-                        if (isMine) showVoyage = true
+            .padding(vertical = 2.dp)
+            .background(if (selected) AccentLime.copy(alpha = 0.12f) else Color.Transparent)
+            .combinedClickable(
+                onClick = {
+                    when {
+                        selecting -> onToggleSelect?.invoke()
+                        isMine -> showVoyage = true
                     }
-                )
-            },
+                },
+                onLongClick = {
+                    if (onLongPressSelect != null) onLongPressSelect() else showActions = true
+                }
+            ),
         horizontalAlignment = if (isMine) Alignment.End else Alignment.Start
     ) {
         if (showSender && !isMine) {
@@ -1432,6 +1595,34 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
             }
         }
         Spacer(modifier = Modifier.height(24.dp))
+        // Network help — Expedition mirror on profile
+        val helpSnap by GamificationStore.snap.collectAsState()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassPanel(corner = 14.dp)
+                .padding(14.dp)
+        ) {
+            Text(S.networkHelpStats(lang), color = TextPrimary, style = Typography.titleMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text(helpSnap.helped.toString(), color = AccentLime, style = Typography.titleLarge)
+                    Text(S.packagesDelivered(lang), color = TextSecondary, style = Typography.labelSmall)
+                }
+                Column {
+                    Text(helpSnap.received.toString(), color = AccentLime, style = Typography.titleLarge)
+                    Text(S.messagesReceived(lang), color = TextSecondary, style = Typography.labelSmall)
+                }
+                Column {
+                    Text(helpSnap.saved.toString(), color = AccentLime, style = Typography.titleLarge)
+                    Text(S.livesSaved(lang), color = TextSecondary, style = Typography.labelSmall)
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(S.helpedFeeling(lang), color = TextSecondary, style = Typography.labelSmall)
+        }
+        Spacer(modifier = Modifier.height(24.dp))
         // QR encodes contact payload (id + public key + nick + optional av)
         val qrBitmap = remember(contactQr) {
             generateQrCode(contactQr, 512)?.asImageBitmap()
@@ -1454,6 +1645,13 @@ fun ProfileTab(viewModel: BLinkViewModel, onScanSuccess: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(32.dp))
         Text(S.scanContact(lang), style = Typography.bodyMedium, color = TextSecondary)
+        Text(
+            if (lang == "en") "QR is optional — contacts sync when you meet online or nearby."
+            else "QR — дополнительно. Контакты синхронизируются сами при встрече в сети или рядом.",
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+        )
         Spacer(modifier = Modifier.height(16.dp))
         TukTukButton(onClick = { 
             val options = ScanOptions()

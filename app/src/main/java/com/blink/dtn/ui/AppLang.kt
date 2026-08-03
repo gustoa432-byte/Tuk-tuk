@@ -51,7 +51,7 @@ object S {
         "Связь там где есть люди"
     fun routeVia(lang: String, path: String) = if (lang == LANG_EN) "via $path" else "через $path"
     fun transferred(lang: String) = if (lang == LANG_EN) "Queued" else "В очереди"
-    fun hopsToday(lang: String) = if (lang == LANG_EN) "Hops" else "Прыжков"
+    fun hopsToday(lang: String) = if (lang == LANG_EN) "Carries" else "Передач"
     fun devicesNearby(lang: String) = if (lang == LANG_EN) "Devices" else "Устройств"
     fun preferredRoute(lang: String) = if (lang == LANG_EN) "Preferred route" else "Предпочтительный путь"
     fun currentShipment(lang: String) = if (lang == LANG_EN) "Current message" else "Текущее сообщение"
@@ -214,4 +214,80 @@ object S {
     else
         "® Разработано в Крыму. Для работы в любых условиях"
     fun feedbackBody(lang: String) = if (lang == LANG_EN) "Describe the bug or idea:\n\n" else "Опишите ошибку или идею:\n\n"
+
+    // Expedition / gamification
+    fun expedition(lang: String) = if (lang == LANG_EN) "Expedition" else "Экспедиция"
+    fun expeditionTagline(lang: String) = if (lang == LANG_EN)
+        "You’re a courier. A message is a package. Your phone is a network node."
+    else
+        "Ты курьер. Сообщение — посылка. Телефон — узел сети."
+    fun helpedFeeling(lang: String) = if (lang == LANG_EN)
+        "After a relay you should feel: I helped the network."
+    else
+        "После передачи должно быть чувство: я помог сети."
+    fun packagesWaiting(lang: String) = if (lang == LANG_EN) "Waiting" else "Ждут"
+    fun packagesDelivered(lang: String) = if (lang == LANG_EN) "Helped" else "Передал"
+    fun neighborsHelped(lang: String) = if (lang == LANG_EN) "Neighbors" else "Соседи"
+    fun messagesReceived(lang: String) = if (lang == LANG_EN) "Received" else "Получено"
+    fun livesSaved(lang: String) = if (lang == LANG_EN) "Saved" else "Спасено"
+    fun queueNow(lang: String) = if (lang == LANG_EN) "Queue" else "Очередь"
+    fun currentMission(lang: String) = if (lang == LANG_EN) "Current mission" else "Текущая миссия"
+    fun noMission(lang: String) = if (lang == LANG_EN)
+        "No packages waiting — rest or find people nearby."
+    else
+        "Нет посылок — можно отдыхать или искать людей рядом."
+    fun packageInFlight(lang: String) = if (lang == LANG_EN) "Package on the way" else "Посылка в пути"
+    fun packagesWaitingHint(lang: String, n: Int) = if (lang == LANG_EN)
+        "$n packages waiting. Keep the phone near people."
+    else
+        "$n посылок ждут передачи. Держи телефон рядом с людьми."
+    fun yourContribution(lang: String) = if (lang == LANG_EN) "Your contribution" else "Твой вклад"
+    fun contributionBody(lang: String, helped: Int, saved: Int) = if (lang == LANG_EN)
+        "You carried $helped packages. $saved reached someone who needed them."
+    else
+        "Ты передал $helped посылок. $saved дошли до тех, кому были нужны."
+    fun cosmeticsOnly(lang: String) = if (lang == LANG_EN)
+        "Reward is cosmetics only — themes, frames, nick color, rare dinosaurs."
+    else
+        "Награда — только косметика: темы, рамки, цвет ника, редкие динозавры."
+    fun cosmetics(lang: String) = if (lang == LANG_EN) "Cosmetics" else "Украшения"
+    fun cosmeticReady(lang: String) = if (lang == LANG_EN) "Unlocked — tap to equip" else "Открыто — нажми, чтобы надеть"
+    fun cosmeticLocked(lang: String) = if (lang == LANG_EN) "Help the network to unlock" else "Помоги сети, чтобы открыть"
+    fun equipped(lang: String) = if (lang == LANG_EN) "On" else "Надето"
+    fun networkHelpStats(lang: String) = if (lang == LANG_EN) "Network help" else "Помощь сети"
+    fun archive(lang: String) = if (lang == LANG_EN) "Archive" else "Архив"
+    fun pinned(lang: String) = if (lang == LANG_EN) "Pinned" else "Закрепы"
+    fun unreadOnly(lang: String) = if (lang == LANG_EN) "Unread" else "Непрочитанные"
+    fun reply(lang: String) = if (lang == LANG_EN) "Reply" else "Ответить"
+    fun forward(lang: String) = if (lang == LANG_EN) "Forward" else "Переслать"
+    fun edit(lang: String) = if (lang == LANG_EN) "Edit" else "Изменить"
+    fun select(lang: String) = if (lang == LANG_EN) "Select" else "Выбрать"
+    fun selectedCount(lang: String, n: Int) = if (lang == LANG_EN) "$n selected" else "Выбрано: $n"
+    fun channelsDistrict(lang: String) = if (lang == LANG_EN) "District" else "Район"
+    fun channelsCity(lang: String) = if (lang == LANG_EN) "City" else "Город"
+    fun channelsEmergency(lang: String) = if (lang == LANG_EN) "Emergency" else "Экстренные"
+    fun channelsLocal(lang: String) = if (lang == LANG_EN) "Local" else "Локальные"
+    fun channelsService(lang: String) = if (lang == LANG_EN) "Service" else "Служебные"
+
+    // Living network (human)
+    fun peopleNearby(lang: String) = if (lang == LANG_EN) "People nearby" else "Люди рядом"
+    fun noPeopleNearby(lang: String) = if (lang == LANG_EN)
+        "Nobody nearby yet — walk closer or wait."
+    else
+        "Пока никого рядом — подойди ближе или подожди."
+    fun morePeopleNearby(lang: String, n: Int) = if (lang == LANG_EN)
+        "And $n more nearby"
+    else
+        "И ещё $n рядом"
+    fun howMessagesTravel(lang: String) = if (lang == LANG_EN) "How messages travel now" else "Как сейчас идут сообщения"
+    fun autoRouteHint(lang: String) = if (lang == LANG_EN)
+        "Chosen automatically — you only write the message."
+    else
+        "Выбирается само — ты только пишешь сообщение."
+    fun helpedRelayCount(lang: String, n: Int) = if (lang == LANG_EN)
+        "Helped carry $n"
+    else
+        "Помог передать $n"
+    fun nearbyNow(lang: String) = if (lang == LANG_EN) "Nearby now" else "Сейчас рядом"
 }
+

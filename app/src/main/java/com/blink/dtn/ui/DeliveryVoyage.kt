@@ -1,6 +1,7 @@
 package com.blink.dtn.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -11,69 +12,84 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.db.Message
+import com.blink.dtn.router.MessageRouter
+import com.blink.dtn.router.RoutePath
+import com.blink.dtn.telemetry.PeerDirectory
 import com.blink.dtn.telemetry.TraceAnalyzer
 import com.blink.dtn.telemetry.TraceStore
+import com.blink.dtn.ui.theme.AccentLime
 import com.blink.dtn.ui.theme.DangerColor
 import com.blink.dtn.ui.theme.DividerColor
 import com.blink.dtn.ui.theme.GlassDialogContainer
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
-import com.blink.dtn.ui.theme.glassPanel
 
 /**
- * User-facing Russian delivery labels mapped from DB status + message type.
- * Not a second Observatory — short «voyage» crumbs only.
+ * User-facing delivery crumbs — no engineer jargon (no ACK / GATT / UUID).
  */
 object DeliveryVoyageLabels {
-    fun label(msg: Message): String {
+    fun label(msg: Message, lang: String = AppLang.lang.value): String {
         val base = when (msg.status) {
-            Message.STATUS_PENDING -> "в очереди"
-            Message.STATUS_PENDING_KEY -> "ждём ключ"
-            Message.STATUS_IN_FLIGHT -> "у соседей"
-            Message.STATUS_SENT -> if (msg.type == "PRIVATE") "в пути" else "у соседей"
-            Message.STATUS_DELIVERED -> "доставлено"
-            Message.STATUS_FAILED -> "ошибка"
-            else -> "в очереди"
+            Message.STATUS_PENDING -> if (lang == "en") "waiting" else "ждёт"
+            Message.STATUS_PENDING_KEY -> if (lang == "en") "almost" else "почти"
+            Message.STATUS_IN_FLIGHT -> if (lang == "en") "with people" else "у людей"
+            Message.STATUS_SENT -> if (msg.type == "PRIVATE") {
+                if (lang == "en") "on the way" else "в пути"
+            } else {
+                if (lang == "en") "passed on" else "передано"
+            }
+            Message.STATUS_DELIVERED -> if (lang == "en") "delivered" else "доставлено"
+            Message.STATUS_FAILED -> if (lang == "en") "stuck" else "застряло"
+            else -> if (lang == "en") "waiting" else "ждёт"
         }
-        val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
-        return if (path != null && msg.status != Message.STATUS_PENDING_KEY) {
-            "$base · ${path.labelRu()}"
-        } else base
+        return base
     }
 
     fun color(msg: Message): Color = when (msg.status) {
         Message.STATUS_DELIVERED -> TextPrimary
         Message.STATUS_SENT -> TextSecondary
         Message.STATUS_FAILED -> DangerColor
-        Message.STATUS_PENDING, Message.STATUS_IN_FLIGHT, Message.STATUS_PENDING_KEY -> DividerColor
         else -> DividerColor
     }
 
-    fun subtitle(msg: Message): String {
-        val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
-        val via = path?.let { " (${it.labelRu()})" }.orEmpty()
+    fun subtitle(msg: Message, lang: String = AppLang.lang.value): String {
+        val path = MessageRouter.pathFor(msg.id)
+        val via = path?.let { " · ${humanPathLabel(it, lang)}" }.orEmpty()
         return when (msg.status) {
-            Message.STATUS_PENDING -> "В очереди на отправку$via"
-            Message.STATUS_PENDING_KEY -> "Ждём ключ собеседника (лучше сверить QR)"
-            Message.STATUS_IN_FLIGHT -> "Пишем соседям$via"
+            Message.STATUS_PENDING ->
+                if (lang == "en") "Looking for a path$via" else "Ищем путь$via"
+            Message.STATUS_PENDING_KEY ->
+                if (lang == "en") "Need to meet this person once (QR helps)"
+                else "Нужна одна встреча с человеком (поможет QR)"
+            Message.STATUS_IN_FLIGHT ->
+                if (lang == "en") "Neighbors are carrying it$via"
+                else "Соседи уже несут$via"
             Message.STATUS_SENT ->
-                if (msg.type == "PRIVATE") "Ушло в сеть$via, ждём подтверждение (ACK)"
-                else "Передано соседям$via (общий чат — без личного ACK)"
-            Message.STATUS_DELIVERED -> "Получено подтверждение от адресата$via"
-            Message.STATUS_FAILED -> "Не удалось доставить после повторов — нажмите, чтобы повторить"
+                if (msg.type == "PRIVATE") {
+                    if (lang == "en") "Left your phone — waiting for the friend$via"
+                    else "Ушло с телефона — ждём друга$via"
+                } else {
+                    if (lang == "en") "Shared with people nearby$via"
+                    else "Передано людям рядом$via"
+                }
+            Message.STATUS_DELIVERED ->
+                if (lang == "en") "Your friend got it$via" else "Друг получил$via"
+            Message.STATUS_FAILED ->
+                if (lang == "en") "Couldn't get through — tap to try again"
+                else "Не удалось пробиться — нажмите, чтобы повторить"
             else -> ""
         }
     }
 }
 
-/** Session delivery health from recent traces (Observatory summary). */
 data class DeliveryHealthSummary(
     val total: Int,
     val delivered: Int,
@@ -107,23 +123,33 @@ data class DeliveryHealthSummary(
     }
 }
 
+/** Human story of a message — Observatory stays data source only. */
 @Composable
 fun MessageVoyageDialog(
     msg: Message,
     onDismiss: () -> Unit,
     onRetry: (() -> Unit)? = null
 ) {
-    val context = LocalContext.current
+    val lang by AppLang.lang.collectAsState()
     val report = remember(msg.id, msg.status) {
         TraceStore.getByMessageId(msg.id)?.let { TraceAnalyzer.analyze(it) }
     }
-    val terminal = report?.terminalStatus?.lowercase()
-    val showErrorReport = msg.status == Message.STATUS_FAILED ||
-        terminal in setOf("failed", "expired", "timeout", "dropped", "retrylimit", "cancelled")
+    val path = MessageRouter.pathFor(msg.id) ?: RoutePath.BLE
+    val hops = report?.route?.size?.coerceAtLeast(1) ?: 1
+    val elapsed = report?.statistics?.deliveryMs
+        ?: report?.journey?.lastOrNull()?.elapsedMs
+    val helpers = report?.route
+        ?.mapNotNull { hop ->
+            hop.nodeId?.let { PeerDirectory.labelFor(it) }
+                ?.takeIf { !it.startsWith("Node ", ignoreCase = true) }
+        }
+        ?.distinct()
+        ?.take(4)
+        .orEmpty()
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(S.messageTracker(AppLang.lang.value), color = TextPrimary) },
+        title = { Text(S.messageTracker(lang), color = TextPrimary) },
         text = {
             Column(
                 modifier = Modifier
@@ -131,104 +157,128 @@ fun MessageVoyageDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    DeliveryVoyageLabels.label(msg),
+                    DeliveryVoyageLabels.label(msg, lang),
                     style = Typography.titleMedium,
                     color = DeliveryVoyageLabels.color(msg)
                 )
                 Text(
-                    DeliveryVoyageLabels.subtitle(msg),
+                    DeliveryVoyageLabels.subtitle(msg, lang),
                     style = Typography.bodySmall,
                     color = TextSecondary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                val path = com.blink.dtn.router.MessageRouter.pathFor(msg.id)
-                    ?: com.blink.dtn.router.RoutePath.BLE
                 MessageTrackerStrip(
                     path = path,
-                    statusRu = DeliveryVoyageLabels.subtitle(msg)
+                    statusRu = DeliveryVoyageLabels.subtitle(msg, lang)
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                if (report == null) {
-                    Text(
-                        "Подробный след ещё не записан или уже очищен.",
-                        color = TextSecondary,
-                        style = Typography.bodySmall
+                Spacer(modifier = Modifier.height(12.dp))
+                StoryLine(
+                    if (lang == "en") "How it travels" else "Как идёт",
+                    humanPathLabel(path, lang)
+                )
+                StoryLine(
+                    if (lang == "en") "Stops on the way" else "Остановок по пути",
+                    "$hops"
+                )
+                if (elapsed != null && elapsed > 0) {
+                    StoryLine(
+                        if (lang == "en") "Time so far" else "Времени в пути",
+                        formatDuration(elapsed, lang)
                     )
-                } else {
-                    if (report.route.isNotEmpty()) {
-                        Text("Маршрут", style = Typography.labelMedium, color = TextPrimary)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        report.route.take(6).forEachIndexed { i, hop ->
-                            Text(
-                                hop.label + (hop.detail?.let { " · $it" } ?: ""),
-                                color = TextSecondary,
-                                style = Typography.labelSmall
-                            )
-                            if (i < minOf(report.route.lastIndex, 5)) {
-                                Text("↓", color = TextSecondary, style = Typography.labelSmall)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    Text("Этапы", style = Typography.labelMedium, color = TextPrimary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    report.journey.takeLast(8).forEach { step ->
-                        Text(
-                            step.emojiTitle,
-                            color = TextPrimary,
-                            style = Typography.bodySmall,
-                            modifier = Modifier
-                                .padding(vertical = 2.dp)
-                                .fillMaxWidth()
-                                .glassPanel(corner = 8.dp)
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                        Text("+${step.elapsedMs} мс", color = TextSecondary, style = Typography.labelSmall)
-                    }
-                    report.terminalStatus?.let {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Итог: $it", color = TextSecondary, style = Typography.labelSmall)
-                    }
                 }
-                if (showErrorReport) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    TextButton(
-                        onClick = {
-                            TraceStore.shareMessageErrorReport(context, msg.id, msg.status)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Отправить ошибку разработчику", color = DangerColor)
-                    }
+                if (helpers.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Соберёт ZIP (msgId, этапы, device) и откроет почту → tuktukfb@internet.ru",
+                        if (lang == "en") "People who helped" else "Кто помог",
+                        style = Typography.labelMedium,
+                        color = TextPrimary
+                    )
+                    helpers.forEach { name ->
+                        Text("· $name", color = TextSecondary, style = Typography.labelSmall)
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        if (lang == "en")
+                            "When someone nearby carries your message, their name will appear here."
+                        else
+                            "Когда человек рядом понесёт сообщение — его имя появится здесь.",
                         color = TextSecondary,
                         style = Typography.labelSmall
                     )
                 }
+                if (report?.journey?.isNotEmpty() == true) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        if (lang == "en") "Story" else "История",
+                        style = Typography.labelMedium,
+                        color = TextPrimary
+                    )
+                    report.journey.take(8).forEach { step ->
+                        Text(
+                            humanizeJourney(step.emojiTitle, lang),
+                            color = TextSecondary,
+                            style = Typography.labelSmall
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
-            if (msg.status == Message.STATUS_FAILED && onRetry != null) {
-                TextButton(onClick = {
-                    onRetry()
-                    onDismiss()
-                }) {
-                    Text("Повторить", color = TextPrimary)
+            Row {
+                if (onRetry != null) {
+                    TextButton(onClick = { onRetry(); onDismiss() }) {
+                        Text(if (lang == "en") "Try again" else "Повторить", color = AccentLime)
+                    }
                 }
-            } else {
                 TextButton(onClick = onDismiss) {
-                    Text("Закрыть", color = TextSecondary)
-                }
-            }
-        },
-        dismissButton = {
-            if (msg.status == Message.STATUS_FAILED && onRetry != null) {
-                TextButton(onClick = onDismiss) {
-                    Text("Закрыть", color = TextSecondary)
+                    Text(S.close(lang), color = TextPrimary)
                 }
             }
         },
         containerColor = GlassDialogContainer
     )
+}
+
+@Composable
+private fun StoryLine(title: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+    ) {
+        Text(title, color = TextSecondary, style = Typography.labelSmall, modifier = Modifier.weight(1f))
+        Text(value, color = TextPrimary, style = Typography.labelSmall)
+    }
+}
+
+private fun formatDuration(ms: Long, lang: String): String {
+    val sec = (ms / 1000).coerceAtLeast(1)
+    return if (sec < 60) {
+        if (lang == "en") "${sec}s" else "$sec с"
+    } else {
+        val m = sec / 60
+        if (lang == "en") "${m} min" else "$m мин"
+    }
+}
+
+private fun humanizeJourney(raw: String, lang: String): String {
+    val s = raw.lowercase()
+    return when {
+        "send" in s || "отправ" in s || "ui" in s ->
+            if (lang == "en") "· You sent the package" else "· Вы отправили посылку"
+        "encrypt" in s || "ключ" in s || "prep" in s ->
+            if (lang == "en") "· Locked for the journey" else "· Закрыли для дороги"
+        "wifi" in s ->
+            if (lang == "en") "· Passed via nearby Wi‑Fi" else "· Передали через ближайший Wi‑Fi"
+        "internet" in s || "vps" in s || "router" in s ->
+            if (lang == "en") "· Went through the internet" else "· Ушло через интернет"
+        "peer" in s || "сосед" in s || "ble" in s || "gatt" in s ->
+            if (lang == "en") "· A neighbor took it" else "· Сосед принял"
+        "ack" in s || "deliver" in s || "достав" in s ->
+            if (lang == "en") "· Friend confirmed receipt" else "· Друг подтвердил получение"
+        "fail" in s || "error" in s ->
+            if (lang == "en") "· Path broke — will retry" else "· Путь оборвался — попробуем ещё"
+        else -> "· ${raw.replace(Regex("[📡✅🔀👥🌉]"), "").trim()}"
+    }
 }

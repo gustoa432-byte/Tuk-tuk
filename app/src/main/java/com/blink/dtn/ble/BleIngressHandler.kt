@@ -113,6 +113,9 @@ internal class BleIngressHandler(
                 }
                 "PUBLIC", "SYSTEM_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT" -> {
                     dao.insertMessageWithConversation(packet)
+                    if (packet.type == "PUBLIC") {
+                        com.blink.dtn.ui.GamificationStore.noteReceived()
+                    }
                     deps.notifyIncoming(packet)
                 }
                 "PRIVATE" -> {
@@ -191,8 +194,9 @@ internal class BleIngressHandler(
             com.blink.dtn.telemetry.detailsOf("ackLatencyMs" to latency)
         )
         if (status == Message.STATUS_DELIVERED) {
-            com.blink.dtn.router.MessageRouter.noteShipmentStatus(ackedMessageId, "доставлено")
+            com.blink.dtn.router.MessageRouter.noteShipmentStatus(ackedMessageId, "друг получил")
             com.blink.dtn.router.MessageRouter.clearShipmentIf(ackedMessageId)
+            com.blink.dtn.ui.GamificationStore.noteSavedDelivery()
         }
         return true
     }
@@ -397,6 +401,7 @@ internal class BleIngressHandler(
             com.blink.dtn.telemetry.TraceStages.RX_CONVERSATION,
             com.blink.dtn.telemetry.detailsOf("insertDurationMs" to (System.currentTimeMillis() - convStart))
         )
+        com.blink.dtn.ui.GamificationStore.noteReceived()
         deps.notifyIncoming(finalMsg)
 
         val ack = Message(

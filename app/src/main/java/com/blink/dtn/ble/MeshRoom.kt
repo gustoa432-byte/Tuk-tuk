@@ -62,16 +62,25 @@ object MeshRoom {
     )
 
     val ALL: List<RoomMeta> = listOf(
-        RoomMeta(IMPORTANT, "Важное", "Important", "Свет, вода, связь, экстренные ситуации", "Power, water, connectivity, emergencies"),
-        RoomMeta(NEWS, "Новости", "News", "Сводки, слухи и инфа из внешнего мира", "Updates, rumors and outside-world info"),
+        RoomMeta(IMPORTANT, "Экстренные", "Emergency", "Свет, вода, связь, срочная помощь", "Power, water, connectivity, urgent help"),
+        RoomMeta(NEWS, "Город", "City", "Сводки и жизнь города", "City updates and everyday life"),
+        RoomMeta(NEIGHBORS, "Район", "District", "Двор, улица, ближайшие соседи", "Yard, street, nearest neighbors"),
+        RoomMeta(HELP, "Локальные", "Local", "Вопросы, советы и взаимовыручка рядом", "Local questions, advice and mutual aid"),
+        RoomMeta(MEETUPS, "Служебные", "Service", "Сборки, генератор, инфраструктура", "Gatherings, generator, infrastructure"),
         RoomMeta(MARKET, "Рынок", "Market", "Обмен, покупка, продажа", "Exchange, buying and selling"),
-        RoomMeta(NEIGHBORS, "Соседи", "Neighbors", "Общение двором или районом", "Talk by courtyard or neighborhood"),
-        RoomMeta(HELP, "Помощь", "Help", "Вопросы, советы и взаимовыручка", "Questions, advice and mutual aid"),
-        RoomMeta(MEETUPS, "Сходки", "Meetups", "Где собираемся, где работает генератор и варят кофе", "Where to gather, where the generator works and coffee is brewing"),
-        RoomMeta(DATING, "Знакомства", "Dating", "Найти компанию на вечер без интернета", "Find company for the evening without internet"),
-        RoomMeta(HUMOR, "Юмор", "Humor", "Мемы, анекдоты, смех сквозь слезы", "Memes, jokes, laughter through tears"),
-        RoomMeta(GAMES, "Игры", "Games", "Словесные игры, поиск компании для настолок", "Word games and finding people for board games"),
-        RoomMeta(SMOKING, "Курилка", "Offtopic", "Общение обо всем. Удаляется первым при нехватке памяти", "Talk about anything. Dropped first when memory is tight"),
+        RoomMeta(DATING, "Знакомства", "Dating", "Найти компанию на вечер", "Find company for the evening"),
+        RoomMeta(HUMOR, "Юмор", "Humor", "Мемы и смех сквозь слезы", "Memes and laughter through tears"),
+        RoomMeta(GAMES, "Игры", "Games", "Словесные игры и настолки", "Word games and board games"),
+        RoomMeta(SMOKING, "Курилка", "Offtopic", "Обо всём. Удаляется первым при нехватке памяти", "Anything. Dropped first when memory is tight"),
+    )
+
+    /** Primary humanitarian channel groups shown first in the Channels tab. */
+    val PRIMARY: List<RoomMeta> = listOf(
+        ALL.first { it.id == IMPORTANT },
+        ALL.first { it.id == NEWS },
+        ALL.first { it.id == NEIGHBORS },
+        ALL.first { it.id == HELP },
+        ALL.first { it.id == MEETUPS },
     )
 
     fun label(id: String, lang: String = "ru"): String {

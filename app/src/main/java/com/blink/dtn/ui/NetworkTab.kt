@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
@@ -72,6 +71,7 @@ fun NetworkStatusBanner(
     }
 }
 
+/** Living network — people, queue, routes. No MAC / UUID. */
 @Composable
 fun NetworkTab(viewModel: BLinkViewModel) {
     val lang by AppLang.lang.collectAsState()
@@ -79,7 +79,11 @@ fun NetworkTab(viewModel: BLinkViewModel) {
     val shipment by MessageRouter.activeShipment.collectAsState()
     val peerCount by viewModel.peerCount.collectAsState()
     val pending by viewModel.pendingCount.collectAsState(0)
-    val peers = remember { PeerDirectory.snapshot().take(12) }
+    val peers = remember {
+        PeerDirectory.snapshot()
+            .filter { !it.device.contains(":", ignoreCase = false) || it.device.length < 20 }
+            .take(16)
+    }
     val hopsToday = remember {
         TraceStore.listRecent(80).sumOf { t ->
             t.events.count { e ->
@@ -96,7 +100,7 @@ fun NetworkTab(viewModel: BLinkViewModel) {
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
+        Text(S.network(lang), style = Typography.titleLarge, color = TextPrimary)
         Text(S.slogan(lang), style = Typography.bodySmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(12.dp))
         NetworkStatusBanner(isConnected = snap.sloganActive || peerCount > 0)
@@ -106,13 +110,13 @@ fun NetworkTab(viewModel: BLinkViewModel) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            NetworkStatCard(S.transferred(lang), pending.toString(), Modifier.weight(1f))
+            NetworkStatCard(S.queueNow(lang), pending.toString(), Modifier.weight(1f))
             NetworkStatCard(S.hopsToday(lang), hopsToday.toString(), Modifier.weight(1f))
-            NetworkStatCard(S.devicesNearby(lang), peerCount.toString(), Modifier.weight(1f))
+            NetworkStatCard(S.peopleNearby(lang), peerCount.toString(), Modifier.weight(1f))
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text(S.preferredRoute(lang), style = Typography.labelSmall, color = TextSecondary)
+        Text(S.howMessagesTravel(lang), style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -134,21 +138,12 @@ fun NetworkTab(viewModel: BLinkViewModel) {
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(
-                    if (lang == "en") snap.preferred.labelEn() else snap.preferred.labelRu(),
+                    humanPathLabel(snap.preferred, lang),
                     color = TextPrimary,
                     style = Typography.titleMedium
                 )
                 Text(
-                    buildString {
-                        if (snap.internetOnline) append(if (lang == "en") "online" else "онлайн")
-                        else append(if (lang == "en") "offline" else "офлайн")
-                        if (snap.vpsConfigured) {
-                            append(" · VPS ")
-                            append(if (snap.vpsReachable) "OK" else "…")
-                        }
-                        if (snap.wifiDirectReady) append(" · Wi‑Fi")
-                        append(" · BLE $peerCount")
-                    },
+                    S.autoRouteHint(lang),
                     color = TextSecondary,
                     style = Typography.labelSmall
                 )
@@ -169,17 +164,10 @@ fun NetworkTab(viewModel: BLinkViewModel) {
                 Text(S.noShipment(lang), color = TextSecondary, style = Typography.bodySmall)
             } else {
                 Column {
-                    Text(
-                        "#${ship.messageId.takeLast(6)} · ${ship.statusLabelRu}",
-                        color = TextPrimary,
-                        style = Typography.titleMedium
-                    )
+                    Text(S.packageInFlight(lang), color = TextPrimary, style = Typography.titleMedium)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        S.routeVia(
-                            lang,
-                            if (lang == "en") ship.path.labelEn() else ship.path.labelRu()
-                        ),
+                        S.routeVia(lang, humanPathLabel(ship.path, lang)),
                         color = AccentLime,
                         style = Typography.labelSmall
                     )
@@ -190,12 +178,15 @@ fun NetworkTab(viewModel: BLinkViewModel) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text(S.neighbors(lang), style = Typography.labelSmall, color = TextSecondary)
+        Text(S.peopleNearby(lang), style = Typography.labelSmall, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         if (peers.isEmpty() && peerCount == 0) {
-            Text(S.noNeighbors(lang), color = TextSecondary, style = Typography.bodySmall)
+            Text(S.noPeopleNearby(lang), color = TextSecondary, style = Typography.bodySmall)
         } else {
             peers.forEach { peer ->
+                val name = peer.displayName
+                    .takeIf { it.isNotBlank() && !looksLikeTechId(it) }
+                    ?: (if (lang == "en") "Neighbor" else "Сосед")
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -209,39 +200,48 @@ fun NetworkTab(viewModel: BLinkViewModel) {
                             .background(DividerColor),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            peer.device.take(1).uppercase(),
-                            color = TextPrimary,
-                            style = Typography.labelMedium
-                        )
+                        Text(name.take(1).uppercase(), color = TextPrimary, style = Typography.labelMedium)
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(peer.device, color = TextPrimary, style = Typography.bodyMedium)
+                        Text(name, color = TextPrimary, style = Typography.bodyMedium)
                         Text(
-                            peer.nodeId.take(12) + if (peer.nodeId.length > 12) "…" else "",
+                            if (peer.packetsForwarded > 0)
+                                S.helpedRelayCount(lang, peer.packetsForwarded)
+                            else
+                                S.nearbyNow(lang),
                             color = TextSecondary,
                             style = Typography.labelSmall
                         )
                     }
-                    if (peer.packetsForwarded > 0) {
-                        Text(
-                            "×${peer.packetsForwarded}",
-                            color = AccentLime,
-                            style = Typography.labelSmall
-                        )
-                    }
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(AccentLime, CircleShape)
+                    )
                 }
             }
-            if (peerCount > 0 && peers.isEmpty()) {
+            if (peerCount > peers.size) {
                 Text(
-                    "${S.devicesNearby(lang)}: $peerCount (BLE)",
+                    S.morePeopleNearby(lang, peerCount - peers.size),
                     color = TextSecondary,
                     style = Typography.bodySmall
                 )
             }
         }
     }
+}
+
+private fun looksLikeTechId(s: String): Boolean {
+    if (s.count { it == ':' } >= 4) return true
+    if (s.length >= 16 && s.all { it.isLetterOrDigit() || it == '-' || it == '_' }) return true
+    return false
+}
+
+fun humanPathLabel(path: RoutePath, lang: String): String = when (path) {
+    RoutePath.INTERNET -> if (lang == "en") "Through the internet" else "Через интернет"
+    RoutePath.WIFI_DIRECT -> if (lang == "en") "Through nearby Wi‑Fi" else "Через ближайший Wi‑Fi"
+    RoutePath.BLE -> if (lang == "en") "Through people nearby" else "Через людей рядом"
 }
 
 @Composable
@@ -257,7 +257,6 @@ private fun NetworkStatCard(label: String, value: String, modifier: Modifier = M
     }
 }
 
-/** Compact A → hops → B tracker used in Network tab and chat voyage. */
 @Composable
 fun MessageTrackerStrip(
     path: RoutePath,
@@ -274,14 +273,14 @@ fun MessageTrackerStrip(
         TrackerLine()
         TrackerNode(
             when (path) {
-                RoutePath.INTERNET -> "VPS"
+                RoutePath.INTERNET -> if (lang == "en") "Net" else "Сеть"
                 RoutePath.WIFI_DIRECT -> "Wi‑Fi"
-                RoutePath.BLE -> "BLE"
+                RoutePath.BLE -> if (lang == "en") "People" else "Люди"
             },
             accent = true
         )
         TrackerLine()
-        TrackerNode(if (lang == "en") "Peer" else "Адресат")
+        TrackerNode(if (lang == "en") "Friend" else "Друг")
     }
     Text(
         statusRu,
@@ -309,6 +308,6 @@ private fun TrackerLine() {
         modifier = Modifier
             .width(36.dp)
             .height(2.dp)
-            .background(DividerColor, RoundedCornerShape(1.dp))
+            .background(DividerColor, androidx.compose.foundation.shape.RoundedCornerShape(1.dp))
     )
 }
