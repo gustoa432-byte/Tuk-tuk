@@ -99,6 +99,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -1917,6 +1920,8 @@ fun ProfileTab(
         nameFieldValue.text.trim() != savedName.trim() ||
             nickFieldValue.text.trim() != savedNick.trim()
     var showSavedFlash by remember { mutableStateOf(false) }
+    var editingNick by remember { mutableStateOf(false) }
+    val nickFocus = remember { FocusRequester() }
     val myProfile by viewModel.getProfileFlow(viewModel.myNodeId).collectAsState(initial = null)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
     var showInvite by remember { mutableStateOf(false) }
@@ -1927,6 +1932,10 @@ fun ProfileTab(
             delay(3000)
             showSavedFlash = false
         }
+    }
+
+    LaunchedEffect(editingNick) {
+        if (editingNick) nickFocus.requestFocus()
     }
 
     LaunchedEffect(myProfile?.avatarBlob?.size, myProfile?.nickname, viewModel.myNick) {
@@ -2024,43 +2033,59 @@ fun ProfileTab(
             },
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            S.authNickname(lang),
-            color = TextSecondary,
-            style = Typography.labelSmall,
-            modifier = Modifier.fillMaxWidth()
-        )
-        BasicTextField(
-            value = nickFieldValue,
-            onValueChange = { newVal ->
-                if (newVal.text.length <= 20) {
-                    nickFieldValue = newVal
+        Spacer(modifier = Modifier.height(6.dp))
+        if (editingNick) {
+            BasicTextField(
+                value = nickFieldValue,
+                onValueChange = { newVal ->
+                    val cleaned = newVal.text.removePrefix("@").take(20)
+                    nickFieldValue = newVal.copy(text = cleaned)
                     showSavedFlash = false
-                }
-            },
-            textStyle = Typography.titleMedium.copy(color = TextPrimary),
-            cursorBrush = SolidColor(TextPrimary),
-            singleLine = true,
-            decorationBox = { innerTextField ->
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    if (nickFieldValue.text.isEmpty()) {
-                        Text(S.enterName(lang), color = TextSecondary, style = Typography.titleMedium)
+                },
+                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(TextPrimary),
+                singleLine = true,
+                decorationBox = { innerTextField ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("@", color = TextSecondary, style = Typography.bodyMedium)
+                        Box {
+                            if (nickFieldValue.text.isEmpty()) {
+                                Text(
+                                    S.authNicknameHint(lang),
+                                    color = TextSecondary,
+                                    style = Typography.bodyMedium
+                                )
+                            }
+                            innerTextField()
+                        }
                     }
-                    innerTextField()
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
-        val nickHandle = nickFieldValue.text.trim().ifBlank {
-            nameFieldValue.text.trim().ifBlank { "user" }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(nickFocus)
+                    .onFocusChanged { state ->
+                        if (!state.isFocused && editingNick) {
+                            editingNick = false
+                        }
+                    }
+            )
+        } else {
+            val nickHandle = nickFieldValue.text.trim().ifBlank {
+                nameFieldValue.text.trim().ifBlank { "user" }
+            }
+            Text(
+                "@$nickHandle",
+                color = TextSecondary,
+                style = Typography.bodyMedium,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .bounceClick { editingNick = true }
+            )
         }
-        Text(
-            "@$nickHandle",
-            color = TextSecondary,
-            style = Typography.bodyMedium,
-            modifier = Modifier.padding(top = 4.dp)
-        )
         Text(
             text = S.tapCopyId(lang),
             color = TextSecondary,
