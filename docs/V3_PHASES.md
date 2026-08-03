@@ -264,7 +264,7 @@
 - [x] Экспедиция живая
 - [x] Tracker живой
 - [x] Финальная ссылка на APK выдана
-- [ ] Владелец: «V3 ок»
+- [x] Владелец: «V3 ок»
 
 ---
 
@@ -293,4 +293,4 @@
 | 7 | **ок** | continuous · Channels/Profile |
 | 8 | **ок** | continuous · Expedition |
 | 9 | **ок** | continuous · Reactions/Stickers |
-| 10 | ждём «V3 ок» | polish · `tuktuk.v.3.0.apk` |
+| 10 | **ок** | владелец: «V3 ок» / «оук» (2026-08-03) · `tuktuk.v.3.0.apk` |
