@@ -255,7 +255,7 @@
 - Регрессия Router
 - Плотность / FPS / RU-EN
 - Чеклист конституции
-- Финальный APK `tuktuk.v.3.0.apk` (или согласованный semver)
+- Финальный APK `tuktuk.v.0.1.4.apk` (product version after V3 train)
 - GitHub Release
 
 ### DoD
@@ -293,4 +293,4 @@
 | 7 | **ок** | continuous · Channels/Profile |
 | 8 | **ок** | continuous · Expedition |
 | 9 | **ок** | continuous · Reactions/Stickers |
-| 10 | **ок** | владелец: «V3 ок» / «оук» (2026-08-03) · `tuktuk.v.3.0.apk` |
+| 10 | **ок** | владелец: «V3 ок» / «оук» (2026-08-03) · `tuktuk.v.0.1.4.apk` |
