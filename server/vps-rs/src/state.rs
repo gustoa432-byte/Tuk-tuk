@@ -35,6 +35,12 @@ pub struct AppError {
     pub message: String,
 }
 
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 impl AppError {
     pub fn bad(msg: impl Into<String>) -> Self {
         Self {

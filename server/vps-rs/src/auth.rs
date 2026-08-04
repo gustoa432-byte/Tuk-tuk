@@ -6,6 +6,7 @@ use hmac::{Hmac, Mac};
 use libsql::params;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use tracing::{info, warn};
 
 use crate::jwt_util::issue_token;
@@ -78,7 +79,7 @@ pub async fn email_send(
     let mut dev_code = None;
     if state.cfg.smtp_ready() {
         if let Err(e) = crate::mail::send_otp(&state.cfg, &email, &code).await {
-            warn!(error = %e, %email, "SMTP send failed");
+            warn!(error = %e.message, %email, "SMTP send failed");
             return Err(AppError::internal("smtp_send_failed"));
         }
     } else if state.cfg.otp_dev_log {
