@@ -1,4 +1,5 @@
 //! Schema init for mesh + auth + contacts.
+//! Oracle tables live in [`crate::oracle::store`].
 
 use libsql::Connection;
 

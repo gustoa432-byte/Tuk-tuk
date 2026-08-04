@@ -7,6 +7,7 @@ mod db;
 mod jwt_util;
 mod mail;
 mod mesh;
+mod oracle;
 mod state;
 
 use std::net::SocketAddr;
@@ -41,7 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = open_db(&db_path).await?;
     db::init_schema(&db).await?;
-    info!(%db_path, "libSQL ready");
+    oracle::store::init_schema(&db).await?;
+    info!(%db_path, "libSQL ready (mesh + oracle)");
     if !cfg.smtp_ready() {
         info!("SMTP not configured — email OTP will use TUKTUK_OTP_DEV_LOG");
     }
