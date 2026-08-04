@@ -2,7 +2,6 @@ package com.blink.dtn.net
 
 import android.content.Context
 import android.util.Log
-import com.blink.dtn.auth.AuthSessionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -35,25 +34,25 @@ class ContactsApi(private val context: Context) {
     suspend fun addContact(targetUserId: String): Result<AddContactResponse> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val jwt = AuthSessionStore.jwt(context)
-                if (jwt.isBlank()) error("not_authenticated")
-                val body = json.encodeToString(AddContactRequest(targetUserId.trim()))
-                    .toRequestBody(JSON)
-                val req = Request.Builder()
-                    .url("${base()}/contacts/add")
-                    .post(body)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer $jwt")
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    val text = resp.body?.string().orEmpty()
-                    if (!resp.isSuccessful) {
-                        val err = runCatching {
-                            json.decodeFromString<ErrorBody>(text).error
-                        }.getOrDefault(text.ifBlank { "request_failed" })
-                        throw ApiException(resp.code, err)
+                VpsJwtSupport.withJwtRetry(context) { jwt ->
+                    val body = json.encodeToString(AddContactRequest(targetUserId.trim()))
+                        .toRequestBody(JSON)
+                    val req = Request.Builder()
+                        .url("${base()}/contacts/add")
+                        .post(body)
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer $jwt")
+                        .build()
+                    client.newCall(req).execute().use { resp ->
+                        val text = resp.body?.string().orEmpty()
+                        if (!resp.isSuccessful) {
+                            val err = runCatching {
+                                json.decodeFromString<ErrorBody>(text).error
+                            }.getOrDefault(text.ifBlank { "request_failed" })
+                            throw ApiException(resp.code, err)
+                        }
+                        json.decodeFromString<AddContactResponse>(text)
                     }
-                    json.decodeFromString<AddContactResponse>(text)
                 }
             }.onFailure { Log.w(TAG, "addContact: ${it.message}") }
         }

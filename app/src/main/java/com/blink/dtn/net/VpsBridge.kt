@@ -81,6 +81,7 @@ class VpsBridge private constructor(
                     runCatching { register() }
                     runCatching { syncDirectory() }
                     runCatching { performSync() }
+                    runCatching { syncOracleOrbits() }
                 } else {
                     reachable.set(false)
                 }
@@ -373,6 +374,19 @@ class VpsBridge private constructor(
                     Log.w(TAG, "injectEncryptedPayload failed: ${e.message}")
                 }
             }
+        }
+    }
+
+    /** Push Journal A (social orbit) to Oracle when the user has a VPS JWT. */
+    private suspend fun syncOracleOrbits() {
+        if (!com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)) return
+        val orbits = com.blink.dtn.db.BLinkDatabase
+            .getDatabase(context)
+            .socialOrbitDao()
+            .getAllOrbitsOnce()
+        if (orbits.isEmpty()) return
+        OracleApi(context).sync(orbits).onSuccess { resp ->
+            Log.d(TAG, "oracle sync accepted=${resp.accepted}")
         }
     }
 

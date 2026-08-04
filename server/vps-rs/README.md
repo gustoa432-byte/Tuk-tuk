@@ -56,6 +56,7 @@ ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
 | POST | `/auth/email/send` | `{ "email": "…" }` |
 | POST | `/auth/email/verify` | `{ "email", "otp", "publicBleKey" }` → JWT |
 | POST | `/auth/telegram` | `{ "initData", "publicBleKey" }` → JWT |
+| POST | `/auth/refresh` | Bearer JWT + `{ "publicBleKey" }` → JWT с `node_id` (тихий апгрейд) |
 
 ### Contacts (скрытое BLE-рукопожатие)
 

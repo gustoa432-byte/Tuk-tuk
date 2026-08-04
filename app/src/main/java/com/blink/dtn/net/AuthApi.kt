@@ -109,6 +109,37 @@ class AuthApi(private val context: Context) {
         }.onFailure { Log.w(TAG, "telegramAuth: ${it.message}") }
     }
 
+    /**
+     * Quiet JWT upgrade: valid Bearer (even without `node_id`) → new token with mesh claim.
+     * Used when Oracle returns [VpsJwtSupport.ERROR_JWT_MISSING_NODE_ID].
+     */
+    suspend fun refreshSession(
+        publicBleKey: String = RsaUtils.getPublicKeyBase64()
+    ): Result<AuthResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val jwt = com.blink.dtn.auth.AuthSessionStore.jwt(context)
+            if (jwt.isBlank()) error("not_authenticated")
+            require(publicBleKey.isNotBlank()) { "publicBleKey missing" }
+            val body = json.encodeToString(RefreshRequest(publicBleKey = publicBleKey))
+                .toRequestBody(JSON)
+            val req = Request.Builder()
+                .url("${base()}/auth/refresh")
+                .post(body)
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer $jwt")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    throw ApiException(resp.code, parseError(text))
+                }
+                val auth = json.decodeFromString<AuthResponse>(text)
+                com.blink.dtn.auth.AuthSessionStore.saveVpsSession(context, auth)
+                auth
+            }
+        }.onFailure { Log.w(TAG, "refreshSession: ${it.message}") }
+    }
+
     private fun parseError(text: String): String =
         runCatching { json.decodeFromString<ErrorBody>(text).error }
             .getOrDefault(text.ifBlank { "request_failed" })
@@ -150,7 +181,13 @@ data class AuthResponse(
     val userId: String = "",
     val authMethod: String = "",
     val authId: String = "",
-    val publicBleKey: String = ""
+    val publicBleKey: String = "",
+    val nodeId: String = ""
+)
+
+@Serializable
+data class RefreshRequest(
+    val publicBleKey: String
 )
 
 @Serializable

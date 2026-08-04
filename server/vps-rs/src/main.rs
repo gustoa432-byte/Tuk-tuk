@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/auth/email/send", post(auth::email_send))
         .route("/auth/email/verify", post(auth::email_verify))
         .route("/auth/telegram", post(auth::telegram_auth))
+        .route("/auth/refresh", post(auth::refresh))
         // Contacts / hidden BLE handshake
         .route("/contacts/add", post(contacts::add_contact))
         // Oracle — social-orbit ingest + courier hints

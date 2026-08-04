@@ -1,6 +1,7 @@
 //! Email OTP + Telegram Mini App auth.
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::Json;
 use hmac::{Hmac, Mac};
 use libsql::params;
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tracing::{info, warn};
 
-use crate::jwt_util::issue_token;
+use crate::jwt_util::{bearer_from_header, issue_token, verify_token};
 use crate::state::{now_ms, AppError, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -153,6 +154,38 @@ pub async fn telegram_auth(
 
     let tg_user_id = verify_telegram_init_data(token, &body.init_data)?;
     upsert_user_and_token(&state, "tg", &tg_user_id, &ble).await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshRequest {
+    /// Current device BLE public key (preferred). Falls back to JWT claim.
+    #[serde(default)]
+    pub public_ble_key: String,
+}
+
+/// Quiet token upgrade for clients that still hold a valid JWT without `node_id`.
+/// `POST /auth/refresh` — Bearer required; no OTP / Telegram initData.
+pub async fn refresh(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RefreshRequest>,
+) -> Result<Json<AuthResponse>, AppError> {
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let token = bearer_from_header(auth)?;
+    let claims = verify_token(&state.cfg.jwt_secret, token)?;
+
+    let mut ble = body.public_ble_key.trim().to_string();
+    if ble.is_empty() {
+        ble = claims.public_ble_key.trim().to_string();
+    }
+    if ble.is_empty() {
+        return Err(AppError::bad("public_ble_key_required"));
+    }
+
+    upsert_user_and_token(&state, &claims.auth_method, &claims.auth_id, &ble).await
 }
 
 async fn upsert_user_and_token(

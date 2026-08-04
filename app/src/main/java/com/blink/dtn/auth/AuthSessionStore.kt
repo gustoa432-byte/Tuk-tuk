@@ -17,6 +17,7 @@ object AuthSessionStore {
     private const val KEY_JWT = "vps_jwt"
     private const val KEY_SERVER_USER_ID = "vps_user_id"
     private const val KEY_AUTH_ID = "vps_auth_id"
+    private const val KEY_NODE_ID = "vps_node_id"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -39,6 +40,9 @@ object AuthSessionStore {
     fun authId(context: Context): String =
         prefs(context).getString(KEY_AUTH_ID, "") ?: ""
 
+    fun serverNodeId(context: Context): String =
+        prefs(context).getString(KEY_NODE_ID, "") ?: ""
+
     fun hasVpsSession(context: Context): Boolean = jwt(context).isNotBlank()
 
     fun saveVpsSession(context: Context, resp: AuthResponse) {
@@ -46,6 +50,7 @@ object AuthSessionStore {
             .putString(KEY_JWT, resp.token)
             .putString(KEY_SERVER_USER_ID, resp.userId)
             .putString(KEY_AUTH_ID, resp.authId)
+            .putString(KEY_NODE_ID, resp.nodeId)
             .putString(
                 KEY_AUTH_PROVIDER,
                 when (resp.authMethod) {
@@ -62,6 +67,7 @@ object AuthSessionStore {
             .remove(KEY_JWT)
             .remove(KEY_SERVER_USER_ID)
             .remove(KEY_AUTH_ID)
+            .remove(KEY_NODE_ID)
             .apply()
     }
 
