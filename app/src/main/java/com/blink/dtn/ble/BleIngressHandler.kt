@@ -4,7 +4,6 @@ import android.util.Log
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.BlockedUser
 import com.blink.dtn.db.Message
-import com.blink.dtn.db.SeenPacket
 import com.blink.dtn.security.SecurityConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +37,8 @@ internal class BleIngressHandler(
         fun markSeen(dedupKey: String): Boolean
         /** Peer asked us to push our installed APK over Wi‑Fi Direct (experimental). */
         fun onApkUpdateRequest(fromPeerId: String) {}
+        /** Journal A: record Social Orbit meet for a stable mesh nodeId. */
+        fun noteSocialOrbitMeet(nodeId: String) {}
     }
 
     fun decodeWirePacket(jsonString: String): DecodedWirePacket {
@@ -76,7 +77,7 @@ internal class BleIngressHandler(
             if (dao.hasSeenPacket(dedupKey)) {
                 return@launch
             }
-            dao.insertSeenPacket(SeenPacket(dedupKey, now))
+            dao.rememberSeenPacket(dedupKey, now)
 
             val messageTtlMs = 48 * 60 * 60 * 1000L
             if (now - packet.timestamp > messageTtlMs) {
@@ -178,7 +179,7 @@ internal class BleIngressHandler(
     private suspend fun handleAck(packet: Message, now: Long): Boolean {
         packet.originalMessageId?.takeIf { it.isNotEmpty() }?.let { ackedId ->
             deps.markSeen(ackedId)
-            dao.insertSeenPacket(SeenPacket(ackedId, now))
+            dao.rememberSeenPacket(ackedId, now)
             if (packet.targetId != myNodeId) {
                 dao.deleteMessageById(ackedId)
             }
@@ -291,6 +292,8 @@ internal class BleIngressHandler(
         if (trustedPublicKey.isNotEmpty()) {
             deps.ensureTrace(packet.id, "IDENTITY_ANNOUNCEMENT", packet.senderId, null)
             com.blink.dtn.telemetry.PeerDirectory.noteNode(packet.senderId, nick)
+            // Journal A: stable nodeId after identity handshake (not MAC).
+            deps.noteSocialOrbitMeet(packet.senderId)
             deps.trace(
                 packet.id,
                 com.blink.dtn.telemetry.TraceStages.ID_STORED,

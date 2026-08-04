@@ -6,8 +6,9 @@ import android.bluetooth.BluetoothGatt
 import android.content.Context
 import android.util.Log
 import com.blink.dtn.db.BLinkDao
+import com.blink.dtn.db.BLinkDatabase
 import com.blink.dtn.db.Message
-import com.blink.dtn.db.SeenPacket
+import com.blink.dtn.db.SocialOrbitDao
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class BleMeshManager private constructor(
     private val context: Context,
     private val dao: BLinkDao,
+    private val socialOrbitDao: SocialOrbitDao,
     private val myUniqueNodeId: String
 ) {
     init {
@@ -233,6 +235,12 @@ class BleMeshManager private constructor(
                 override fun onApkUpdateRequest(fromPeerId: String) {
                     this@BleMeshManager.handleApkUpdateRequest(fromPeerId)
                 }
+                override fun noteSocialOrbitMeet(nodeId: String) {
+                    // Stable mesh nodeId after IDENTITY handshake (GATT connect alone is MAC-only).
+                    scope.launch(Dispatchers.IO) {
+                        socialOrbitDao.upsertContact(nodeId)
+                    }
+                }
             }
         )
     }
@@ -254,6 +262,8 @@ class BleMeshManager private constructor(
                 enqueueProfileBroadcast()
             }
             override fun onNewPeerFromGatt(device: BluetoothDevice) {
+                // Stable connect at radio layer — identity handshake follows via profile broadcast.
+                // Journal A is written when IDENTITY_ANNOUNCEMENT yields a verified nodeId.
                 triggerRelay()
             }
             override fun onWriteValue(device: BluetoothDevice, value: ByteArray) {
@@ -343,7 +353,12 @@ class BleMeshManager private constructor(
 
         fun getInstance(context: Context, dao: BLinkDao, myUniqueNodeId: String): BleMeshManager {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: BleMeshManager(context.applicationContext, dao, myUniqueNodeId).also { INSTANCE = it }
+                INSTANCE ?: BleMeshManager(
+                    context = context.applicationContext,
+                    dao = dao,
+                    socialOrbitDao = BLinkDatabase.getDatabase(context).socialOrbitDao(),
+                    myUniqueNodeId = myUniqueNodeId
+                ).also { INSTANCE = it }
             }
         }
     }
@@ -393,7 +408,7 @@ class BleMeshManager private constructor(
             // locally-stored copy. TX is driven from the DB queue, not the
             // seen-set, so this never suppresses our own outgoing transmissions.
             if (message.senderId == myUniqueNodeId) {
-                dao.insertSeenPacket(SeenPacket(message.id, System.currentTimeMillis()))
+                dao.rememberSeenPacket(message.id)
             }
             val updatedMsg = message.copy(status = Message.STATUS_PENDING)
             val existing = dao.getMessageById(updatedMsg.id)

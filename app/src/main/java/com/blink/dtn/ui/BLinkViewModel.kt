@@ -59,9 +59,9 @@ class BLinkViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 // 48 hours for messages
-                val messageTtl = System.currentTimeMillis() - (48 * 60 * 60 * 1000L)
+                val messageTtl = System.currentTimeMillis() - com.blink.dtn.db.JournalLimits.SEEN_TTL_MS
                 dao.deleteOldMessages(messageTtl)
-                dao.deleteOldSeenPackets(messageTtl)
+                dao.pruneSeenJournal()
                 
                 // 7 days for user profiles
                 val profileTtl = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)

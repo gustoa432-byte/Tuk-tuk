@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -353,18 +354,63 @@ abstract class BLinkDao {
     @Query("DELETE FROM messages WHERE timestamp < :threshold")
     abstract suspend fun deleteOldMessages(threshold: Long)
 
-    // --- SeenPacket ---
+    // --- SeenPacket (Journal B) ---
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertSeenPacket(packet: SeenPacket): Long
 
     @Query("SELECT EXISTS(SELECT 1 FROM seen_packets WHERE id = :id)")
     abstract suspend fun hasSeenPacket(id: String): Boolean
 
+    @Query("SELECT COUNT(*) FROM seen_packets")
+    abstract suspend fun countSeenPackets(): Int
+
+    /**
+     * Drop oldest sightings (ASC receivedAt) to enforce Journal B LRU cap.
+     */
+    @Query(
+        """
+        DELETE FROM seen_packets WHERE id IN (
+            SELECT id FROM seen_packets
+            ORDER BY receivedAt ASC
+            LIMIT :limit
+        )
+        """
+    )
+    abstract suspend fun deleteOldestSeenPackets(limit: Int)
+
     // Bounded growth: prune de-dup entries older than the mesh message TTL. Once
     // a packet id is this old the underlying message can no longer be re-relayed
     // (it is dropped as expired), so keeping the seen-marker is unnecessary.
     @Query("DELETE FROM seen_packets WHERE receivedAt < :threshold")
     abstract suspend fun deleteOldSeenPackets(threshold: Long)
+
+    /**
+     * Journal B write path: insert then enforce [JournalLimits.SEEN_CACHE_CAP].
+     */
+    @Transaction
+    open suspend fun rememberSeenPacket(
+        packetId: String,
+        receivedAt: Long = System.currentTimeMillis()
+    ) {
+        if (packetId.isBlank()) return
+        insertSeenPacket(SeenPacket(packetId = packetId, receivedAt = receivedAt))
+        enforceSeenPacketCap(JournalLimits.SEEN_CACHE_CAP)
+    }
+
+    @Transaction
+    open suspend fun enforceSeenPacketCap(cap: Int = JournalLimits.SEEN_CACHE_CAP) {
+        val count = countSeenPackets()
+        if (count > cap) {
+            deleteOldestSeenPackets(count - cap)
+        }
+    }
+
+    /** Age prune (48h) + hard cap — call from background cleanup. */
+    @Transaction
+    open suspend fun pruneSeenJournal(now: Long = System.currentTimeMillis()) {
+        deleteOldSeenPackets(now - JournalLimits.SEEN_TTL_MS)
+        enforceSeenPacketCap(JournalLimits.SEEN_CACHE_CAP)
+    }
 
     // --- UserProfile ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)

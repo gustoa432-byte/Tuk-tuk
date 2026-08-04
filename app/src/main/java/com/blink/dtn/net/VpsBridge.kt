@@ -6,7 +6,6 @@ import android.util.Log
 import com.blink.dtn.ble.BleMeshManager
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.Message
-import com.blink.dtn.db.SeenPacket
 import com.blink.dtn.router.MessageRouter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -313,7 +312,7 @@ class VpsBridge private constructor(
 
     private suspend fun ingestEnvelope(env: VpsEnvelope) {
         if (dao.hasSeenPacket(env.id)) return
-        dao.insertSeenPacket(SeenPacket(env.id, System.currentTimeMillis()))
+        dao.rememberSeenPacket(env.id)
         val raw = try {
             Base64.decode(env.payloadB64, Base64.DEFAULT)
         } catch (_: Exception) {

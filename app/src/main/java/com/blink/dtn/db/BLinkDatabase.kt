@@ -6,8 +6,15 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class],
-    version = 22,
+    entities = [
+        Message::class,
+        SeenPacket::class,
+        BlockedUser::class,
+        UserProfile::class,
+        Conversation::class,
+        SocialOrbitEntity::class
+    ],
+    version = 23,
     exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -15,12 +22,12 @@ abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
     abstract fun conversationDao(): ConversationDao
+    abstract fun socialOrbitDao(): SocialOrbitDao
 
     companion object {
         @Volatile
         private var INSTANCE: BLinkDatabase? = null
 
-        
         val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // 1. Create conversations table
@@ -285,22 +292,32 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Two Journals prep for predictive routing.
+         * Additive only: Journal A table. Journal B keeps existing seen_packets columns.
+         */
+        val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `social_orbit` (
+                        `node_id` TEXT NOT NULL,
+                        `last_meet_at` INTEGER NOT NULL,
+                        `meet_count` INTEGER NOT NULL,
+                        PRIMARY KEY(`node_id`)
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_social_orbit_meet` ON `social_orbit` (`meet_count`, `last_meet_at`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = try {
-                    buildAndOpen(context)
-                } catch (e: Exception) {
-                    // Schema mismatch after a bad update used to crash-loop on every launch.
-                    // Last resort: wipe local DB once and recreate from current entities
-                    // so the user can open the app without uninstalling.
-                    android.util.Log.e(
-                        "BLinkDatabase",
-                        "DB open/migration failed — recreating blink_database",
-                        e
-                    )
-                    context.applicationContext.deleteDatabase("blink_database")
-                    buildAndOpen(context)
-                }
+                // Never wipe blink_database on migration failure — user messages must survive.
+                val instance = buildAndOpen(context)
                 INSTANCE = instance
                 instance
             }
@@ -325,14 +342,14 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_18_19,
                     MIGRATION_19_20,
                     MIGRATION_20_21,
-                    MIGRATION_21_22
+                    MIGRATION_21_22,
+                    MIGRATION_22_23
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
-            // Force migration + schema validation now (not lazily on first DAO call),
-            // so a mismatch is caught (and recovered) inside getDatabase().
+            // Force migration + schema validation now (not lazily on first DAO call).
             db.openHelper.writableDatabase
             return db
         }

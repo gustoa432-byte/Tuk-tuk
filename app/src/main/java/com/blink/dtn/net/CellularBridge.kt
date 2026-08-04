@@ -7,7 +7,6 @@ import android.util.Log
 import com.blink.dtn.ble.BleMeshManager
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.Message
-import com.blink.dtn.db.SeenPacket
 import com.blink.dtn.db.BlockedUser
 import com.blink.dtn.security.SecurityConfig
 import kotlinx.coroutines.*
@@ -106,7 +105,7 @@ class CellularBridge private constructor(
                         msg.isBridgeSynced = true
                         val isSeen = dao.hasSeenPacket(msg.id)
                         if (!isSeen) {
-                            dao.insertSeenPacket(SeenPacket(msg.id, System.currentTimeMillis()))
+                            dao.rememberSeenPacket(msg.id)
                             if (SecurityConfig.requiresAuthorSignature(msg.type)) {
                                 val isValid = SecurityConfig.verifySignature(msg.text, msg.authorSignature)
                                 if (!isValid) {
