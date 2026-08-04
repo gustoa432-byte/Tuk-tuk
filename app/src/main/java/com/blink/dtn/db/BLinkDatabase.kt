@@ -5,7 +5,12 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class], version = 21, exportSchema = false)
+@Database(
+    entities = [Message::class, SeenPacket::class, BlockedUser::class, UserProfile::class, Conversation::class],
+    version = 22,
+    exportSchema = false
+)
+@androidx.room.TypeConverters(Converters::class)
 abstract class BLinkDatabase : RoomDatabase() {
 
     abstract fun bLinkDao(): BLinkDao
@@ -268,6 +273,18 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        // Human Layer: parcel priority + hop chain of custody.
+        val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `priority` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `hop_history` TEXT NOT NULL DEFAULT '[]'"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = try {
@@ -307,7 +324,8 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_17_18,
                     MIGRATION_18_19,
                     MIGRATION_19_20,
-                    MIGRATION_20_21
+                    MIGRATION_20_21,
+                    MIGRATION_21_22
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)

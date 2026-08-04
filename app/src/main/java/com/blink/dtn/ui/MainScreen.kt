@@ -45,18 +45,17 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Unarchive
-import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
@@ -202,8 +201,7 @@ fun CustomBackIcon(modifier: Modifier = Modifier) {
  */
 enum class MainTab {
     Dialogs,
-    Network,
-    Expedition,
+    Hub,
     Channels,
     Profile
 }
@@ -342,8 +340,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedTab) {
                         MainTab.Dialogs -> PrivateTab(viewModel)
-                        MainTab.Network -> NetworkTab(viewModel)
-                        MainTab.Expedition -> ExpeditionTab(viewModel)
+                        MainTab.Hub -> com.blink.dtn.ui.hub.MainHubScreen()
                         MainTab.Channels -> PublicTab(viewModel) { contactId ->
                             viewModel.ensureContact(contactId)
                             viewModel.setCurrentDialog(contactId)
@@ -363,7 +360,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                                 onScanSuccess = { selectedTab = MainTab.Dialogs },
                                 onOpenSettings = { showSettings = true },
                                 onOpenAbout = { showAbout = true },
-                                onOpenExpedition = { selectedTab = MainTab.Expedition }
+                                onOpenHub = { selectedTab = MainTab.Hub }
                             )
                         }
                     }
@@ -443,11 +440,8 @@ fun CustomBottomBar(selectedTab: MainTab, onTabSelected: (MainTab) -> Unit) {
             BottomBarItem(Icons.AutoMirrored.Filled.Chat, S.dialogs(lang), selectedTab == MainTab.Dialogs) {
                 onTabSelected(MainTab.Dialogs)
             }
-            BottomBarItem(Icons.Default.WifiTethering, S.network(lang), selectedTab == MainTab.Network) {
-                onTabSelected(MainTab.Network)
-            }
-            BottomBarItem(Icons.Default.Explore, S.expedition(lang), selectedTab == MainTab.Expedition) {
-                onTabSelected(MainTab.Expedition)
+            BottomBarItem(Icons.Default.Radar, S.hub(lang), selectedTab == MainTab.Hub) {
+                onTabSelected(MainTab.Hub)
             }
             BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == MainTab.Channels) {
                 onTabSelected(MainTab.Channels)
@@ -1899,7 +1893,7 @@ fun ProfileTab(
     onScanSuccess: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAbout: () -> Unit,
-    onOpenExpedition: () -> Unit
+    onOpenHub: () -> Unit
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -2116,7 +2110,7 @@ fun ProfileTab(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        SettingsNavRow(S.cosmetics(lang), onOpenExpedition)
+        SettingsNavRow(S.cosmetics(lang), onOpenHub)
         SettingsNavRow(S.inviteFriends(lang)) { showInvite = true }
         SettingsNavRow(S.settings(lang), onOpenSettings)
         SettingsNavRow(S.aboutProject(lang), onOpenAbout)

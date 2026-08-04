@@ -65,8 +65,21 @@ data class Message(
     /** Local-only absolute path to image file for PRIVATE_IMAGE (never on mesh). */
     @Transient @ColumnInfo(name = "media_path") val mediaPath: String? = null,
 
+    /**
+     * Parcel rarity / urgency ([MessagePriority]): 0 normal, 1 medium, 2 critical/SOS.
+     * On the wire via [com.blink.dtn.ble.NetworkPacket.priority].
+     */
+    @ColumnInfo(name = "priority") val priority: Int = MessagePriority.NORMAL.code,
+
+    /**
+     * Chain of custody — nicknames/ids of devices that relayed this parcel.
+     * Persisted as JSON via [Converters].
+     */
+    @ColumnInfo(name = "hop_history") val hopHistory: List<String> = emptyList(),
+
     @Transient @ColumnInfo(name = "conversationId") var conversationId: String = ""
 ) {
+    fun priorityLevel(): MessagePriority = MessagePriority.fromCode(priority)
     companion object {
         const val STATUS_PENDING = 0
         const val STATUS_IN_FLIGHT = 1

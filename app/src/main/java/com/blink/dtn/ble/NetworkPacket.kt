@@ -35,7 +35,11 @@ data class NetworkPacket(
     val timestamp: Long,
     var ttl: Int,
     val authorSignature: String? = null,
-    val isAck: Boolean = false
+    val isAck: Boolean = false,
+    /** Parcel rarity: 0 normal / 1 medium / 2 critical. Default keeps old peers compatible. */
+    val priority: Int = 0,
+    /** Chain of custody nicknames/ids accumulated across relays. */
+    val hopHistory: List<String> = emptyList()
 ) {
     /**
      * Convert this wire packet into a local [Message]. Local-only fields
@@ -54,7 +58,9 @@ data class NetworkPacket(
         ttl = ttl,
         authorSignature = authorSignature,
         isAck = isAck,
-        originalMessageId = originalMessageId
+        originalMessageId = originalMessageId,
+        priority = priority,
+        hopHistory = hopHistory
     )
 
     companion object {
@@ -77,7 +83,9 @@ data class NetworkPacket(
             timestamp = msg.timestamp,
             ttl = msg.ttl,
             authorSignature = msg.authorSignature,
-            isAck = msg.isAck
+            isAck = msg.isAck,
+            priority = msg.priority,
+            hopHistory = msg.hopHistory
         )
     }
 }

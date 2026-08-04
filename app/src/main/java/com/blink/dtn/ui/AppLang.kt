@@ -34,6 +34,28 @@ object S {
     fun dialogs(lang: String) = if (lang == LANG_EN) "Dialogs" else "Диалоги"
     fun groupChat(lang: String) = if (lang == LANG_EN) "Channels" else "Каналы"
     fun network(lang: String) = if (lang == LANG_EN) "Network" else "Сеть"
+    fun hub(lang: String) = if (lang == LANG_EN) "Hub" else "Хаб"
+    fun hubRadar(lang: String) = if (lang == LANG_EN) "Radar" else "Сонар"
+    fun hubCourier(lang: String) = if (lang == LANG_EN) "Courier" else "Курьер"
+    fun hubChronicle(lang: String) = if (lang == LANG_EN) "Chronicle" else "Хроника"
+    fun hubRadarSearching(lang: String) = if (lang == LANG_EN)
+        "Listening for nearby couriers…" else "Слушаю соседних курьеров…"
+    fun hubRadarSignal(lang: String) = if (lang == LANG_EN)
+        "Signal on the edge…" else "Сигнал на краю радиуса…"
+    fun hubRadarHandshake(lang: String) = if (lang == LANG_EN)
+        "Handshake complete" else "Рукопожатие успешно"
+    fun hubCourierHint(lang: String) = if (lang == LANG_EN)
+        "Your dino carries the backpack of parcels" else "Дино несёт рюкзак с посылками"
+    fun hubBackpack(lang: String) = if (lang == LANG_EN) "Backpack" else "Рюкзак"
+    fun hubChronicleHint(lang: String) = if (lang == LANG_EN)
+        "Delivered routes and karma" else "Доставленные маршруты и карма"
+    fun hubChainOfCustody(lang: String) = if (lang == LANG_EN)
+        "Chain of custody" else "Маршрутный лист"
+    fun hubThankChain(lang: String) = if (lang == LANG_EN)
+        "❤️ Thank the chain" else "❤️ Поблагодарить цепочку"
+    fun hubThanked(lang: String) = if (lang == LANG_EN)
+        "Thanks sent (soon)" else "Благодарность отправлена (скоро)"
+
     fun profile(lang: String) = if (lang == LANG_EN) "Profile" else "Профиль"
 
     // Network / router
