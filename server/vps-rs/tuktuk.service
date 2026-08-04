@@ -1,0 +1,26 @@
+[Unit]
+Description=TukTuk VPS (mesh S&F + auth + Oracle)
+Documentation=https://github.com/gustoa432-byte/Tuk-tuk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/tuktuk/server/vps-rs
+EnvironmentFile=-/etc/tuktuk.env
+ExecStart=/opt/tuktuk/server/vps-rs/target/release/tuktuk-vps
+Restart=always
+RestartSec=3
+# Limit blast radius if the process is compromised
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/tuktuk
+# libSQL + logs under WorkingDirectory / TUKTUK_DB
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

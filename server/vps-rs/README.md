@@ -15,6 +15,13 @@ cd server/vps-rs
 cargo run --release
 ```
 
+Прод-раскатка (VPS + systemd + Oracle smoke): см. [`docs/ORACLE_DEPLOY.md`](../../docs/ORACLE_DEPLOY.md).
+
+```bash
+# с ноутбука:
+ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
+```
+
 ### Env
 
 | Env | Default | Описание |
