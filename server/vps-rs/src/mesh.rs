@@ -11,14 +11,14 @@ use crate::state::{now_ms, AppError, AppState, ErrorBody};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RegisterRequest {
+pub(crate) struct RegisterRequest {
     node_id: Option<String>,
     nick: Option<String>,
     pubkey: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct HealthResponse {
+pub(crate) struct HealthResponse {
     ok: bool,
     nodes: i64,
     envelopes: i64,
@@ -26,7 +26,7 @@ struct HealthResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DirectoryNode {
+pub(crate) struct DirectoryNode {
     node_id: String,
     nick: String,
     pubkey: String,
@@ -34,13 +34,13 @@ struct DirectoryNode {
 }
 
 #[derive(Debug, Serialize)]
-struct DirectoryResponse {
+pub(crate) struct DirectoryResponse {
     nodes: Vec<DirectoryNode>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EnvelopeIn {
+pub(crate) struct EnvelopeIn {
     id: String,
     from: String,
     to: Option<String>,
@@ -51,19 +51,19 @@ struct EnvelopeIn {
 }
 
 #[derive(Debug, Deserialize)]
-struct PushRequest {
+pub(crate) struct PushRequest {
     envelopes: Vec<EnvelopeIn>,
 }
 
 #[derive(Debug, Serialize)]
-struct PushResponse {
+pub(crate) struct PushResponse {
     ok: bool,
     accepted: u32,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct EnvelopeOut {
+pub(crate) struct EnvelopeOut {
     id: String,
     from: String,
     to: String,
@@ -73,13 +73,13 @@ struct EnvelopeOut {
 }
 
 #[derive(Debug, Serialize)]
-struct PullResponse {
+pub(crate) struct PullResponse {
     envelopes: Vec<EnvelopeOut>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PullQuery {
+pub(crate) struct PullQuery {
     node_id: Option<String>,
     since: Option<i64>,
 }
