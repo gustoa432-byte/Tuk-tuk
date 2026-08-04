@@ -1,14 +1,12 @@
 # TukTuk VPS (Rust / Axum + libSQL)
 
-Персистный store-and-forward для онлайн-пути роутера. Wire-совместим с Android `VpsBridge`
-и прежним Python MVP (`server/vps/tuktuk_vps.py`).
+Store-and-forward mesh bridge + email/Telegram auth + online BLE-key contact handshake.
 
 ## Стек
 
-- **Axum** — HTTP
-- **Tokio** — async runtime
-- **libSQL** — локальный файл `tuktuk.db` (без внешнего СУБД-сервера)
-- **serde / serde_json** — JSON
+- Axum + Tokio
+- libSQL (`tuktuk.db`)
+- JWT (`jsonwebtoken`), SMTP (`lettre`), Telegram WebApp HMAC
 
 ## Запуск
 
@@ -17,31 +15,54 @@ cd server/vps-rs
 cargo run --release
 ```
 
-Переменные окружения:
+### Env
 
 | Env | Default | Описание |
 |-----|---------|----------|
-| `TUKTUK_HOST` | `0.0.0.0` | bind host |
-| `TUKTUK_PORT` | `8080` | bind port |
-| `TUKTUK_DB` | `tuktuk.db` | путь к файлу libSQL |
-
-В приложении: **Профиль → Настройки → VPS URL**, например `http://YOUR_IP:8080`.
+| `TUKTUK_HOST` | `0.0.0.0` | bind |
+| `TUKTUK_PORT` | `8080` | bind |
+| `TUKTUK_DB` | `tuktuk.db` | путь к libSQL |
+| `TUKTUK_JWT_SECRET` | ephemeral UUID | секрет JWT (задай в проде) |
+| `TUKTUK_SMTP_HOST` | — | SMTP host |
+| `TUKTUK_SMTP_PORT` | `587` | STARTTLS |
+| `TUKTUK_SMTP_USER` / `TUKTUK_SMTP_PASS` | — | SMTP auth |
+| `TUKTUK_SMTP_FROM` | — | From: `TukTuk <noreply@…>` |
+| `TUKTUK_TELEGRAM_BOT_TOKEN` | — | для `/auth/telegram` |
+| `TUKTUK_OTP_DEV_LOG` | `true` | без SMTP пишет OTP в лог (+ `devCode` в JSON) |
 
 ## API
 
-| Method | Path | Body / query |
-|--------|------|----------------|
-| POST | `/v1/register` | `{nodeId, nick, pubkey}` |
-| GET | `/v1/directory` | → `{nodes:[{nodeId,nick,pubkey,seenAt}]}` |
-| POST | `/v1/push` | `{envelopes:[{id,from,to,payloadB64,ts,kind}]}` |
-| GET | `/v1/pull?nodeId=&since=` | → `{envelopes:[...]}` |
-| GET | `/v1/health` | `{ok, nodes, envelopes}` |
+### Mesh (Android `VpsBridge`)
 
-## Схема БД
+| Method | Path |
+|--------|------|
+| GET | `/v1/health` |
+| POST | `/v1/register` |
+| GET | `/v1/directory` |
+| POST | `/v1/push` |
+| GET | `/v1/pull?nodeId=&since=` |
 
-```sql
-nodes(node_id PK, nick, pubkey, seen_at)
-envelopes(id PK, sender_id, receiver_id, payload, kind, created_at)
+### Auth
+
+| Method | Path | Body |
+|--------|------|------|
+| POST | `/auth/email/send` | `{ "email": "…" }` |
+| POST | `/auth/email/verify` | `{ "email", "otp", "publicBleKey" }` → JWT |
+| POST | `/auth/telegram` | `{ "initData", "publicBleKey" }` → JWT |
+
+### Contacts (скрытое BLE-рукопожатие)
+
+| Method | Path | Headers | Body |
+|--------|------|---------|------|
+| POST | `/contacts/add` | `Authorization: Bearer <jwt>` | `{ "userId": "<uuid>" }` |
+
+Ответ: `{ ok, userId, publicBleKey, authMethod, authId }` — клиент сохраняет `publicBleKey` локально для офлайн BLE.
+
+## Схема
+
 ```
-
-`receiver_id` NULL / пустой / `*` = broadcast (как `to: "*"` у клиента).
+users(id, auth_method, auth_id, public_ble_key, created_at)
+contacts(user_id_1, user_id_2, created_at)
+email_otps(email, code, expires_at)
+nodes / envelopes  — mesh S&F
+```
