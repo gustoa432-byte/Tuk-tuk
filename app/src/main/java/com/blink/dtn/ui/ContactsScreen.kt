@@ -196,10 +196,16 @@ fun ContactsScreen(
             TukTukButton(onClick = {
                 val id = addId.trim()
                 if (id.isBlank()) return@TukTukButton
-                viewModel.ensureContact(id)
-                onOpenChat(id)
-                addId = ""
+                viewModel.addContactOnlineOrLocal(id) { ok, meshId, msg ->
+                    if (ok && msg == "ok") {
+                        Toast.makeText(context, S.handshakeOk(lang), Toast.LENGTH_SHORT).show()
+                    } else if (!ok) {
+                        Toast.makeText(context, "${S.handshakeFail(lang)}: $msg", Toast.LENGTH_LONG).show()
+                    }
+                    onOpenChat(meshId)
+                }
                 focusManager.clearFocus()
+                addId = ""
             }) {
                 Text(S.addToContacts(lang), color = TextPrimary, style = Typography.labelSmall)
             }

@@ -93,18 +93,35 @@ object S {
     fun message(lang: String) = if (lang == LANG_EN) "Message..." else "Сообщение..."
     fun enterName(lang: String) = if (lang == LANG_EN) "Your nickname..." else "Ваш никнейм..."
     fun enterNameHint(lang: String) = if (lang == LANG_EN) "Enter nickname..." else "Введите никнейм..."
-    fun enterPeerId(lang: String) = if (lang == LANG_EN) "Enter contact ID..." else "Введите ID собеседника..."
+    fun enterPeerId(lang: String) = if (lang == LANG_EN)
+        "Server user ID or mesh ID..." else "ID на сервере или mesh ID..."
     fun findOrStartDialog(lang: String) = if (lang == LANG_EN) "Find or start a dialog..." else "Найти или начать диалог..."
     fun renameHint(lang: String) = if (lang == LANG_EN) "E.g. Vasya from work" else "Например, Вася с работы"
 
     // Auth / onboarding
     fun authSignInWith(lang: String) = if (lang == LANG_EN) "Sign in with" else "Войти через"
+    fun authEmail(lang: String) = "Email"
+    fun authEmailHint(lang: String) = "you@example.com"
+    fun authSendOtp(lang: String) = if (lang == LANG_EN) "Send code" else "Отправить код"
+    fun authOtp(lang: String) = if (lang == LANG_EN) "Code from email" else "Код из письма"
+    fun authOtpHint(lang: String) = if (lang == LANG_EN) "6 digits" else "6 цифр"
+    fun authVerifyEmail(lang: String) = if (lang == LANG_EN) "Verify email" else "Подтвердить email"
+    fun authEmailOk(lang: String) = if (lang == LANG_EN) "Email verified" else "Email подтверждён"
+    fun authCodeSent(lang: String) = if (lang == LANG_EN) "Code sent" else "Код отправлен"
+    fun authTgInitData(lang: String) = "Telegram initData"
+    fun authTgHint(lang: String) = if (lang == LANG_EN)
+        "Paste WebApp initData" else "Вставь initData из Mini App"
+    fun authTgSignIn(lang: String) = if (lang == LANG_EN) "Sign in with Telegram" else "Войти через Telegram"
     fun authOrOffline(lang: String) = if (lang == LANG_EN) "or continue offline" else "или продолжить офлайн"
     fun authOfflineContinue(lang: String) = if (lang == LANG_EN) "Continue offline" else "Войти офлайн"
     fun authSocialSoon(lang: String) = if (lang == LANG_EN)
-        "Social login coming soon — fill name below or continue offline"
-    else
-        "Соцвход скоро — заполните имя ниже или продолжите офлайн"
+        "Coming soon" else "Скоро"
+    fun authNeedOnline(lang: String) = if (lang == LANG_EN)
+        "Need internet + VPS" else "Нужен интернет и VPS"
+    fun handshakeOk(lang: String) = if (lang == LANG_EN)
+        "Contact key saved for offline mesh" else "Ключ контакта сохранён для офлайн-сети"
+    fun handshakeFail(lang: String) = if (lang == LANG_EN)
+        "Could not add contact online" else "Не удалось добавить контакт онлайн"
     fun authProfileTitle(lang: String) = if (lang == LANG_EN) "Your profile" else "Твой профиль"
     fun authProfileHint(lang: String) = if (lang == LANG_EN)
         "Name and nickname are optional. Empty name becomes a random dinosaur."

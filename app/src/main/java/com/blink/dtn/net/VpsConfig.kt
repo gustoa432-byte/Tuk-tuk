@@ -7,21 +7,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * VPS endpoint config (device-local). Empty base URL = Internet path disabled.
+ * VPS endpoint config (device-local).
+ * Default production bridge: FirstByte TukTuk node (override in Settings).
  */
 object VpsConfig {
     private const val PREFS = "blink_prefs"
     private const val KEY_BASE_URL = "vps_base_url"
 
+    /** Shipped default so online auth/contacts work without manual setup. */
+    const val DEFAULT_BASE_URL = "http://157.228.136.239:8080"
+
     private val _baseUrl = MutableStateFlow("")
     val baseUrl: StateFlow<String> = _baseUrl
 
     fun init(context: Context) {
-        _baseUrl.value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_BASE_URL, "")
+        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_BASE_URL, null)
             ?.trim()
             .orEmpty()
             .trimEnd('/')
+        val effective = stored.ifBlank { DEFAULT_BASE_URL }
+        if (stored.isBlank()) {
+            // Persist default once so Settings / VpsBridge see the same URL.
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_BASE_URL, effective).apply()
+        }
+        _baseUrl.value = effective
     }
 
     fun setBaseUrl(context: Context, url: String) {

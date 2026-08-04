@@ -2,10 +2,11 @@ package com.blink.dtn.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.blink.dtn.net.AuthResponse
 
 /**
  * Local onboarding / auth session on top of `blink_prefs`.
- * Mesh identity remains RSA nodeId; this only tracks first-run profile completion.
+ * Mesh identity remains RSA nodeId; JWT links the device to the VPS account.
  */
 object AuthSessionStore {
     private const val PREFS = "blink_prefs"
@@ -13,6 +14,9 @@ object AuthSessionStore {
     const val KEY_DISPLAY_NAME = "display_name"
     const val KEY_AUTH_PROVIDER = "auth_provider"
     const val KEY_NICK = "nick"
+    private const val KEY_JWT = "vps_jwt"
+    private const val KEY_SERVER_USER_ID = "vps_user_id"
+    private const val KEY_AUTH_ID = "vps_auth_id"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -25,6 +29,41 @@ object AuthSessionStore {
 
     fun authProvider(context: Context): AuthProvider =
         AuthProvider.fromWire(prefs(context).getString(KEY_AUTH_PROVIDER, null))
+
+    fun jwt(context: Context): String =
+        prefs(context).getString(KEY_JWT, "") ?: ""
+
+    fun serverUserId(context: Context): String =
+        prefs(context).getString(KEY_SERVER_USER_ID, "") ?: ""
+
+    fun authId(context: Context): String =
+        prefs(context).getString(KEY_AUTH_ID, "") ?: ""
+
+    fun hasVpsSession(context: Context): Boolean = jwt(context).isNotBlank()
+
+    fun saveVpsSession(context: Context, resp: AuthResponse) {
+        prefs(context).edit()
+            .putString(KEY_JWT, resp.token)
+            .putString(KEY_SERVER_USER_ID, resp.userId)
+            .putString(KEY_AUTH_ID, resp.authId)
+            .putString(
+                KEY_AUTH_PROVIDER,
+                when (resp.authMethod) {
+                    "tg" -> AuthProvider.TELEGRAM.wireId
+                    "email" -> AuthProvider.EMAIL.wireId
+                    else -> AuthProvider.fromWire(resp.authMethod).wireId
+                }
+            )
+            .apply()
+    }
+
+    fun clearVpsSession(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_JWT)
+            .remove(KEY_SERVER_USER_ID)
+            .remove(KEY_AUTH_ID)
+            .apply()
+    }
 
     /**
      * Existing installs that already set a nick skip the new auth screen.

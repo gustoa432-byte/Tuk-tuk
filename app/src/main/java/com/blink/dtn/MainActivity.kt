@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putString("nick", myNick).apply()
         }
         AuthSessionStore.migrateLegacyIfNeeded(this)
+        com.blink.dtn.net.VpsConfig.init(this)
 
         val conversationDao = BLinkDatabase.getDatabase(this).conversationDao()
         val bleManager = BleMeshManager.getInstance(this, dao, myNodeId)

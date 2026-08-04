@@ -28,14 +28,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.auth.AuthProvider
 import com.blink.dtn.auth.AuthResult
+import com.blink.dtn.auth.AuthSessionStore
+import com.blink.dtn.auth.DeferredSocialAuth
 import com.blink.dtn.auth.DinoNameGenerator
-import com.blink.dtn.auth.StubSocialAuth
+import com.blink.dtn.auth.EmailOtpAuth
+import com.blink.dtn.auth.TelegramAuth
+import com.blink.dtn.net.VpsConfig
 import com.blink.dtn.ui.theme.AccentLilac
 import com.blink.dtn.ui.theme.AccentLime
 import com.blink.dtn.ui.theme.BackgroundDark
@@ -48,8 +51,7 @@ import com.blink.dtn.ui.theme.glassPanel
 import kotlinx.coroutines.launch
 
 /**
- * First-run auth: social stubs (TG / VK / Google / Yandex) + offline path.
- * Name and nick are optional; empty name → random dino stub.
+ * First-run auth: Email OTP + Telegram initData against VPS, plus offline path.
  */
 @Composable
 fun AuthOnboardingScreen(
@@ -62,6 +64,11 @@ fun AuthOnboardingScreen(
     var provider by remember { mutableStateOf(AuthProvider.OFFLINE) }
     var nameField by remember { mutableStateOf(TextFieldValue("")) }
     var nickField by remember { mutableStateOf(TextFieldValue("")) }
+    var emailField by remember { mutableStateOf(TextFieldValue("")) }
+    var otpField by remember { mutableStateOf(TextFieldValue("")) }
+    var tgInitField by remember { mutableStateOf(TextFieldValue("")) }
+    var busy by remember { mutableStateOf(false) }
+    var emailVerified by remember { mutableStateOf(AuthSessionStore.hasVpsSession(context) && AuthSessionStore.authProvider(context) == AuthProvider.EMAIL) }
 
     fun finish() {
         val name = DinoNameGenerator.resolveDisplayName(nameField.text, lang)
@@ -78,162 +85,196 @@ fun AuthOnboardingScreen(
             .fillMaxSize()
             .background(bg)
     ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            "Tuk-Tuk",
-            style = Typography.headlineMedium,
-            color = TextPrimary
-        )
-        Text(
-            S.slogan(lang),
-            style = Typography.bodySmall,
-            color = TextSecondary,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 6.dp, bottom = 20.dp)
-        )
-
-        Text(
-            S.authSignInWith(lang),
-            style = Typography.labelMedium,
-            color = TextSecondary,
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            AuthProviderChip(
-                label = "Telegram",
-                selected = provider == AuthProvider.TELEGRAM,
-                modifier = Modifier.weight(1f)
+            Text("Tuk-Tuk", style = Typography.headlineMedium, color = TextPrimary)
+            Text(
+                S.slogan(lang),
+                style = Typography.bodySmall,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 6.dp, bottom = 20.dp)
+            )
+
+            Text(
+                S.authSignInWith(lang),
+                style = Typography.labelMedium,
+                color = TextSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+            )
+
+            // ── Email OTP ────────────────────────────────────────────────
+            AuthField(
+                label = S.authEmail(lang),
+                placeholder = S.authEmailHint(lang),
+                value = emailField,
+                onValueChange = { emailField = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(
+                onClick = {
+                    if (busy) return@TukTukButton
+                    VpsConfig.init(context)
+                    scope.launch {
+                        busy = true
+                        when (val r = EmailOtpAuth(context, emailField.text).beginSignIn()) {
+                            is AuthResult.Success -> {
+                                provider = AuthProvider.EMAIL
+                                Toast.makeText(context, S.authCodeSent(lang), Toast.LENGTH_SHORT).show()
+                            }
+                            is AuthResult.Failed ->
+                                Toast.makeText(context, r.reason, Toast.LENGTH_LONG).show()
+                            is AuthResult.Deferred -> Unit
+                        }
+                        busy = false
+                    }
+                }
             ) {
+                Text(S.authSendOtp(lang), color = TextPrimary)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            AuthField(
+                label = S.authOtp(lang),
+                placeholder = S.authOtpHint(lang),
+                value = otpField,
+                onValueChange = { if (it.text.length <= 8) otpField = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(onClick = {
+                if (busy) return@TukTukButton
+                VpsConfig.init(context)
                 scope.launch {
-                    when (val r = StubSocialAuth.gateway(AuthProvider.TELEGRAM).beginSignIn()) {
-                        is AuthResult.Deferred -> {
-                            provider = AuthProvider.TELEGRAM
-                            Toast.makeText(context, S.authSocialSoon(lang), Toast.LENGTH_SHORT).show()
+                    busy = true
+                    when (
+                        val r = EmailOtpAuth(context, emailField.text, otpField.text).beginSignIn()
+                    ) {
+                        is AuthResult.Success -> {
+                            provider = AuthProvider.EMAIL
+                            emailVerified = true
+                            Toast.makeText(context, S.authEmailOk(lang), Toast.LENGTH_SHORT).show()
                         }
                         is AuthResult.Failed ->
-                            Toast.makeText(context, r.reason, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, r.reason, Toast.LENGTH_LONG).show()
+                        is AuthResult.Deferred -> Unit
+                    }
+                    busy = false
+                }
+            }) {
+                Text(S.authVerifyEmail(lang), color = if (emailVerified) AccentLime else TextPrimary)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            // ── Telegram ─────────────────────────────────────────────────
+            AuthField(
+                label = S.authTgInitData(lang),
+                placeholder = S.authTgHint(lang),
+                value = tgInitField,
+                onValueChange = { tgInitField = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(onClick = {
+                if (busy) return@TukTukButton
+                VpsConfig.init(context)
+                scope.launch {
+                    busy = true
+                    when (val r = TelegramAuth(context, tgInitField.text).beginSignIn()) {
                         is AuthResult.Success -> {
                             provider = AuthProvider.TELEGRAM
-                            r.suggestedName?.let {
-                                nameField = TextFieldValue(it, TextRange(it.length))
-                            }
-                            r.suggestedNick?.let {
-                                nickField = TextFieldValue(it, TextRange(it.length))
-                            }
+                            Toast.makeText(context, "Telegram OK", Toast.LENGTH_SHORT).show()
+                        }
+                        is AuthResult.Failed ->
+                            Toast.makeText(context, r.reason, Toast.LENGTH_LONG).show()
+                        is AuthResult.Deferred -> Unit
+                    }
+                    busy = false
+                }
+            }) {
+                Text(S.authTgSignIn(lang), color = TextPrimary)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    AuthProvider.VK to "VK",
+                    AuthProvider.GOOGLE to "Google",
+                    AuthProvider.YANDEX to "Яндекс"
+                ).forEach { (p, label) ->
+                    AuthProviderChip(
+                        label = label,
+                        selected = provider == p,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        scope.launch {
+                            DeferredSocialAuth.gateway(p).beginSignIn()
+                            Toast.makeText(context, S.authSocialSoon(lang), Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
             }
-            AuthProviderChip(
-                label = "VK",
-                selected = provider == AuthProvider.VK,
-                modifier = Modifier.weight(1f)
-            ) {
-                scope.launch {
-                    StubSocialAuth.gateway(AuthProvider.VK).beginSignIn()
-                    provider = AuthProvider.VK
-                    Toast.makeText(context, S.authSocialSoon(lang), Toast.LENGTH_SHORT).show()
-                }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(S.authOrOffline(lang), style = Typography.labelSmall, color = TextSecondary)
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(onClick = {
+                provider = AuthProvider.OFFLINE
+                finish()
+            }) {
+                Text(S.authOfflineContinue(lang), color = TextPrimary)
             }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            AuthProviderChip(
-                label = "Google",
-                selected = provider == AuthProvider.GOOGLE,
-                modifier = Modifier.weight(1f)
+
+            Spacer(modifier = Modifier.height(28.dp))
+            Text(
+                S.authProfileTitle(lang),
+                style = Typography.titleMedium,
+                color = TextPrimary,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                S.authProfileHint(lang),
+                style = Typography.labelSmall,
+                color = AccentLilac,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 12.dp)
+            )
+
+            AuthField(
+                label = S.authDisplayName(lang),
+                placeholder = S.authDisplayNameHint(lang),
+                value = nameField,
+                onValueChange = { if (it.text.length <= DinoNameGenerator.MAX_LEN) nameField = it }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            AuthField(
+                label = S.authNickname(lang),
+                placeholder = S.authNicknameHint(lang),
+                value = nickField,
+                onValueChange = { if (it.text.length <= DinoNameGenerator.MAX_LEN) nickField = it }
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 16.dp, strong = true)
+                    .bounceClick { finish() }
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
             ) {
-                scope.launch {
-                    StubSocialAuth.gateway(AuthProvider.GOOGLE).beginSignIn()
-                    provider = AuthProvider.GOOGLE
-                    Toast.makeText(context, S.authSocialSoon(lang), Toast.LENGTH_SHORT).show()
-                }
+                Text(S.authContinue(lang), color = AccentLime, style = Typography.titleMedium)
             }
-            AuthProviderChip(
-                label = "Яндекс",
-                selected = provider == AuthProvider.YANDEX,
-                modifier = Modifier.weight(1f)
-            ) {
-                scope.launch {
-                    StubSocialAuth.gateway(AuthProvider.YANDEX).beginSignIn()
-                    provider = AuthProvider.YANDEX
-                    Toast.makeText(context, S.authSocialSoon(lang), Toast.LENGTH_SHORT).show()
-                }
-            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            S.authOrOffline(lang),
-            style = Typography.labelSmall,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = {
-            provider = AuthProvider.OFFLINE
-            finish()
-        }) {
-            Text(S.authOfflineContinue(lang), color = TextPrimary)
-        }
-
-        Spacer(modifier = Modifier.height(28.dp))
-        Text(
-            S.authProfileTitle(lang),
-            style = Typography.titleMedium,
-            color = TextPrimary,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(
-            S.authProfileHint(lang),
-            style = Typography.labelSmall,
-            color = AccentLilac,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp, bottom = 12.dp)
-        )
-
-        AuthField(
-            label = S.authDisplayName(lang),
-            placeholder = S.authDisplayNameHint(lang),
-            value = nameField,
-            onValueChange = { if (it.text.length <= DinoNameGenerator.MAX_LEN) nameField = it }
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        AuthField(
-            label = S.authNickname(lang),
-            placeholder = S.authNicknameHint(lang),
-            value = nickField,
-            onValueChange = { if (it.text.length <= DinoNameGenerator.MAX_LEN) nickField = it }
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassPanel(corner = 16.dp, strong = true)
-                .bounceClick { finish() }
-                .padding(vertical = 14.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(S.authContinue(lang), color = AccentLime, style = Typography.titleMedium)
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-    }
     }
 }
 

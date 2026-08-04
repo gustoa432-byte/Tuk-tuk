@@ -296,11 +296,13 @@ internal class BleRelayEngine(
                 val profile = deps.profile(targetId)
                 if (profile != null && profile.publicKey.isNotEmpty()) {
                     val encStart = System.currentTimeMillis()
+                    // publicKey from Room (QR / VPS /contacts/add handshake / mesh identity)
                     deps.trace(
                         networkMessage.id,
                         com.blink.dtn.telemetry.TraceStages.RSA_ENCRYPT_START,
                         com.blink.dtn.telemetry.detailsOf(
                             "keyFingerprint" to com.blink.dtn.crypto.NodeIdentity.deriveNodeId(profile.publicKey),
+                            "keySource" to "user_profiles",
                             "plainUtf8Bytes" to networkMessage.text.toByteArray(Charsets.UTF_8).size
                         ),
                         visual = "🔐 Шифрование"

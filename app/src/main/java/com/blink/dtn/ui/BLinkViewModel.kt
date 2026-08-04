@@ -286,6 +286,64 @@ class BLinkViewModel(
         }
     }
 
+    /**
+     * Hidden handshake: resolve contact via VPS `/contacts/add`, store `publicBleKey` in Room
+     * under the mesh nodeId derived from that key (what BLE encryption already reads).
+     *
+     * Falls back to local [ensureContact] when offline / no JWT / non-UUID id.
+     */
+    fun addContactOnlineOrLocal(
+        rawId: String,
+        onDone: ((ok: Boolean, meshId: String, message: String) -> Unit)? = null
+    ) {
+        val id = rawId.trim()
+        if (id.isBlank() || id == myNodeId) return
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            com.blink.dtn.net.VpsConfig.init(app)
+            val looksLikeUuid = id.length >= 32 && id.count { it == '-' } >= 4
+            val canOnline = looksLikeUuid &&
+                com.blink.dtn.auth.AuthSessionStore.hasVpsSession(app) &&
+                com.blink.dtn.net.VpsConfig.isConfigured(app)
+
+            if (canOnline) {
+                val result = com.blink.dtn.net.ContactsApi(app).addContact(id)
+                result.fold(
+                    onSuccess = { resp ->
+                        val bleKey = resp.publicBleKey
+                        val meshId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(bleKey)
+                            .ifBlank { id }
+                        upsertPeerAsContact(
+                            peerId = meshId,
+                            nick = resp.authId.ifBlank { meshId },
+                            pubKeyBase64 = bleKey,
+                            verifiedOutOfBand = true
+                        )
+                        // Remember server UUID → mesh id for later lookups
+                        app.getSharedPreferences("blink_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("vps_uid_$id", meshId)
+                            .apply()
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(true, meshId, "ok")
+                        }
+                    },
+                    onFailure = {
+                        upsertPeerAsContact(id)
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(false, id, it.message ?: "fail")
+                        }
+                    }
+                )
+            } else {
+                upsertPeerAsContact(id)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(true, id, "local")
+                }
+            }
+        }
+    }
+
     private suspend fun upsertPeerAsContact(
         peerId: String,
         nick: String = "",
