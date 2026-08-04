@@ -5,12 +5,19 @@ Minimal store-and-forward for the online path of the message router.
 ## Recommended: Rust + libSQL (persistent)
 
 ```bash
+# On VPS (preferred):
+/opt/tuktuk/scripts/deploy-vps.sh
+
+# Or local build:
 cd server/vps-rs
 cargo run --release
-# or: TUKTUK_PORT=8080 TUKTUK_DB=./tuktuk.db cargo run --release
+# TUKTUK_PORT=8080 TUKTUK_DB=./tuktuk.db cargo run --release
 ```
 
-See [`../vps-rs/README.md`](../vps-rs/README.md). Tables `nodes` / `envelopes` survive process restarts.
+Env template: [`../vps-rs/tuktuk.env.example`](../vps-rs/tuktuk.env.example) → install as `/etc/tuktuk.env` (`chmod 600`).  
+SSH hardening: [`../../docs/VPS_HARDENING.md`](../../docs/VPS_HARDENING.md).
+
+See [`../vps-rs/README.md`](../vps-rs/README.md). Tables `nodes` / `envelopes` / `users` / `contacts` survive process restarts.
 
 ## Legacy: Python in-memory
 
