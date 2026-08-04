@@ -53,6 +53,8 @@ pub struct AuthResponse {
     pub auth_method: String,
     pub auth_id: String,
     pub public_ble_key: String,
+    /// Mesh node id bound into the JWT (same derivation as Android NodeIdentity).
+    pub node_id: String,
 }
 
 pub async fn email_send(
@@ -200,6 +202,8 @@ async fn upsert_user_and_token(
         auth_id,
         public_ble_key,
     )?;
+    let node_id = crate::node_id::derive_node_id(public_ble_key)
+        .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
 
     Ok(Json(AuthResponse {
         ok: true,
@@ -208,6 +212,7 @@ async fn upsert_user_and_token(
         auth_method: method.to_string(),
         auth_id: auth_id.to_string(),
         public_ble_key: public_ble_key.to_string(),
+        node_id,
     }))
 }
 

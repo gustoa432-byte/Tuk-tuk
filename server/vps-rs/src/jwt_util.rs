@@ -4,14 +4,19 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
+use crate::node_id::derive_node_id;
 use crate::state::AppError;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
+    /// Account UUID (one user, possibly many devices).
     pub sub: String,
     pub auth_method: String,
     pub auth_id: String,
     pub public_ble_key: String,
+    /// Mesh device id for this token (derived from `public_ble_key` at issue).
+    #[serde(default)]
+    pub node_id: String,
     pub exp: i64,
     pub iat: i64,
 }
@@ -23,12 +28,15 @@ pub fn issue_token(
     auth_id: &str,
     public_ble_key: &str,
 ) -> Result<String, AppError> {
+    let node_id = derive_node_id(public_ble_key)
+        .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
     let now = Utc::now();
     let claims = Claims {
         sub: user_id.to_string(),
         auth_method: auth_method.to_string(),
         auth_id: auth_id.to_string(),
         public_ble_key: public_ble_key.to_string(),
+        node_id,
         iat: now.timestamp(),
         exp: (now + Duration::days(30)).timestamp(),
     };

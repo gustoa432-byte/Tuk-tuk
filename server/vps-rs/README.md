@@ -56,7 +56,19 @@ cargo run --release
 |--------|------|---------|------|
 | POST | `/contacts/add` | `Authorization: Bearer <jwt>` | `{ "userId": "<uuid>" }` |
 
-Ответ: `{ ok, userId, publicBleKey, authMethod, authId }` — клиент сохраняет `publicBleKey` локально для офлайн BLE.
+Ответ: `{ ok, userId, publicBleKey, authMethod, authId, nodeId }` — клиент сохраняет `publicBleKey` локально для офлайн BLE.
+
+JWT claims: `sub` (account UUID), `node_id` (mesh device id = Base32(SHA-256(DER pub)[0..10])), `public_ble_key`, …
+
+### Oracle (social orbit → courier hints)
+
+| Method | Path | Headers | Body |
+|--------|------|---------|------|
+| POST | `/v1/oracle/sync` | `Authorization: Bearer <jwt>` | `{ "orbits": [{ "target_node", "meet_count", "last_meet_at" }] }` |
+| POST | `/v1/oracle/hint` | `Authorization: Bearer <jwt>` | `{ "target_node": "…" }` |
+
+- sync: `source_node` = JWT `node_id`; upsert edges if incoming `meet_count` is greater
+- hint: 1st-degree couriers, decay score, top-3 → `{ "recommended_couriers": [{ "node_id", "score" }] }`
 
 ## Схема
 
@@ -65,4 +77,6 @@ users(id, auth_method, auth_id, public_ble_key, created_at)
 contacts(user_id_1, user_id_2, created_at)
 email_otps(email, code, expires_at)
 nodes / envelopes  — mesh S&F
+oracle_nodes(node_id, last_seen_at)
+oracle_edges(source_node, target_node, meet_count, last_meet_at)
 ```

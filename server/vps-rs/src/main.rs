@@ -7,6 +7,7 @@ mod db;
 mod jwt_util;
 mod mail;
 mod mesh;
+mod node_id;
 mod oracle;
 mod state;
 
@@ -74,6 +75,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/auth/telegram", post(auth::telegram_auth))
         // Contacts / hidden BLE handshake
         .route("/contacts/add", post(contacts::add_contact))
+        // Oracle — social-orbit ingest + courier hints
+        .route("/v1/oracle/sync", post(oracle::api::sync))
+        .route("/v1/oracle/hint", post(oracle::api::hint))
         .layer(cors)
         .with_state(state);
 
