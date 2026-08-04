@@ -6,7 +6,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -32,12 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.blink.dtn.ble.NetworkPacket
 import com.blink.dtn.db.MessagePriority
 import com.blink.dtn.ui.AppLang
+import com.blink.dtn.ui.AuthDinoOutline
+import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.S
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
@@ -47,17 +47,17 @@ private val OledBlack = Color(0xFF000000)
 private val CapsuleNormal = Color(0xFF3A3A3A)
 private val CapsuleMedium = Color(0xFFC9A227)
 private val CapsuleCritical = Color(0xFFC0392B)
-private val OutlineDino = Color(0xFF6E6E6E)
 
 /**
- * Tab 2 — courier inventory: dino silhouette + backpack grid of parcels by priority.
+ * Courier backpack — real [NetworkPacket] stream from Room via ViewModel.
  */
 @Composable
 fun CourierTab(
-    modifier: Modifier = Modifier,
-    parcels: List<ParcelItem> = HubMocks.parcels
+    viewModel: BLinkViewModel,
+    modifier: Modifier = Modifier
 ) {
     val lang by AppLang.lang.collectAsState()
+    val packets by viewModel.backpackPackets.collectAsState()
 
     Column(
         modifier = modifier
@@ -79,7 +79,7 @@ fun CourierTab(
                 .height(120.dp),
             contentAlignment = Alignment.Center
         ) {
-            DinoOutlinePlaceholder(modifier = Modifier.size(96.dp))
+            AuthDinoOutline(modifier = Modifier.size(96.dp))
         }
 
         Text(
@@ -89,51 +89,44 @@ fun CourierTab(
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            contentPadding = PaddingValues(bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            items(parcels, key = { it.id }) { parcel ->
-                ParcelCapsule(parcel)
+        if (packets.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    S.hubBackpackEmpty(lang),
+                    style = Typography.bodyMedium,
+                    color = TextSecondary.copy(alpha = 0.45f)
+                )
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(packets, key = { it.messageId }) { packet ->
+                    ParcelCapsule(packet)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DinoOutlinePlaceholder(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val path = Path().apply {
-            moveTo(w * 0.35f, h * 0.75f)
-            cubicTo(w * 0.15f, h * 0.55f, w * 0.2f, h * 0.25f, w * 0.45f, h * 0.2f)
-            cubicTo(w * 0.55f, h * 0.08f, w * 0.72f, h * 0.12f, w * 0.78f, h * 0.28f)
-            cubicTo(w * 0.9f, h * 0.35f, w * 0.88f, h * 0.55f, w * 0.7f, h * 0.58f)
-            cubicTo(w * 0.78f, h * 0.7f, w * 0.65f, h * 0.85f, w * 0.5f, h * 0.78f)
-            cubicTo(w * 0.42f, h * 0.9f, w * 0.28f, h * 0.88f, w * 0.35f, h * 0.75f)
-            close()
-        }
-        drawPath(path, color = OutlineDino, style = Stroke(width = 2.5f))
-        drawCircle(
-            color = OutlineDino,
-            radius = 3f,
-            center = androidx.compose.ui.geometry.Offset(w * 0.68f, h * 0.3f)
-        )
-    }
-}
-
-@Composable
-private fun ParcelCapsule(parcel: ParcelItem) {
-    val base = when (parcel.priority) {
+private fun ParcelCapsule(packet: NetworkPacket) {
+    val priority = MessagePriority.fromCode(packet.priority)
+    val base = when (priority) {
         MessagePriority.NORMAL -> CapsuleNormal
         MessagePriority.MEDIUM -> CapsuleMedium
         MessagePriority.CRITICAL -> CapsuleCritical
     }
-    val pulse = rememberInfiniteTransition(label = "crit-${parcel.id}")
+    val pulse = rememberInfiniteTransition(label = "crit-${packet.messageId}")
     val critAlpha by pulse.animateFloat(
         initialValue = 0.55f,
         targetValue = 1f,
@@ -143,7 +136,9 @@ private fun ParcelCapsule(parcel: ParcelItem) {
         ),
         label = "critAlpha"
     )
-    val glow = if (parcel.priority == MessagePriority.CRITICAL) critAlpha else 1f
+    val glow = if (priority == MessagePriority.CRITICAL) critAlpha else 1f
+    val title = packet.senderNick.ifBlank { packet.targetId ?: packet.messageId.take(8) }
+    val preview = packet.payload.take(48).ifBlank { packet.type }
 
     Column(
         modifier = Modifier
@@ -162,14 +157,14 @@ private fun ParcelCapsule(parcel: ParcelItem) {
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            parcel.title,
+            title,
             style = Typography.labelSmall,
             color = TextPrimary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            parcel.preview,
+            preview,
             style = Typography.labelSmall,
             color = TextSecondary,
             maxLines = 2,

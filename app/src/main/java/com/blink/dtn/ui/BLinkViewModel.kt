@@ -135,7 +135,20 @@ class BLinkViewModel(
 
     val peerCount = bleMeshManager.peerCount
     val activePeers = bleMeshManager.activePeers
-    
+
+    /** Human Layer: parcels in the courier backpack (Room → NetworkPacket). */
+    val backpackPackets = dao.getBackpackMessagesFlow()
+        .map { rows -> rows.map { com.blink.dtn.ble.NetworkPacket.fromMessage(it) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    /** Human Layer: delivered routes for Chronicle. */
+    val chronicleMessages = dao.getChronicleMessagesFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    /** Peers with a known publicBleKey (identity handshake done). */
+    val recentKeyedPeers = dao.getRecentKeyedPeersFlow(myNodeId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
     val vkActive: kotlinx.coroutines.flow.StateFlow<Boolean> = kotlinx.coroutines.flow.flow {
         while (true) {
             emit(com.blink.dtn.utils.NetworkUtils.isInternetAvailable(getApplication()))

@@ -340,7 +340,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedTab) {
                         MainTab.Dialogs -> PrivateTab(viewModel)
-                        MainTab.Hub -> com.blink.dtn.ui.hub.MainHubScreen()
+                        MainTab.Hub -> com.blink.dtn.ui.hub.MainHubScreen(viewModel)
                         MainTab.Channels -> PublicTab(viewModel) { contactId ->
                             viewModel.ensureContact(contactId)
                             viewModel.setCurrentDialog(contactId)

@@ -1,6 +1,6 @@
 # Версии TukTuk — хронология (не semver)
 
-**Актуальная версия: `0.1.96`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.96`).
+**Актуальная версия: `0.1.97`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.97`).
 
 ## Важно
 
@@ -30,7 +30,8 @@
 | 2026-08-03 | `v0.1.4` … `v0.1.10` |
 | 2026-08-03 | `v0.1.91` → `v0.1.92` → `v0.1.93` → `v0.1.94` |
 | 2026-08-04 | `v0.1.95` — Phase 3: AuthApi/ContactsApi, JWT, hidden handshake → Room |
-| 2026-08-05 | **`v0.1.96`** — Phase 4 Human Layer: MainHub (Radar/Courier/Chronicle), MIT |
+| 2026-08-05 | `v0.1.96` — Phase 4 Human Layer: MainHub (Radar/Courier/Chronicle), MIT |
+| 2026-08-05 | **`v0.1.97`** — Auth OLED 3-step + Hub live Room/BLE flows |
 
 `v0.1.4` = handoff после V3 (phases 0–10 ok). Дальше только патчи/итерации `0.1.*`.
 

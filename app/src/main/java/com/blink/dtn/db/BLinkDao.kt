@@ -309,6 +309,47 @@ abstract class BLinkDao {
     @Query("SELECT * FROM messages WHERE status = 0")
     abstract fun getPendingMessagesFlow(): Flow<List<Message>>
 
+    /**
+     * Human Layer backpack: parcels waiting / in flight / need key.
+     * Excludes ACKs and mesh control packets.
+     */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE status IN (0, 1, 2, 4)
+          AND isAck = 0
+          AND type IN ('PRIVATE', 'PRIVATE_IMAGE', 'PUBLIC')
+        ORDER BY priority DESC, timestamp ASC
+        """
+    )
+    abstract fun getBackpackMessagesFlow(): Flow<List<Message>>
+
+    /**
+     * Chronicle: successfully delivered user parcels with optional hop chain.
+     */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE status = 5
+          AND isAck = 0
+          AND type IN ('PRIVATE', 'PRIVATE_IMAGE', 'PUBLIC')
+        ORDER BY timestamp DESC
+        LIMIT 80
+        """
+    )
+    abstract fun getChronicleMessagesFlow(): Flow<List<Message>>
+
+    @Query(
+        """
+        SELECT * FROM user_profiles
+        WHERE length(publicKey) > 0
+          AND userId != :myId
+        ORDER BY lastSeen DESC
+        LIMIT 24
+        """
+    )
+    abstract fun getRecentKeyedPeersFlow(myId: String): Flow<List<UserProfile>>
+
     @Query("DELETE FROM messages WHERE timestamp < :threshold")
     abstract suspend fun deleteOldMessages(threshold: Long)
 

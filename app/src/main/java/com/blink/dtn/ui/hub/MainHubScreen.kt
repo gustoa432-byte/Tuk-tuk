@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.ui.AppLang
+import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.S
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
@@ -41,11 +42,12 @@ enum class HubPage {
 
 /**
  * Human Layer root: three product tabs on pure OLED black.
- * HorizontalPager for swipe + compact pill bar (light, no Material card chrome).
+ * Tabs consume real Room / BLE flows via [viewModel].
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainHubScreen(
+    viewModel: BLinkViewModel,
     modifier: Modifier = Modifier,
     initialPage: HubPage = HubPage.Radar
 ) {
@@ -68,9 +70,9 @@ fun MainHubScreen(
                 .fillMaxWidth()
         ) { page ->
             when (HubPage.entries[page]) {
-                HubPage.Radar -> RadarTab()
-                HubPage.Courier -> CourierTab()
-                HubPage.Chronicle -> ChronicleTab()
+                HubPage.Radar -> RadarTab(viewModel)
+                HubPage.Courier -> CourierTab(viewModel)
+                HubPage.Chronicle -> ChronicleTab(viewModel)
             }
         }
 

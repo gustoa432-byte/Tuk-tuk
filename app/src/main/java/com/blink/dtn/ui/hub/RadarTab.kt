@@ -32,12 +32,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import com.blink.dtn.db.UserProfile
 import com.blink.dtn.ui.AppLang
+import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.S
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
-import kotlinx.coroutines.delay
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -45,33 +46,53 @@ private val OledBlack = Color(0xFF000000)
 private val SonarRing = Color(0xFF4A7C59)
 private val SignalDot = Color(0xFFB8C5A6)
 
+private enum class RadarPhase {
+    SEARCHING,
+    SIGNAL,
+    HANDSHAKE
+}
+
+private const val HANDSHAKE_FRESH_MS = 15 * 60_000L
+
 /**
- * Tab 1 — submarine-style sonar. Lightweight opacity pulses only (OLED-friendly).
- * Mock phase cycle for visual QA; BLE peers can drive [phase] later without UI rewrite.
+ * Radar driven by [BLinkViewModel.activePeers] (BLE discovery) and
+ * [BLinkViewModel.recentKeyedPeers] (Room publicBleKey after identity handshake).
  */
 @Composable
 fun RadarTab(
-    modifier: Modifier = Modifier,
-    demoCycle: Boolean = true
+    viewModel: BLinkViewModel,
+    modifier: Modifier = Modifier
 ) {
     val lang by AppLang.lang.collectAsState()
     val view = LocalView.current
-    var phase by remember { mutableStateOf(RadarPhase.SEARCHING) }
-    var contact by remember { mutableStateOf<RadarContact?>(null) }
+    val peerCount by viewModel.peerCount.collectAsState()
+    val activePeers by viewModel.activePeers.collectAsState()
+    val keyedPeers by viewModel.recentKeyedPeers.collectAsState()
 
-    LaunchedEffect(demoCycle) {
-        if (!demoCycle) return@LaunchedEffect
-        while (true) {
-            phase = RadarPhase.SEARCHING
-            contact = null
-            delay(2800)
-            phase = RadarPhase.SIGNAL
+    val freshHandshake = remember(keyedPeers) {
+        val now = System.currentTimeMillis()
+        keyedPeers.firstOrNull { now - it.lastSeen <= HANDSHAKE_FRESH_MS }
+    }
+
+    val phase = when {
+        freshHandshake != null -> RadarPhase.HANDSHAKE
+        peerCount > 0 || activePeers.isNotEmpty() -> RadarPhase.SIGNAL
+        else -> RadarPhase.SEARCHING
+    }
+
+    var lastPeerCount by remember { mutableStateOf(0) }
+    LaunchedEffect(peerCount) {
+        if (peerCount > lastPeerCount && peerCount > 0) {
             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            delay(2200)
-            phase = RadarPhase.HANDSHAKE
-            contact = HubMocks.handshakeContact
+        }
+        lastPeerCount = peerCount
+    }
+    var lastHandshakeId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(freshHandshake?.userId) {
+        val id = freshHandshake?.userId
+        if (id != null && id != lastHandshakeId) {
             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            delay(4500)
+            lastHandshakeId = id
         }
     }
 
@@ -143,40 +164,52 @@ fun RadarTab(
                     center = c
                 )
 
-                if (phase == RadarPhase.SIGNAL || phase == RadarPhase.HANDSHAKE) {
-                    val angle = Math.toRadians(42.0)
+                // One edge dot per discovered BLE MAC (capped).
+                val dots = activePeers.take(8)
+                dots.forEachIndexed { index, _ ->
+                    val angle = Math.toRadians(28.0 + index * (320.0 / dots.size.coerceAtLeast(1)))
                     val edge = maxR * 0.82f
                     val dot = Offset(
                         c.x + (cos(angle) * edge).toFloat(),
                         c.y + (sin(angle) * edge).toFloat()
                     )
-                    if (phase == RadarPhase.SIGNAL) {
-                        drawCircle(
-                            color = SignalDot.copy(alpha = 0.55f),
-                            radius = 7f,
-                            center = dot
-                        )
-                    }
+                    val alpha = if (phase == RadarPhase.SIGNAL) 0.55f else 0.85f
+                    drawCircle(color = SignalDot.copy(alpha = alpha), radius = 7f, center = dot)
                 }
             }
 
-            if (phase == RadarPhase.HANDSHAKE && contact != null) {
-                val c = contact!!
-                Box(
+            if (phase == RadarPhase.HANDSHAKE && freshHandshake != null) {
+                HandshakeCard(
+                    profile = freshHandshake,
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(top = 120.dp)
-                        .background(Color(0xFF121212), RoundedCornerShape(14.dp))
-                        .padding(horizontal = 18.dp, vertical = 12.dp)
-                ) {
-                    Text(
-                        "${c.dinoEmoji} ${c.nick}",
-                        style = Typography.titleMedium,
-                        color = TextPrimary
-                    )
-                }
+                )
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+@Composable
+private fun HandshakeCard(profile: UserProfile, modifier: Modifier = Modifier) {
+    val label = profile.displayLabel(profile.userId.take(8))
+    val emoji = dinoEmojiFor(profile.userId)
+    Box(
+        modifier = modifier
+            .background(Color(0xFF121212), RoundedCornerShape(14.dp))
+            .padding(horizontal = 18.dp, vertical = 12.dp)
+    ) {
+        Text(
+            "$emoji $label",
+            style = Typography.titleMedium,
+            color = TextPrimary
+        )
+    }
+}
+
+private fun dinoEmojiFor(id: String): String {
+    val pool = listOf("🦕", "🦖", "🦎", "🥚", "🦴")
+    val idx = (id.hashCode().and(0x7fffffff)) % pool.size
+    return pool[idx]
 }
