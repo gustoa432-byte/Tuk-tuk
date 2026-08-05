@@ -264,7 +264,13 @@ fn normalize_email(raw: &str) -> Result<String, AppError> {
 }
 
 /// Validate Telegram WebApp `initData` per Bot API docs.
+/// Rejects replayed payloads: `auth_date` must be within [now − 300s, now + skew].
 fn verify_telegram_init_data(bot_token: &str, init_data: &str) -> Result<String, AppError> {
+    /// Max age of a valid Mini App `auth_date` (seconds).
+    const AUTH_MAX_AGE_SECS: i64 = 300;
+    /// Allow minor client/server clock drift into the near future.
+    const AUTH_CLOCK_SKEW_SECS: i64 = 60;
+
     let pairs: Vec<(String, String)> = init_data
         .split('&')
         .filter_map(|p| {
@@ -304,6 +310,29 @@ fn verify_telegram_init_data(bot_token: &str, init_data: &str) -> Result<String,
     let calc = hex::encode(mac.finalize().into_bytes());
     if calc != hash {
         return Err(AppError::unauthorized("telegram_hash_invalid"));
+    }
+
+    // Freshness: Telegram includes auth_date (unix seconds) in the signed payload.
+    let auth_date_raw = check
+        .iter()
+        .find(|(k, _)| k == "auth_date")
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(|| AppError::unauthorized("telegram_auth_date_missing"))?;
+    let auth_date: i64 = auth_date_raw.parse().map_err(|_| {
+        AppError::unauthorized("telegram_auth_date_invalid")
+    })?;
+    if auth_date <= 0 {
+        return Err(AppError::unauthorized("telegram_auth_date_invalid"));
+    }
+    let now_secs = now_ms().saturating_div(1000);
+    // Reject far-future timestamps (clock skew / forged field after HMAC would already fail;
+    // this also covers malformed large values without overflow panics).
+    if auth_date > now_secs.saturating_add(AUTH_CLOCK_SKEW_SECS) {
+        return Err(AppError::unauthorized("telegram_auth_date_in_future"));
+    }
+    let age_secs = now_secs.saturating_sub(auth_date);
+    if age_secs > AUTH_MAX_AGE_SECS {
+        return Err(AppError::unauthorized("telegram_auth_date_expired"));
     }
 
     let user_json = check
