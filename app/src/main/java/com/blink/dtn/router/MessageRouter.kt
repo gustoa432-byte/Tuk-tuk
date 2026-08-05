@@ -173,4 +173,32 @@ object MessageRouter {
         }
         return ok
     }
+
+    /**
+     * Ask Oracle for top couriers toward [targetNode] when online + JWT present.
+     * [apply] receives node_ids to prefer on the next BLE TX batch.
+     */
+    suspend fun refreshOracleHints(
+        context: android.content.Context,
+        targetNode: String?,
+        apply: (List<String>) -> Unit
+    ) {
+        val target = targetNode?.trim().orEmpty()
+        if (target.isEmpty()) return
+        if (!com.blink.dtn.net.VpsConfig.isOnline(context)) return
+        if (!com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)) return
+        val result = com.blink.dtn.net.OracleApi(context).hint(target)
+        result.onSuccess { resp ->
+            val ids = resp.recommendedCouriers.map { it.nodeId }.filter { it.isNotBlank() }
+            apply(ids)
+            if (ids.isNotEmpty()) {
+                TraceStore.stage(
+                    "oracle-$target",
+                    "Oracle.Hint",
+                    detailsOf("target" to target, "couriers" to ids.joinToString(",")),
+                    visual = "🔮 Оракул: ${ids.size} курьера"
+                )
+            }
+        }
+    }
 }

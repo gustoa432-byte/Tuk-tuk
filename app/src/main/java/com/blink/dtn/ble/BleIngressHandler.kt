@@ -23,6 +23,7 @@ internal class BleIngressHandler(
     private val deps: Deps
 ) {
     data class DecodedWirePacket(
+        val packet: NetworkPacket,
         val message: Message,
         val dedupKey: String
     )
@@ -39,25 +40,63 @@ internal class BleIngressHandler(
         fun onApkUpdateRequest(fromPeerId: String) {}
         /** Journal A: record Social Orbit meet for a stable mesh nodeId. */
         fun noteSocialOrbitMeet(nodeId: String) {}
+        /** Bind BLE MAC → mesh nodeId after a verified IDENTITY. */
+        fun bindPeerMac(mac: String?, nodeId: String) {}
     }
 
     fun decodeWirePacket(jsonString: String): DecodedWirePacket {
         return try {
             val packet = Json.decodeFromString<NetworkPacket>(jsonString)
             DecodedWirePacket(
+                packet = packet,
                 message = packet.toMessage(),
                 dedupKey = packet.packetId.ifEmpty { packet.messageId }
             )
         } catch (_: Exception) {
             val legacyMessage = Json.decodeFromString<Message>(jsonString)
             DecodedWirePacket(
+                packet = NetworkPacket.fromMessage(legacyMessage),
                 message = legacyMessage,
                 dedupKey = legacyMessage.id
             )
         }
     }
 
-    fun handle(packet: Message, dedupKey: String = packet.id) {
+    /**
+     * Drop spoofed / unsigned frames before any Room write or relay.
+     * IDENTITY may bootstrap the pubkey from the packet body.
+     */
+    suspend fun verifyEnvelope(packet: NetworkPacket): Boolean {
+        val pubFromIdentity = if (
+            packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE"
+        ) {
+            packet.payload.split("|").getOrNull(2).orEmpty()
+        } else {
+            ""
+        }
+        val profileKey = dao.getProfileById(packet.senderId)?.publicKey.orEmpty()
+        val pubKey = when {
+            pubFromIdentity.isNotBlank() -> pubFromIdentity
+            profileKey.isNotBlank() -> profileKey
+            else -> ""
+        }
+        if (pubKey.isBlank()) {
+            Log.w("DTN", "No pubkey to verify envelope from ${packet.senderId} type=${packet.type}")
+            // Allow IDENTITY_REQUEST without prior key (unsigned bootstrap ask).
+            return packet.type == "IDENTITY_REQUEST"
+        }
+        if (!com.blink.dtn.crypto.MeshEnvelopeCrypto.senderMatchesKey(packet.senderId, pubKey)) {
+            Log.w("DTN", "senderId/key mismatch ${packet.senderId}")
+            return false
+        }
+        val ok = com.blink.dtn.crypto.MeshEnvelopeCrypto.verify(packet, pubKey)
+        if (!ok) {
+            Log.w("DTN", "Bad mesh envelope signature from ${packet.senderId} type=${packet.type}")
+        }
+        return ok
+    }
+
+    fun handle(packet: Message, dedupKey: String = packet.id, fromMac: String? = null) {
         Log.d("DTN", "Received packet: id=${packet.id} type=${packet.type} from=${packet.senderNick} ttl=${packet.ttl}")
         scopeProvider().launch {
             if (packet.senderId == myNodeId && !packet.isAck) {
@@ -115,7 +154,10 @@ internal class BleIngressHandler(
                 val consumed = handleAck(packet, now)
                 if (consumed) return@launch
             } else when (packet.type) {
-                "IDENTITY_ANNOUNCEMENT", "SYSTEM_PROFILE" -> handleIdentity(packet)
+                "IDENTITY_ANNOUNCEMENT", "SYSTEM_PROFILE" -> {
+                    handleIdentity(packet)
+                    deps.bindPeerMac(fromMac, packet.senderId)
+                }
                 "IDENTITY_REQUEST" -> handleIdentityRequest(packet)
                 "UPDATE_REQUEST" -> {
                     if (packet.targetId == null || packet.targetId == myNodeId) {
@@ -139,22 +181,64 @@ internal class BleIngressHandler(
                 }
                 "PRIVATE" -> {
                     if (packet.targetId == myNodeId) {
+                        // Destination: ciphertext must be hybrid RSA envelope.
+                        if (!com.blink.dtn.crypto.RsaUtils.looksLikePrivateEnvelope(packet.text)) {
+                            Log.w("DTN", "Dropped PRIVATE without RSA envelope ${packet.id}")
+                            return@launch
+                        }
                         handlePrivateForMe(packet)
                         return@launch
                     } else {
-                        dao.insertRelayPacket(packet)
+                        // Backpack: append our nodeId to hopHistory (Chronicle custody).
+                        val forBackpack = packet.copy(
+                            hopHistory = packet.hopHistory + myNodeId
+                        )
+                        dao.insertRelayPacket(forBackpack)
                         deps.trace(
-                            packet.id,
+                            forBackpack.id,
                             com.blink.dtn.telemetry.TraceStages.MESH_RELAY_STORE,
                             com.blink.dtn.telemetry.detailsOf(
-                                "ttl" to packet.ttl,
-                                "from" to packet.senderId,
-                                "to" to packet.targetId
+                                "ttl" to forBackpack.ttl,
+                                "from" to forBackpack.senderId,
+                                "to" to forBackpack.targetId,
+                                "hops" to forBackpack.hopHistory.size
                             ),
                             visual = "🚲 Relay дальше"
                         )
+                        forBackpack.ttl = forBackpack.ttl - 1
+                        if (forBackpack.ttl > 0) {
+                            deps.enqueueMessage(forBackpack)
+                        }
+                        return@launch
                     }
                 }
+            }
+
+            // PUBLIC / announcements / identity: forward with hop custody when we are a relay hop.
+            if (packet.type == "PUBLIC" ||
+                packet.type == "SYSTEM_ANNOUNCEMENT" ||
+                packet.type == "VERSION_ANNOUNCEMENT"
+            ) {
+                packet.ttl = packet.ttl - 1
+                if (packet.ttl > 0) {
+                    val toForward = packet.copy(hopHistory = packet.hopHistory + myNodeId)
+                    deps.trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.MESH_FORWARD,
+                        com.blink.dtn.telemetry.detailsOf(
+                            "ttlAfter" to toForward.ttl,
+                            "viaNode" to myNodeId
+                        )
+                    )
+                    deps.enqueueMessage(toForward)
+                } else {
+                    deps.trace(
+                        packet.id,
+                        com.blink.dtn.telemetry.TraceStages.MESH_SKIP,
+                        com.blink.dtn.telemetry.detailsOf("reason" to "ttl_exhausted")
+                    )
+                }
+                return@launch
             }
 
             packet.ttl = packet.ttl - 1

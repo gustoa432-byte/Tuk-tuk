@@ -10,8 +10,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,6 +50,11 @@ internal class BleRelayEngine(
         suspend fun deleteOldestNonSosMessages(n: Int) {}
         suspend fun isSenderBlocked(userId: String, nick: String): Boolean = false
         suspend fun deleteQueuedMessage(messageId: String) {}
+        /** Oracle-preferred courier nodeIds (from hint). Empty = no preference. */
+        fun oraclePriorityNodeIds(): Set<String> = emptySet()
+        fun nodeIdForMac(mac: String): String? = null
+        /** Refresh Oracle hints for [targetNode] when online + JWT. */
+        suspend fun refreshOracleHints(targetNode: String?) {}
     }
 
     private class TxBatch(val totalAttempts: Int) {
@@ -365,10 +368,9 @@ internal class BleRelayEngine(
         val bytes: ByteArray
         try {
             val wirePacket = NetworkPacket.fromMessage(networkMessage)
-            val jsonPayload = Json.encodeToString(wirePacket)
-            bytes = com.blink.dtn.crypto.CryptoUtils.encrypt(jsonPayload)
+            bytes = com.blink.dtn.crypto.CryptoUtils.packSigned(wirePacket)
         } catch (e: Exception) {
-            Log.e("ROUTE", "Relay encode/encrypt failed for ${message.id}: ${e.message}")
+            Log.e("ROUTE", "Relay encode/sign failed for ${message.id}: ${e.message}")
             messageBackoffMap[message.id] =
                 System.currentTimeMillis() + calculateBackoff(message.retryCount)
             return
@@ -403,13 +405,26 @@ internal class BleRelayEngine(
             return
         }
 
+        // Oracle: when online, prefer hinted couriers toward PRIVATE target.
+        if (networkMessage.type == "PRIVATE") {
+            deps.refreshOracleHints(networkMessage.targetId)
+        }
+
+        val priorityNodes = deps.oraclePriorityNodeIds()
         val validDevices = peers.filter { device ->
             now >= deps.peerBackoffUntil(device.address)
+        }.sortedByDescending { device ->
+            val nid = deps.nodeIdForMac(device.address)
+            when {
+                nid != null && nid in priorityNodes -> 2
+                priorityNodes.isEmpty() -> 0
+                else -> 0
+            }
         }.take(deps.maxPeersPerBatch().coerceAtLeast(1))
 
         Log.i(
             "ROUTE",
-            "Processing message ${message.id} attempt=${message.retryCount} to ${validDevices.size} valid devices"
+            "Processing message ${message.id} attempt=${message.retryCount} to ${validDevices.size} valid devices (oraclePri=${priorityNodes.size})"
         )
 
         if (validDevices.isEmpty()) {

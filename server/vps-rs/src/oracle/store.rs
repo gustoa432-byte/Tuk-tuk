@@ -129,3 +129,23 @@ pub async fn courier_candidates(
     }
     Ok(out)
 }
+
+/// Retention: drop orbit edges whose last_meet_at is older than [max_age_secs].
+/// `last_meet_at` is stored as Unix seconds (Android ms is normalized on ingest).
+pub async fn prune_stale_edges(
+    conn: &Connection,
+    now_secs: i64,
+    max_age_secs: i64,
+) -> Result<u64, AppError> {
+    let cutoff = now_secs.saturating_sub(max_age_secs);
+    let changed = conn
+        .execute(
+            "DELETE FROM oracle_edges WHERE last_meet_at > 0 AND last_meet_at < ?1",
+            params![cutoff],
+        )
+        .await?;
+    Ok(changed)
+}
+
+/// Default retention window: 30 days.
+pub const ORACLE_EDGE_RETENTION_SECS: i64 = 30 * 86_400;

@@ -71,6 +71,9 @@ class BleMeshManager private constructor(
     private val peers = BlePeerTable()
     val peerCount: StateFlow<Int> = peers.peerCount
     val activePeers: StateFlow<List<String>> = peers.activePeers
+    /** Oracle courier hints — MAC selection prefers these nodeIds. */
+    private val oraclePriorityNodes =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     private val pool = BleConnectionPool(scopeProvider = { scope })
 
@@ -211,6 +214,18 @@ class BleMeshManager private constructor(
                 override suspend fun isSenderBlocked(userId: String, nick: String): Boolean =
                     dao.isUserIdBlocked(userId) || dao.isUserBlocked(nick)
                 override suspend fun deleteQueuedMessage(messageId: String) { dao.deleteMessageById(messageId) }
+                override fun oraclePriorityNodeIds(): Set<String> = oraclePriorityNodes.toSet()
+                override fun nodeIdForMac(mac: String): String? = peers.nodeIdFor(mac)
+                override suspend fun refreshOracleHints(targetNode: String?) {
+                    com.blink.dtn.router.MessageRouter.refreshOracleHints(
+                        context = context,
+                        targetNode = targetNode,
+                        apply = { ids ->
+                            oraclePriorityNodes.clear()
+                            oraclePriorityNodes.addAll(ids)
+                        }
+                    )
+                }
             }
         )
     }
@@ -240,6 +255,9 @@ class BleMeshManager private constructor(
                     scope.launch(Dispatchers.IO) {
                         socialOrbitDao.upsertContact(nodeId)
                     }
+                }
+                override fun bindPeerMac(mac: String?, nodeId: String) {
+                    if (!mac.isNullOrBlank()) peers.bindNodeId(mac, nodeId)
                 }
             }
         )
@@ -721,14 +739,18 @@ class BleMeshManager private constructor(
 
     private fun handleIncomingWrite(device: BluetoothDevice, value: ByteArray) {
         val assembledValue = reassembler.ingest(value) ?: return
-        val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue)
-            ?: throw Exception("Decryption returned null")
+        val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: return
         val decoded = ingress.decodeWirePacket(jsonString)
-        val message = decoded.message
-        Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
-        Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
-        Log.d("BLE_PROCESS", "MessageId=${message.id} Type=${message.type}")
-        ingress.handle(message, decoded.dedupKey)
+        scope.launch(Dispatchers.IO) {
+            if (!ingress.verifyEnvelope(decoded.packet)) {
+                Log.w(TAG, "Dropped unsigned/invalid envelope ${decoded.dedupKey}")
+                return@launch
+            }
+            val message = decoded.message
+            Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
+            Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
+            ingress.handle(message, decoded.dedupKey, fromMac = device.address)
+        }
     }
 
     fun injectEncryptedPayload(value: ByteArray) {
@@ -736,7 +758,13 @@ class BleMeshManager private constructor(
         try {
             val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(value) ?: return
             val decoded = ingress.decodeWirePacket(jsonString)
-            ingress.handle(decoded.message, decoded.dedupKey)
+            scope.launch(Dispatchers.IO) {
+                if (!ingress.verifyEnvelope(decoded.packet)) {
+                    Log.w(TAG, "Dropped unsigned VPS/mesh frame ${decoded.dedupKey}")
+                    return@launch
+                }
+                ingress.handle(decoded.message, decoded.dedupKey)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

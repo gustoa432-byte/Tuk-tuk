@@ -14,8 +14,8 @@ object VpsConfig {
     private const val PREFS = "blink_prefs"
     private const val KEY_BASE_URL = "vps_base_url"
 
-    /** Shipped default so online auth/contacts work without manual setup. */
-    const val DEFAULT_BASE_URL = "http://157.228.136.239:8080"
+    /** Shipped default: TLS via Nginx (see scripts/setup-https.sh). */
+    const val DEFAULT_BASE_URL = "https://node.tuktuk.dev"
 
     private val _baseUrl = MutableStateFlow("")
     val baseUrl: StateFlow<String> = _baseUrl

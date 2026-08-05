@@ -1,61 +1,49 @@
 package com.blink.dtn.crypto
 
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
-import java.security.SecureRandom
+import android.util.Log
+import com.blink.dtn.ble.NetworkPacket
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
+/**
+ * Mesh wire codec: UTF-8 JSON [NetworkPacket] with author RSA signature.
+ * No shared AES passphrase — authenticity via [MeshEnvelopeCrypto], confidentiality
+ * of PRIVATE bodies via [RsaUtils.encryptAsymmetric] to the recipient publicBleKey.
+ */
 object CryptoUtils {
-    private const val ALGORITHM = "AES"
-    private const val TRANSFORMATION = "AES/GCM/NoPadding"
-    private const val TAG_LENGTH_BIT = 128
-    private const val IV_LENGTH_BYTE = 12
+    private const val TAG = "CryptoUtils"
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    // TEMPORARY mesh-wide transport key: encrypts the outer BLE JSON envelope for
-    // all nodes sharing this APK. This is NOT end-to-end security — PRIVATE
-    // payloads are additionally wrapped with per-peer RSA. Replace with a
-    // negotiated group key before production deployment.
-    private const val PASSPHRASE = "BlinkSurvivalMeshNetwork2026!@#"
-
-    private val secretKey: SecretKeySpec by lazy {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val keyBytes = digest.digest(PASSPHRASE.toByteArray(Charsets.UTF_8))
-        SecretKeySpec(keyBytes, ALGORITHM)
+    /** Pack a signed wire packet to BLE/VPS opaque bytes. */
+    fun packSigned(packet: NetworkPacket): ByteArray {
+        val unsigned = packet.copy(authorSignature = null)
+        val signature = MeshEnvelopeCrypto.sign(unsigned)
+        require(signature.isNotBlank()) { "mesh_envelope_sign_failed" }
+        val signed = unsigned.copy(authorSignature = signature)
+        return json.encodeToString(signed).toByteArray(Charsets.UTF_8)
     }
 
-    fun encrypt(plainText: String): ByteArray {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        val iv = ByteArray(IV_LENGTH_BYTE)
-        SecureRandom().nextBytes(iv)
-        val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-        
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey, parameterSpec)
-        val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        
-        // Prepend IV to the ciphertext
-        return iv + cipherText
-    }
-
+    /** Decode wire bytes to JSON string (new clear JSON, or legacy AES if present). */
     fun decrypt(cipherTextWithIv: ByteArray): String? {
-        return try {
-            if (cipherTextWithIv.size < IV_LENGTH_BYTE) {
-                android.util.Log.e("CryptoUtils", "Payload too short for IV")
-                return null
+        if (cipherTextWithIv.isEmpty()) return null
+        // New format: UTF-8 JSON starting with '{'
+        if (cipherTextWithIv[0] == '{'.code.toByte()) {
+            return try {
+                String(cipherTextWithIv, Charsets.UTF_8)
+            } catch (e: Exception) {
+                Log.e(TAG, "UTF-8 decode failed: ${e.message}")
+                null
             }
-
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            val iv = cipherTextWithIv.copyOfRange(0, IV_LENGTH_BYTE)
-            val cipherText = cipherTextWithIv.copyOfRange(IV_LENGTH_BYTE, cipherTextWithIv.size)
-            
-            val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, parameterSpec)
-            
-            val plainTextBytes = cipher.doFinal(cipherText)
-            String(plainTextBytes, Charsets.UTF_8)
-        } catch (e: Exception) {
-            android.util.Log.e("CryptoUtils", "Decryption failed: ${e.message}", e)
-            null
         }
+        Log.w(TAG, "Rejected non-JSON mesh frame (legacy shared-AES removed)")
+        return null
+    }
+
+    @Deprecated("Use packSigned(NetworkPacket) — shared AES removed", ReplaceWith("packSigned(packet)"))
+    fun encrypt(plainText: String): ByteArray {
+        // Last-resort: if caller still passes JSON string, ship as UTF-8 (unsigned).
+        // Prefer packSigned from relay path.
+        Log.w(TAG, "encrypt(String) is legacy; prefer packSigned")
+        return plainText.toByteArray(Charsets.UTF_8)
     }
 }

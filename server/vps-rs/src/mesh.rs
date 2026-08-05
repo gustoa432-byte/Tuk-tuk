@@ -1,13 +1,14 @@
 //! Legacy mesh store-and-forward API (VpsBridge-compatible).
 
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 
-use crate::state::{now_ms, AppError, AppState, ErrorBody};
+use crate::oracle::auth::require_node;
+use crate::state::{now_ms, AppError, AppState};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,24 +124,23 @@ pub async fn register(
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Response, AppError> {
+    let principal = require_node(&state, &headers)?;
     let header_id = headers
         .get("X-Node-Id")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let node_id = body
+    let requested = body
         .node_id
         .filter(|s| !s.is_empty())
         .or_else(|| (!header_id.is_empty()).then_some(header_id));
 
-    let Some(node_id) = node_id else {
-        return Ok((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorBody {
-                error: "nodeId_required".into(),
-            }),
-        )
-            .into_response());
+    let node_id = match requested {
+        Some(id) if id == principal.node_id => id,
+        Some(_) => {
+            return Err(AppError::unauthorized("node_id_mismatch_jwt"));
+        }
+        None => principal.node_id.clone(),
     };
 
     state
@@ -168,13 +168,21 @@ pub async fn register(
 
 pub async fn push(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, AppError> {
+    let principal = require_node(&state, &headers)?;
     let mut accepted = 0u32;
     for env in body.envelopes {
         if env.id.is_empty() {
             continue;
         }
+        // Bind sender to authenticated mesh device — no anonymous / spoofed from.
+        let from = if env.from.is_empty() || env.from == principal.node_id {
+            principal.node_id.clone()
+        } else {
+            return Err(AppError::unauthorized("envelope_from_mismatch_jwt"));
+        };
         let receiver = env.to.unwrap_or_default();
         let receiver_sql: Option<String> = if receiver.is_empty() || receiver == "*" {
             None
@@ -197,7 +205,7 @@ pub async fn push(
                 "#,
                 params![
                     env.id,
-                    env.from,
+                    from,
                     receiver_sql,
                     env.payload_b64,
                     kind,
@@ -217,9 +225,17 @@ pub async fn push(
 
 pub async fn pull(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
-    let node_id = q.node_id.unwrap_or_default();
+    let principal = require_node(&state, &headers)?;
+    // Ignore spoofable query node_id — always pull for the JWT device.
+    let node_id = principal.node_id;
+    if let Some(claimed) = q.node_id.as_ref().filter(|s| !s.is_empty()) {
+        if *claimed != node_id {
+            return Err(AppError::unauthorized("node_id_mismatch_jwt"));
+        }
+    }
     let since = q.since.unwrap_or(0);
     let mut rows = state
         .db

@@ -97,6 +97,7 @@ class VpsBridge private constructor(
     /** Immediate opaque hop used by [com.blink.dtn.router.MessageRouter]. */
     suspend fun pushEncryptedPayload(bytes: ByteArray, messageId: String): Boolean {
         if (!isConfigured() || !VpsConfig.isOnline(context)) return false
+        val jwt = meshJwtOrNull() ?: return false
         return try {
             val envelope = VpsEnvelope(
                 id = messageId,
@@ -111,6 +112,7 @@ class VpsBridge private constructor(
                 .url("${baseUrl()}/v1/push")
                 .post(body)
                 .header("X-Node-Id", myNodeId)
+                .header("Authorization", "Bearer $jwt")
                 .build()
             client.newCall(req).execute().use { resp ->
                 val ok = resp.isSuccessful
@@ -138,6 +140,7 @@ class VpsBridge private constructor(
         val to = msg.targetId ?: return false
         if (!isConfigured() || !VpsConfig.isOnline(context)) return false
         if (jpegBytes.isEmpty() || jpegBytes.size > 400_000) return false
+        val jwt = meshJwtOrNull() ?: return false
         return try {
             val payload = PrivateImagePayload(
                 id = msg.id,
@@ -165,6 +168,7 @@ class VpsBridge private constructor(
                 .url("${baseUrl()}/v1/push")
                 .post(body)
                 .header("X-Node-Id", myNodeId)
+                .header("Authorization", "Bearer $jwt")
                 .build()
             client.newCall(req).execute().use { resp ->
                 val ok = resp.isSuccessful
@@ -188,7 +192,13 @@ class VpsBridge private constructor(
 
     private fun baseUrl(): String = VpsConfig.baseUrl.value.trimEnd('/')
 
+    private fun meshJwtOrNull(): String? {
+        val jwt = com.blink.dtn.auth.AuthSessionStore.jwt(context)
+        return jwt.takeIf { it.isNotBlank() }
+    }
+
     private fun register() {
+        val jwt = meshJwtOrNull() ?: return
         val nick = context.getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
             .getString("nick", "") ?: ""
         val body = json.encodeToString(
@@ -198,6 +208,7 @@ class VpsBridge private constructor(
             .url("${baseUrl()}/v1/register")
             .post(body)
             .header("X-Node-Id", myNodeId)
+            .header("Authorization", "Bearer $jwt")
             .build()
         client.newCall(req).execute().use { resp ->
             reachable.set(resp.isSuccessful)
@@ -248,16 +259,18 @@ class VpsBridge private constructor(
     }
 
     private suspend fun performSync() {
+        val jwt = meshJwtOrNull() ?: return
         // 1) Push unsynced DB messages as opaque best-effort JSON fallback
         //    (PRIVATE_IMAGE is pushed only via [pushPrivateImage] with JPEG bytes).
         val unsynced = dao.getUnsyncedMessages()
             .filter { it.type != Message.TYPE_PRIVATE_IMAGE }
+            .filter { it.senderId == myNodeId || it.isMine }
             .take(40)
         if (unsynced.isNotEmpty()) {
             val envelopes = unsynced.map { msg ->
                 VpsEnvelope(
                     id = msg.id,
-                    from = msg.senderId.ifBlank { myNodeId },
+                    from = myNodeId,
                     to = msg.targetId ?: "*",
                     payloadB64 = Base64.encodeToString(
                         json.encodeToString(msg).toByteArray(Charsets.UTF_8),
@@ -273,6 +286,7 @@ class VpsBridge private constructor(
                 .url("${baseUrl()}/v1/push")
                 .post(body)
                 .header("X-Node-Id", myNodeId)
+                .header("Authorization", "Bearer $jwt")
                 .build()
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
@@ -291,6 +305,7 @@ class VpsBridge private constructor(
             .url("${baseUrl()}/v1/pull?nodeId=$myNodeId&since=$since")
             .get()
             .header("X-Node-Id", myNodeId)
+            .header("Authorization", "Bearer $jwt")
             .build()
         client.newCall(pullReq).execute().use { resp ->
             if (!resp.isSuccessful) {

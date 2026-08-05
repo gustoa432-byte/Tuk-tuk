@@ -43,11 +43,11 @@ ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
 
 | Method | Path |
 |--------|------|
-| GET | `/v1/health` |
-| POST | `/v1/register` |
-| GET | `/v1/directory` |
-| POST | `/v1/push` |
-| GET | `/v1/pull?nodeId=&since=` |
+| GET | `/v1/health` | — |
+| POST | `/v1/register` | Bearer JWT (`node_id` claim) |
+| GET | `/v1/directory` | — |
+| POST | `/v1/push` | Bearer JWT (`from` = JWT node_id) |
+| GET | `/v1/pull?nodeId=&since=` | Bearer JWT |
 
 ### Auth
 
@@ -77,6 +77,9 @@ JWT claims: `sub` (account UUID), `node_id` (mesh device id = Base32(SHA-256(DER
 
 - sync: `source_node` = JWT `node_id`; upsert edges if incoming `meet_count` is greater
 - hint: 1st-degree couriers, decay score, top-3 → `{ "recommended_couriers": [{ "node_id", "score" }] }`
+- retention: daily prune of `oracle_edges` with `last_meet_at` older than **30 days**
+
+TLS: `scripts/setup-https.sh` (Nginx + Let's Encrypt). DB backup: `scripts/backup-tuktuk-db.sh` (cron via deploy).
 
 ## Схема
 

@@ -199,8 +199,9 @@ class BLinkMeshService : Service() {
                                 val unsyncedMessages = dao.getUnsyncedMessages()
                                 val syncedIds = mutableListOf<String>()
                                 for (msg in unsyncedMessages) {
-                                    val jsonPayload = kotlinx.serialization.json.Json.encodeToString(msg)
-                                    val encryptedPayload = com.blink.dtn.crypto.CryptoUtils.encrypt(jsonPayload)
+                                    val wire = com.blink.dtn.ble.NetworkPacket.fromMessage(msg)
+                                    val encryptedPayload =
+                                        com.blink.dtn.crypto.CryptoUtils.packSigned(wire)
                                     val success = com.blink.dtn.vk.VkRelayManager.pushPayloadToWall(encryptedPayload)
                                     if (success) {
                                         syncedIds.add(msg.id)
@@ -226,8 +227,8 @@ class BLinkMeshService : Service() {
                         val unsyncedMessages = dao.getUnsyncedMessages()
                         val syncedIds = mutableListOf<String>()
                         for (msg in unsyncedMessages) {
-                            val jsonPayload = Json.encodeToString(msg)
-                            val encryptedPayload = CryptoUtils.encrypt(jsonPayload)
+                            val wire = com.blink.dtn.ble.NetworkPacket.fromMessage(msg)
+                            val encryptedPayload = com.blink.dtn.crypto.CryptoUtils.packSigned(wire)
                             val success = VkRelayManager.pushPayloadToWall(encryptedPayload)
                             if (success) {
                                 syncedIds.add(msg.id)

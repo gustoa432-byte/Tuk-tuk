@@ -171,6 +171,34 @@ echo "POST /contacts/add (no JWT) -> ${code_contacts} (expect 401)"
 cat /tmp/tuktuk_contacts.json 2>/dev/null || true
 echo
 
+code_push="$(curl -sS -o /tmp/tuktuk_push.json -w '%{http_code}' \
+  -X POST "${BASE}/v1/push" \
+  -H 'Content-Type: application/json' \
+  -d '{"envelopes":[]}')"
+echo "POST /v1/push (no JWT) -> ${code_push} (expect 401)"
+cat /tmp/tuktuk_push.json 2>/dev/null || true
+echo
+
+code_reg="$(curl -sS -o /tmp/tuktuk_reg.json -w '%{http_code}' \
+  -X POST "${BASE}/v1/register" \
+  -H 'Content-Type: application/json' \
+  -d '{"nodeId":"x"}')"
+echo "POST /v1/register (no JWT) -> ${code_reg} (expect 401)"
+cat /tmp/tuktuk_reg.json 2>/dev/null || true
+echo
+
+# Daily DB backup cron (idempotent)
+BACKUP_SCRIPT="${REPO_DIR}/scripts/backup-tuktuk-db.sh"
+if [[ -f "${BACKUP_SCRIPT}" ]]; then
+  chmod +x "${BACKUP_SCRIPT}" || true
+  apt-get install -y -qq sqlite3 >/dev/null || true
+  CRON_LINE="15 3 * * * TUKTUK_DB=${DB_PATH} ${BACKUP_SCRIPT} >>/var/log/tuktuk-backup.log 2>&1"
+  (crontab -l 2>/dev/null | grep -v 'backup-tuktuk-db.sh' || true; echo "${CRON_LINE}") | crontab -
+  echo "==> backup cron installed (03:15 UTC daily)"
+  # Smoke one backup now
+  TUKTUK_DB="${DB_PATH}" bash "${BACKUP_SCRIPT}" || true
+fi
+
 if [[ "${code_oracle_sync}" == "404" || "${code_oracle_hint}" == "404" ]]; then
   echo "FAIL: /v1/oracle/* still 404 — old binary without Oracle?" >&2
   exit 1
@@ -178,8 +206,12 @@ fi
 if [[ "${code_oracle_sync}" != "401" && "${code_oracle_sync}" != "400" ]]; then
   echo "WARN: unexpected oracle sync code ${code_oracle_sync}" >&2
 fi
+if [[ "${code_push}" != "401" && "${code_push}" != "400" ]]; then
+  echo "WARN: unexpected push code ${code_push} (expected 401 without JWT)" >&2
+fi
 
 echo "OK deploy ${SERVICE} @ $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
 echo "Binary: ${BIN}"
 echo "DB:     ${DB_PATH}"
 echo "Env:    ${ENV_FILE}"
+echo "HTTPS:  bash ${REPO_DIR}/scripts/setup-https.sh  # once DNS is ready"

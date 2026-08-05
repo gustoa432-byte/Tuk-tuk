@@ -14,6 +14,9 @@ internal class BlePeerTable {
     private val discovered = ConcurrentHashMap.newKeySet<BluetoothDevice>()
     private val connectedClients = ConcurrentHashMap.newKeySet<BluetoothDevice>()
     private val txBackoffUntil = ConcurrentHashMap<String, Long>()
+    /** GATT MAC → mesh nodeId after IDENTITY handshake. */
+    private val nodeIdByMac = ConcurrentHashMap<String, String>()
+    private val macByNodeId = ConcurrentHashMap<String, String>()
 
     private val _peerCount = MutableStateFlow(0)
     private val _activePeers = MutableStateFlow<List<String>>(emptyList())
@@ -42,8 +45,18 @@ internal class BlePeerTable {
     fun noteDisconnected(address: String) {
         discovered.removeIf { it.address == address }
         connectedClients.removeIf { it.address == address }
+        nodeIdByMac.remove(address)?.let { macByNodeId.remove(it, address) }
         publish()
     }
+
+    fun bindNodeId(address: String, nodeId: String) {
+        val id = nodeId.trim()
+        if (address.isBlank() || id.isEmpty()) return
+        nodeIdByMac[address] = id
+        macByNodeId[id] = address
+    }
+
+    fun nodeIdFor(address: String): String? = nodeIdByMac[address]
 
     fun setBackoff(mac: String, durationMs: Long) {
         txBackoffUntil[mac] = System.currentTimeMillis() + durationMs
@@ -58,6 +71,8 @@ internal class BlePeerTable {
         discovered.clear()
         connectedClients.clear()
         txBackoffUntil.clear()
+        nodeIdByMac.clear()
+        macByNodeId.clear()
         publish()
     }
 

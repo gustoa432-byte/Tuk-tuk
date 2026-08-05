@@ -57,6 +57,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg,
     };
 
+    // Oracle retention: prune edges older than 30 days (once at boot + daily).
+    {
+        let prune_db = Arc::clone(&state.db);
+        tokio::spawn(async move {
+            loop {
+                let now_secs = crate::state::now_ms() / 1000;
+                match oracle::store::prune_stale_edges(
+                    &prune_db,
+                    now_secs,
+                    oracle::store::ORACLE_EDGE_RETENTION_SECS,
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => {
+                        info!(deleted = n, "oracle_edges pruned (retention 30d)")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e.message, "oracle prune failed"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
+            }
+        });
+    }
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
