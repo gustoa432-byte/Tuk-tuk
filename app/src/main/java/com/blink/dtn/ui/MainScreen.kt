@@ -1295,7 +1295,10 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                         },
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
                         onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
-                        onRetrySend = { viewModel.retryOutgoingMessage(msg.id) }
+                        onRetrySend = { viewModel.retryOutgoingMessage(msg.id) },
+                        onReport = {
+                            viewModel.reportMessage(msg)
+                        }
                     )
                 }
             }
@@ -1474,6 +1477,7 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
                             viewModel.blockUser(msg.senderId, msg.senderNick)
                             Toast.makeText(context, S.userBlocked(lang), Toast.LENGTH_SHORT).show()
                         },
+                        onReport = { viewModel.reportMessage(msg) },
                         senderAvatarBlob = senderProfile?.avatarBlob
                     )
                 }
@@ -1658,6 +1662,7 @@ fun MessageBubble(
     onCancelSend: (() -> Unit)? = null,
     onRetrySend: (() -> Unit)? = null,
     onBlockUser: (() -> Unit)? = null,
+    onReport: (() -> Unit)? = null,
     onReply: (() -> Unit)? = null,
     onForward: (() -> Unit)? = null,
     onCopy: (() -> Unit)? = null,
@@ -1676,7 +1681,8 @@ fun MessageBubble(
     val isMine = msg.senderId == myNodeId || msg.isMine
     val gm by GamificationStore.snap.collectAsState()
     val nickTint = if (isMine) CosmeticApply.nickColor(gm.nickColorId) else TextPrimary
-    val canBlockSender = !isMine && msg.type == "PUBLIC" && onBlockUser != null
+    val canBlockSender = !isMine && onBlockUser != null
+    val canReport = !isMine && onReport != null && msg.senderId.isNotBlank()
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = formatter.format(Date(msg.displayClockMs()))
     var showActions by remember { mutableStateOf(false) }
@@ -1701,7 +1707,7 @@ fun MessageBubble(
             msg = msg,
             isMine = isMine,
             canCancel = canCancel,
-            canBlockSender = canBlockSender,
+            canBlockSender = canBlockSender || canReport,
             onDismiss = { showActions = false },
             onReply = onReply,
             onForward = onForward,
@@ -1711,6 +1717,7 @@ fun MessageBubble(
             onDeleteLocal = onDeleteLocal,
             onCancelSend = onCancelSend,
             onBlockUser = onBlockUser,
+            onReport = if (canReport) onReport else null,
             onReact = { emoji ->
                 ReactionStore.set(context, msg.id, emoji)
             }

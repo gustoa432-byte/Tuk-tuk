@@ -194,7 +194,11 @@ class BleMeshManager private constructor(
                     }
                 }
                 override fun defaultTtl() = DEFAULT_TTL
-                override suspend fun tryAlternateTransport(bytes: ByteArray, messageId: String): Boolean {
+                override suspend fun tryAlternateTransport(
+                    bytes: ByteArray,
+                    messageId: String,
+                    targetNodeId: String?
+                ): Boolean {
                     val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
                     return com.blink.dtn.router.MessageRouter.tryAlternateTransports(
                         bytes = bytes,
@@ -202,7 +206,8 @@ class BleMeshManager private constructor(
                         internetOnline = com.blink.dtn.net.VpsConfig.isOnline(context),
                         vps = vpsBridge,
                         wifi = wifi,
-                        blePeers = peers.peerCount.value
+                        blePeers = peers.peerCount.value,
+                        targetNodeId = targetNodeId
                     )
                 }
                 override fun maxPeersPerBatch(): Int = MeshDutyPrefs.cadence().maxPeersPerBatch

@@ -126,8 +126,13 @@ object MessageRouter {
         internetOnline: Boolean,
         vps: VpsBridge?,
         wifi: WifiDirectTransport?,
-        blePeers: Int
+        blePeers: Int,
+        targetNodeId: String? = null
     ): Boolean {
+        if (com.blink.dtn.moderation.GlobalBanCache.isBanned(targetNodeId)) {
+            notePath(messageId, RoutePath.BLE, "получатель в бан-листе")
+            return false
+        }
         val vpsReady = vps != null && vps.isConfigured() && internetOnline
         val wifiReady = wifi != null && wifi.isGroupReady()
         val decision = decide(internetOnline, vpsReady, wifiReady, blePeers)

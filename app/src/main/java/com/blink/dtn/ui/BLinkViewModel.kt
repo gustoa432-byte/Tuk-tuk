@@ -549,6 +549,16 @@ class BLinkViewModel(
 
     fun sendPrivateMessage(text: String, targetId: String, replyToId: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (com.blink.dtn.moderation.GlobalBanCache.isBanned(targetId)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Получатель в глобальном бан-листе",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@launch
+            }
             // Outbound private = user-initiated → contact (not a stranger request).
             upsertPeerAsContact(targetId)
 
@@ -821,6 +831,42 @@ class BLinkViewModel(
                     blockedAt = System.currentTimeMillis()
                 )
             )
+        }
+    }
+
+    /**
+     * Submit decrypted message text + sender nodeId to VPS moderation.
+     * Requires an online JWT session.
+     */
+    fun reportMessage(msg: Message) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val lang = com.blink.dtn.ui.AppLang.lang.value
+            if (msg.senderId.isBlank() || msg.isMine || msg.senderId == myNodeId) {
+                return@launch
+            }
+            if (com.blink.dtn.moderation.GlobalBanCache.isBanned(msg.senderId)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        app,
+                        com.blink.dtn.ui.S.reportSent(lang),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+            val result = com.blink.dtn.net.ModerationApi(app).report(
+                reportedNodeId = msg.senderId,
+                decryptedMessageContent = msg.text.take(8_000)
+            )
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    app,
+                    if (result.isSuccess) com.blink.dtn.ui.S.reportSent(lang)
+                    else com.blink.dtn.ui.S.reportFailed(lang),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 

@@ -75,6 +75,14 @@ class VpsBridge private constructor(
         VpsConfig.init(context)
         syncJob?.cancel()
         syncJob = scope.launch {
+            // Hydrate ban cache from Room before first network round.
+            runCatching {
+                val ids = com.blink.dtn.db.BLinkDatabase
+                    .getDatabase(context)
+                    .bannedNodeDao()
+                    .allNodeIds()
+                com.blink.dtn.moderation.GlobalBanCache.replaceAll(ids)
+            }
             while (isActive) {
                 refreshRouterSnapshot()
                 if (isConfigured() && VpsConfig.isOnline(context)) {
@@ -82,6 +90,7 @@ class VpsBridge private constructor(
                     runCatching { syncDirectory() }
                     runCatching { performSync() }
                     runCatching { syncOracleOrbits() }
+                    runCatching { syncModerationBlacklist() }
                 } else {
                     reachable.set(false)
                 }
@@ -403,6 +412,15 @@ class VpsBridge private constructor(
         OracleApi(context).sync(orbits).onSuccess { resp ->
             Log.d(TAG, "oracle sync accepted=${resp.accepted}")
         }
+    }
+
+    /** Pull global ban list → Room + [com.blink.dtn.moderation.GlobalBanCache]. */
+    private suspend fun syncModerationBlacklist() {
+        val ids = ModerationApi(context).fetchBlacklist().getOrElse { return }
+        val db = com.blink.dtn.db.BLinkDatabase.getDatabase(context)
+        db.bannedNodeDao().replaceAll(ids)
+        com.blink.dtn.moderation.GlobalBanCache.replaceAll(ids)
+        Log.d(TAG, "moderation blacklist size=${ids.size}")
     }
 
     private fun refreshRouterSnapshot() {

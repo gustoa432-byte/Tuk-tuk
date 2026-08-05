@@ -36,7 +36,11 @@ internal class BleRelayEngine(
         fun emitTxResult(result: TxResult)
         fun defaultTtl(): Int
         /** Prefer Wi‑Fi Direct hop when a group is up; false → fall back to BLE. */
-        suspend fun tryAlternateTransport(bytes: ByteArray, messageId: String): Boolean = false
+        suspend fun tryAlternateTransport(
+            bytes: ByteArray,
+            messageId: String,
+            targetNodeId: String? = null
+        ): Boolean = false
         fun maxPeersPerBatch(): Int = 6
 
         // ── Drop Policy ──────────────────────────────────────────────────────
@@ -290,6 +294,19 @@ internal class BleRelayEngine(
         }
 
         var networkMessage = message
+        if (com.blink.dtn.moderation.GlobalBanCache.isBanned(networkMessage.senderId) &&
+            networkMessage.senderId != deps.myNodeId()
+        ) {
+            Log.i("ROUTE", "Drop queued packet from banned ${networkMessage.senderId}")
+            deps.deleteQueuedMessage(networkMessage.id)
+            return
+        }
+        if (com.blink.dtn.moderation.GlobalBanCache.isBanned(networkMessage.targetId)) {
+            Log.i("ROUTE", "Drop queued packet to banned ${networkMessage.targetId}")
+            deps.deleteQueuedMessage(networkMessage.id)
+            return
+        }
+
         if (networkMessage.type == "PRIVATE" &&
             networkMessage.senderId == deps.myNodeId() &&
             networkMessage.text.isNotEmpty()
@@ -378,7 +395,7 @@ internal class BleRelayEngine(
 
         // Prefer denser Wi‑Fi Direct hop when a group exists; BLE remains fallback.
         // Works even with zero BLE peers (group-only hop).
-        if (deps.tryAlternateTransport(bytes, message.id)) {
+        if (deps.tryAlternateTransport(bytes, message.id, networkMessage.targetId)) {
             if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
                 deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
             }
@@ -412,7 +429,8 @@ internal class BleRelayEngine(
 
         val priorityNodes = deps.oraclePriorityNodeIds()
         val validDevices = peers.filter { device ->
-            now >= deps.peerBackoffUntil(device.address)
+            now >= deps.peerBackoffUntil(device.address) &&
+                !com.blink.dtn.moderation.GlobalBanCache.isBanned(deps.nodeIdForMac(device.address))
         }.sortedByDescending { device ->
             val nid = deps.nodeIdForMac(device.address)
             when {

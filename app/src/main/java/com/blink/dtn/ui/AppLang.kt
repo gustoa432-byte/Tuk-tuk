@@ -109,6 +109,9 @@ object S {
     fun deleteLocal(lang: String) = if (lang == LANG_EN) "Delete for me" else "Удалить у себя"
     fun cancelSend(lang: String) = if (lang == LANG_EN) "Cancel sending" else "Отменить отправку"
     fun blockUser(lang: String) = if (lang == LANG_EN) "Block user" else "Заблокировать пользователя"
+    fun reportMessage(lang: String) = if (lang == LANG_EN) "Report" else "Пожаловаться"
+    fun reportSent(lang: String) = if (lang == LANG_EN) "Report sent" else "Жалоба отправлена"
+    fun reportFailed(lang: String) = if (lang == LANG_EN) "Report failed — sign in online" else "Жалоба не отправлена — нужен вход"
     fun shareTukTuk(lang: String) = if (lang == LANG_EN) "Share Tuk-Tuk" else "Поделиться Tuk-Tuk"
 
     // Inputs / placeholders

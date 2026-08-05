@@ -108,6 +108,18 @@ internal class BleIngressHandler(
                 return@launch
             }
 
+            if (com.blink.dtn.moderation.GlobalBanCache.isBanned(packet.senderId)) {
+                Log.i("DTN", "Dropped packet from globally banned node ${packet.senderId}")
+                return@launch
+            }
+            if (com.blink.dtn.moderation.GlobalBanCache.isBanned(packet.targetId)) {
+                // Do not relay toward a banned destination.
+                if (packet.targetId != myNodeId) {
+                    Log.i("DTN", "Dropped packet addressed to banned node ${packet.targetId}")
+                    return@launch
+                }
+            }
+
             val now = System.currentTimeMillis()
 
             if (!deps.markSeen(dedupKey)) {

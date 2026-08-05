@@ -62,6 +62,7 @@ fun MessageActionSheet(
     onDeleteLocal: (() -> Unit)?,
     onCancelSend: (() -> Unit)?,
     onBlockUser: (() -> Unit)?,
+    onReport: (() -> Unit)? = null,
     onReact: ((String) -> Unit)? = null
 ) {
     val lang by AppLang.lang.collectAsState()
@@ -153,6 +154,11 @@ fun MessageActionSheet(
             }
             if (canCancel && onCancelSend != null) {
                 SheetActionRow(S.cancelSend(lang)) { onDismiss(); onCancelSend() }
+            }
+            if (canBlockSender && onReport != null) {
+                SheetActionRow(S.reportMessage(lang), color = DangerColor) {
+                    onDismiss(); onReport()
+                }
             }
             if (canBlockSender && onBlockUser != null) {
                 SheetActionRow(S.blockUser(lang), color = DangerColor) {
