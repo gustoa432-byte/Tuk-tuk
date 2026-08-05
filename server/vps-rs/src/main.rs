@@ -10,6 +10,7 @@ mod mesh;
 mod moderation;
 mod node_id;
 mod oracle;
+mod rate_limit;
 mod state;
 
 use std::net::SocketAddr;
@@ -48,7 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     moderation::init_schema(&db).await?;
     info!(%db_path, "libSQL ready (mesh + oracle + moderation)");
     if !cfg.smtp_ready() {
-        info!("SMTP not configured — email OTP will use TUKTUK_OTP_DEV_LOG");
+        if cfg.otp_dev_log {
+            info!("SMTP not configured — OTP will log/return via TUKTUK_OTP_DEV_LOG=true");
+        } else {
+            tracing::warn!("SMTP not configured and TUKTUK_OTP_DEV_LOG=false — email OTP will fail until SMTP is set");
+        }
     }
     if cfg.telegram_bot_token.is_none() {
         info!("TUKTUK_TELEGRAM_BOT_TOKEN unset — /auth/telegram disabled until set");
@@ -57,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         db: Arc::new(db),
         cfg,
+        rate_limits: Arc::new(rate_limit::RateLimitState::new()),
     };
 
     // Oracle retention: prune edges older than 30 days (once at boot + daily).

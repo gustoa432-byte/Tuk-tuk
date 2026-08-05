@@ -31,9 +31,10 @@ impl Config {
             telegram_bot_token: std::env::var("TUKTUK_TELEGRAM_BOT_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            // Production default: false. Opt in with TUKTUK_OTP_DEV_LOG=true|1 only for local SMTP-less debugging.
             otp_dev_log: std::env::var("TUKTUK_OTP_DEV_LOG")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(true),
+                .unwrap_or(false),
         }
     }
 

@@ -58,7 +58,7 @@ TUKTUK_HOST=0.0.0.0
 TUKTUK_PORT=8080
 TUKTUK_DB=/opt/tuktuk/tuktuk.db
 TUKTUK_JWT_SECRET=CHANGE_ME
-TUKTUK_OTP_DEV_LOG=true
+TUKTUK_OTP_DEV_LOG=false
 EOF
   fi
   if grep -q 'CHANGE_ME' "${ENV_FILE}"; then
@@ -78,6 +78,13 @@ else
       fi
     done <"${EXAMPLE_ENV}"
   fi
+fi
+# Hardening: never leave OTP codes in API responses on prod.
+if grep -q '^TUKTUK_OTP_DEV_LOG=true' "${ENV_FILE}" 2>/dev/null; then
+  sed -i 's/^TUKTUK_OTP_DEV_LOG=.*/TUKTUK_OTP_DEV_LOG=false/' "${ENV_FILE}"
+  echo "    forced TUKTUK_OTP_DEV_LOG=false"
+elif ! grep -q '^TUKTUK_OTP_DEV_LOG=' "${ENV_FILE}" 2>/dev/null; then
+  echo "TUKTUK_OTP_DEV_LOG=false" >>"${ENV_FILE}"
 fi
 chmod 600 "${ENV_FILE}"
 chown root:root "${ENV_FILE}"

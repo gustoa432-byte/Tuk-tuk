@@ -60,9 +60,12 @@ pub struct AuthResponse {
 
 pub async fn email_send(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<EmailSendRequest>,
 ) -> Result<Json<EmailSendResponse>, AppError> {
     let email = normalize_email(&body.email)?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state.rate_limits.check_otp_send(&email, &ip)?;
     let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
     let expires_at = now_ms() + 5 * 60 * 1000;
 
@@ -101,9 +104,12 @@ pub async fn email_send(
 
 pub async fn email_verify(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<EmailVerifyRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
     let email = normalize_email(&body.email)?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state.rate_limits.check_otp_verify(&email, &ip)?;
     let otp = body.otp.trim().to_string();
     let ble = body.public_ble_key.trim().to_string();
     if ble.is_empty() {

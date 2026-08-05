@@ -226,9 +226,11 @@ class VpsBridge private constructor(
 
     /** Pull online directory → local contacts (same identity online ↔ mesh). */
     private suspend fun syncDirectory() {
+        val jwt = meshJwtOrNull() ?: return
         val req = Request.Builder()
             .url("${baseUrl()}/v1/directory")
             .get()
+            .header("Authorization", "Bearer $jwt")
             .header("X-Node-Id", myNodeId)
             .build()
         client.newCall(req).execute().use { resp ->

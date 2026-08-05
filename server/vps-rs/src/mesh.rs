@@ -100,7 +100,13 @@ pub async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse
     }))
 }
 
-pub async fn directory(State(state): State<AppState>) -> Result<Json<DirectoryResponse>, AppError> {
+pub async fn directory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<DirectoryResponse>, AppError> {
+    // No anonymous scrape of mesh roster / pubkeys.
+    let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.node_id).await?;
     let mut rows = state
         .db
         .query(
@@ -175,6 +181,14 @@ pub async fn push(
 ) -> Result<Json<PushResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
     reject_if_banned(&state.db, &principal.node_id).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_push(&principal.node_id, &ip)?;
+    // Soft cap: refuse absurd batches even within body limit.
+    if body.envelopes.len() > 100 {
+        return Err(AppError::bad("too_many_envelopes"));
+    }
     let mut accepted = 0u32;
     for env in body.envelopes {
         if env.id.is_empty() {

@@ -10,11 +10,13 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::config::Config;
+use crate::rate_limit::RateLimitState;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Connection>,
     pub cfg: Arc<Config>,
+    pub rate_limits: Arc<RateLimitState>,
 }
 
 pub fn now_ms() -> i64 {
@@ -63,6 +65,12 @@ impl AppError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: msg.into(),
+        }
+    }
+    pub fn too_many(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
             message: msg.into(),
         }
     }
