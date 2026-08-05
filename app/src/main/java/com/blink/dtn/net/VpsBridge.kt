@@ -184,7 +184,7 @@ class VpsBridge private constructor(
                 val ok = resp.isSuccessful
                 reachable.set(ok)
                 if (ok) {
-                    dao.updateMessageStatus(msg.id, Message.STATUS_SENT)
+                    dao.updateMessageStatus(msg.id, Message.STATUS_STORED_IN_NEIGHBOR)
                     dao.getMessageById(msg.id)?.let {
                         it.isBridgeSynced = true
                         dao.updateMessageInternal(it)
@@ -462,7 +462,7 @@ class VpsBridge private constructor(
                     timestamp = payload.timestamp,
                     ttl = 1,
                     isMine = false,
-                    status = Message.STATUS_DELIVERED,
+                    status = Message.STATUS_DELIVERED_ACK,
                     receivedAt = now,
                     mediaPath = file?.absolutePath,
                     isBridgeSynced = true
@@ -539,13 +539,10 @@ class VpsBridge private constructor(
     }
 
     private fun refreshRouterSnapshot() {
-        val wifi = bleMeshManager.transportRegistry
-            ?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
         MessageRouter.refreshSnapshot(
             internetOnline = VpsConfig.isOnline(context),
             vpsConfigured = isConfigured(),
             vpsReachable = reachable.get(),
-            wifiDirectReady = wifi?.isGroupReady() == true,
             blePeers = bleMeshManager.peerCount.value
         )
     }

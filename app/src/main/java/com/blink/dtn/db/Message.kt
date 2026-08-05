@@ -83,12 +83,15 @@ data class Message(
     companion object {
         const val STATUS_PENDING = 0
         const val STATUS_IN_FLIGHT = 1
-        // Transmitted to at least one mesh peer (best-effort). Terminal good state for PUBLIC.
-        const val STATUS_SENT = 2
+        /**
+         * Packet written to ≥1 neighbor GATT (or VPS hop).
+         * Not end-to-end delivery — UI must not show "delivered".
+         */
+        const val STATUS_STORED_IN_NEIGHBOR = 2
         const val STATUS_FAILED = 3
         const val STATUS_PENDING_KEY = 4
-        // End-to-end ACK received from the destination. Terminal good state for PRIVATE.
-        const val STATUS_DELIVERED = 5
+        /** Cryptographic ACK from the destination [targetId]. Only this is "delivered". */
+        const val STATUS_DELIVERED_ACK = 5
 
         const val TYPE_PRIVATE = "PRIVATE"
         const val TYPE_PRIVATE_IMAGE = "PRIVATE_IMAGE"

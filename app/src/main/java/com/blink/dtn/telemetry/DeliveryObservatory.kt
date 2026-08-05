@@ -261,8 +261,8 @@ object TraceAnalyzer {
             eventCount = events.size,
             durationMs = (trace.finishedAt ?: System.currentTimeMillis()) - trace.startedAt,
             ok = when (trace.terminalStatus) {
-                "Delivered", "Sent" -> true
-                null, "Pending" -> null
+                "DeliveredAck", "Delivered" -> true
+                null, "Pending", "StoredInNeighbor", "Sent" -> null
                 else -> false
             }
         )
@@ -447,7 +447,7 @@ object TraceAnalyzer {
             trace.terminalStatus == "Timeout" || events.any { it.stage == TraceStages.TX_BATCH_RESULT && it.details["result"] == "Failure" } -> "ACK timeout / TX failed"
             trace.terminalStatus == "Expired" -> "TTL / time expired"
             trace.terminalStatus == "Dropped" -> fail?.details?.get("failureReason") ?: "Dropped"
-            trace.terminalStatus in listOf("Delivered", "Sent") -> null
+            trace.terminalStatus in listOf("DeliveredAck", "Delivered") -> null
             else -> trace.terminalStatus
         }
         val cause = when (reason) {
@@ -467,7 +467,9 @@ object TraceAnalyzer {
             else -> null
         }
         val firstLine = reason?.let { "❌ Delivery stopped — $it" }
-            ?: if (trace.terminalStatus in listOf("Delivered", "Sent")) "✅ Delivery ok" else null
+            ?: if (trace.terminalStatus in listOf("DeliveredAck", "Delivered")) "✅ Delivery ok (e2e ACK)"
+            else if (trace.terminalStatus in listOf("StoredInNeighbor", "Sent")) "📦 Held by neighbor (not e2e)"
+            else null
         return Diagnosis(reason, firstLine, cause, recommendation)
     }
 

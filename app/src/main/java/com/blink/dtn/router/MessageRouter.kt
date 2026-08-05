@@ -3,14 +3,13 @@ package com.blink.dtn.router
 import com.blink.dtn.net.VpsBridge
 import com.blink.dtn.telemetry.TraceStore
 import com.blink.dtn.telemetry.detailsOf
-import com.blink.dtn.transport.WifiDirectTransport
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Unified send router: Internet (VPS) → Wi‑Fi Direct → BLE fallback.
- * BLE remains the DTN default when [tryAlternateTransports] returns false.
+ * Unified send router: Internet (VPS) → BLE fallback.
+ * Wi‑Fi Direct removed — product surface is BLE GATT/ADV + optional VPS only.
  */
 object MessageRouter {
 
@@ -29,7 +28,6 @@ object MessageRouter {
         val internetOnline: Boolean = false,
         val vpsConfigured: Boolean = false,
         val vpsReachable: Boolean = false,
-        val wifiDirectReady: Boolean = false,
         val blePeers: Int = 0,
         val preferred: RoutePath = RoutePath.BLE,
         val sloganActive: Boolean = false
@@ -45,7 +43,6 @@ object MessageRouter {
     fun decide(
         internetOnline: Boolean,
         vpsReady: Boolean,
-        wifiDirectReady: Boolean,
         blePeers: Int
     ): RouteDecision {
         return when {
@@ -53,11 +50,6 @@ object MessageRouter {
                 RoutePath.INTERNET,
                 "Есть интернет — через VPS",
                 "Online — via VPS"
-            )
-            wifiDirectReady -> RouteDecision(
-                RoutePath.WIFI_DIRECT,
-                "Рядом группа Wi‑Fi Direct",
-                "Wi‑Fi Direct group nearby"
             )
             blePeers > 0 -> RouteDecision(
                 RoutePath.BLE,
@@ -76,23 +68,20 @@ object MessageRouter {
         internetOnline: Boolean,
         vpsConfigured: Boolean,
         vpsReachable: Boolean,
-        wifiDirectReady: Boolean,
         blePeers: Int
     ) {
         val preferred = decide(
             internetOnline = internetOnline,
             vpsReady = vpsConfigured && (vpsReachable || internetOnline),
-            wifiDirectReady = wifiDirectReady,
             blePeers = blePeers
         ).path
         _networkLive.value = NetworkSnapshot(
             internetOnline = internetOnline,
             vpsConfigured = vpsConfigured,
             vpsReachable = vpsReachable,
-            wifiDirectReady = wifiDirectReady,
             blePeers = blePeers,
             preferred = preferred,
-            sloganActive = internetOnline || wifiDirectReady || blePeers > 0
+            sloganActive = internetOnline || blePeers > 0
         )
     }
 
@@ -111,7 +100,6 @@ object MessageRouter {
         )
     }
 
-    /** Drop aged / excess route metadata (process lifetime leak guard). */
     fun prunePaths(
         maxAgeMs: Long = PATH_MAX_AGE_MS,
         maxEntries: Int = PATH_MAX_ENTRIES
@@ -143,21 +131,18 @@ object MessageRouter {
         if (_activeShipment.value?.messageId == messageId) {
             _activeShipment.value = null
         }
-        // Terminal shipment — drop path entry promptly.
         lastPathByMessage.remove(messageId)
         pathNotedAt.remove(messageId)
     }
 
     /**
-     * Try denser/online hops before BLE. Returns true if the payload left this device
-     * without needing the GATT path.
+     * Try VPS before BLE. Returns true if the payload left without needing GATT.
      */
     suspend fun tryAlternateTransports(
         bytes: ByteArray,
         messageId: String,
         internetOnline: Boolean,
         vps: VpsBridge?,
-        wifi: WifiDirectTransport?,
         blePeers: Int,
         targetNodeId: String? = null
     ): Boolean {
@@ -166,8 +151,7 @@ object MessageRouter {
             return false
         }
         val vpsReady = vps != null && vps.isConfigured() && internetOnline
-        val wifiReady = wifi != null && wifi.isGroupReady()
-        val decision = decide(internetOnline, vpsReady, wifiReady, blePeers)
+        val decision = decide(internetOnline, vpsReady, blePeers)
 
         if (decision.path == RoutePath.INTERNET && vps != null) {
             val ok = vps.pushEncryptedPayload(bytes, messageId)
@@ -176,22 +160,10 @@ object MessageRouter {
                 return true
             }
         }
-        if (wifiReady && wifi != null) {
-            val ok = wifi.send(bytes, messageId = messageId)
-            if (ok) {
-                notePath(messageId, RoutePath.WIFI_DIRECT, "через Wi‑Fi Direct")
-                return true
-            }
-        }
-        // BLE path is handled by BleRelayEngine after we return false.
         notePath(messageId, RoutePath.BLE, if (blePeers > 0) "через Bluetooth" else "ждём соседей")
         return false
     }
 
-    /**
-     * Photos never fall back to mesh. Requires configured VPS + online.
-     * [push] performs the actual VPS upload; returns whether it left the device.
-     */
     suspend fun sendPhotoInternetOnly(
         messageId: String,
         internetOnline: Boolean,
@@ -211,10 +183,6 @@ object MessageRouter {
         return ok
     }
 
-    /**
-     * Ask Oracle for top couriers toward [targetNode] when online + JWT present.
-     * [apply] receives node_ids to prefer on the next BLE TX batch.
-     */
     suspend fun refreshOracleHints(
         context: android.content.Context,
         targetNode: String?,

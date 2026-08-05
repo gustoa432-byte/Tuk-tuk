@@ -367,7 +367,8 @@ object TraceStore {
     }
 
     private fun terminalVisual(status: String): String = when (status) {
-        "Delivered" -> "✅ Доставлено"
+        "DeliveredAck", "Delivered" -> "✅ Доставлено (ACK)"
+        "StoredInNeighbor", "Sent" -> "📦 У соседа"
         "Expired" -> "⌛ Истекло"
         "Dropped" -> "🗑 Отброшено"
         "RetryLimit" -> "🔁 Лимит повторов"

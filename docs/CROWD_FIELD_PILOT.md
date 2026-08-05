@@ -14,7 +14,9 @@
 
 - [ ] Crowd frame не подменяет подписанный PRIVATE/IDENTITY JSON path
 - [ ] В CROWD не пишем лишние MAC в PeerDirectory
-- [ ] Event Anchor слушает только LAN, без auth — только для офлайн-события (не экспозить в интернет)
+- [ ] Identity packets are 1-hop only (no multi-hop IDENTITY)
+- [ ] Delivery UI shows "delivered" only on DELIVERED_ACK
+- [ ] ADV default is BALANCED/LOW_POWER; HIGH only via emergency beacon ≤3 min
 - [ ] Комната без OTP: passphrase опциональна; не обещать e2e для PUBLIC crowd
 - [ ] Auto-crowd имеет cooldown и auto-exit (4h)
 

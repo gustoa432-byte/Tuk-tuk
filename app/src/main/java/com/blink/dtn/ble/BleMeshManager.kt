@@ -201,13 +201,11 @@ class BleMeshManager private constructor(
                     messageId: String,
                     targetNodeId: String?
                 ): Boolean {
-                    val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
                     return com.blink.dtn.router.MessageRouter.tryAlternateTransports(
                         bytes = bytes,
                         messageId = messageId,
                         internetOnline = com.blink.dtn.net.VpsConfig.isOnline(context),
                         vps = vpsBridge,
-                        wifi = wifi,
                         blePeers = peers.peerCount.value,
                         targetNodeId = targetNodeId
                     )
@@ -662,7 +660,7 @@ class BleMeshManager private constructor(
 
     fun writeBudgetSnapshot(): WriteBudgetSnapshot = writeBudget.snapshot()
 
-    /** Optional multi-transport registry (BLE + experimental Wi‑Fi Direct). */
+    /** Optional multi-transport registry (BLE only after Wi‑Fi Direct amputation). */
     @Volatile
     var transportRegistry: com.blink.dtn.transport.MeshTransportRegistry? = null
         private set
@@ -673,112 +671,35 @@ class BleMeshManager private constructor(
 
     fun attachTransportRegistry(registry: com.blink.dtn.transport.MeshTransportRegistry) {
         transportRegistry = registry
-        val wifi = registry.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
-        wifi?.onMeshPayload = { bytes ->
-            if (bytes.isNotEmpty()) {
-                try {
-                    injectEncryptedPayload(bytes)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Wi‑Fi Direct ingress failed: ${e.message}")
-                }
-            }
-        }
-        wifi?.onApkFileReceived = { file ->
-            scope.launch(Dispatchers.Main) {
-                handleReceivedApk(file)
-            }
-        }
     }
 
     /**
-     * Older peer asks us for a fast APK push (experimental Wi‑Fi Direct file stream).
+     * Neighbor APK push via Wi‑Fi Direct was removed — keep request as no-op toast.
      */
     fun requestApkUpdateFromPeer(peerId: String) {
-        val vc = com.blink.dtn.security.BuildIntegrity.myVersionCode(context)
-        val vn = com.blink.dtn.security.BuildIntegrity.myVersionName(context)
-        val msg = Message(
-            id = com.blink.dtn.utils.MeshIdGenerator.next(myUniqueNodeId),
-            type = "UPDATE_REQUEST",
-            senderId = myUniqueNodeId,
-            senderNick = currentNick,
-            targetId = peerId,
-            text = "$vc|$vn",
-            room = "system",
-            timestamp = System.currentTimeMillis(),
-            ttl = DEFAULT_TTL
-        )
-        enqueueMessage(msg)
         showToast(
             if (com.blink.dtn.ui.AppLang.lang.value == "en")
-                "Update requested. Keep phones nearby — the install screen opens when the file arrives."
+                "Nearby APK push removed — use GitHub release or sideload."
             else
-                "Запрос отправлен. Держите телефоны рядом — откроется установка, когда файл придёт."
+                "Ближняя раздача APK удалена — GitHub release или sideload."
         )
+        Log.i(TAG, "UPDATE_REQUEST ignored (Wi‑Fi Direct removed) peer=$peerId")
     }
 
     private fun handleApkUpdateRequest(fromPeerId: String) {
-        scope.launch {
-            val wifi = transportRegistry?.byId("wifi_direct") as? com.blink.dtn.transport.WifiDirectTransport
-            if (wifi == null || !wifi.isGroupReady()) {
-                showToast(
-                    if (com.blink.dtn.ui.AppLang.lang.value == "en")
-                        "Need a nearby link. Open Network on both phones and stay close, then try again."
-                    else
-                        "Нужна ближняя связь. Откройте «Сеть» на обоих телефонах, подойдите ближе и повторите."
-                )
-                Log.i(TAG, "UPDATE_REQUEST from $fromPeerId but Wi‑Fi Direct group not ready")
-                return@launch
-            }
-            val src = java.io.File(context.applicationInfo.sourceDir)
-            if (!src.isFile) {
-                showToast("Не удалось прочитать свой APK")
-                return@launch
-            }
-            showToast(
-                if (com.blink.dtn.ui.AppLang.lang.value == "en") "Sending update to neighbor…"
-                else "Отправляю обновление соседу…"
-            )
-            val ok = wifi.sendApkFile(src)
-            if (ok) {
-                showToast(
-                    if (com.blink.dtn.ui.AppLang.lang.value == "en") "Update sent — neighbor should see the installer"
-                    else "Обновление отправлено — у соседа должен открыться установщик"
-                )
-            } else {
-                showToast(
-                    if (com.blink.dtn.ui.AppLang.lang.value == "en") "Could not send update — stay closer and retry"
-                    else "Не удалось отправить — подойдите ближе и повторите"
-                )
-            }
-        }
+        Log.i(TAG, "UPDATE_REQUEST from $fromPeerId ignored — no Wi‑Fi Direct path")
     }
 
-    private fun handleReceivedApk(file: java.io.File) {
-        if (!com.blink.dtn.security.BuildIntegrity.apkMatchesInstalledSignature(context, file)) {
-            showToast("APK отклонён: подпись не совпадает с установленным приложением")
-            runCatching { file.delete() }
-            return
-        }
-        try {
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            showToast("Подпись OK — подтвердите установку обновления")
-        } catch (e: Exception) {
-            Log.e(TAG, "Install intent failed: ${e.message}", e)
-            showToast("Не удалось открыть установщик: ${e.message}")
-        }
+    /** SOS radio: HIGH advertise ≤3 min then hard reset to LOW_POWER. */
+    fun startEmergencyBeacon() {
+        radio.startEmergencyBeacon()
     }
 
-    /** Apply Economy / Norm / Max radio + pool cadence (hot). */
+    fun stopEmergencyBeacon() {
+        radio.stopEmergencyBeacon()
+    }
+
+    /** Apply Economy / Norm / Max / Crowd radio + pool cadence (hot). */
     fun applyDutyPreset(preset: MeshDutyPreset) {
         MeshDutyPrefs.set(context, preset)
         val cadence = MeshDutyCadence.forPreset(preset)

@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 import com.blink.dtn.ble.CrowdFrame
 import com.blink.dtn.ble.MeshDutyPreset
 import com.blink.dtn.crowd.CrowdFeed
-import com.blink.dtn.crowd.EventAnchorServer
 import com.blink.dtn.crowd.EventRoomStore
 import com.blink.dtn.ui.AppLang
 import com.blink.dtn.ui.BLinkViewModel
@@ -42,7 +41,8 @@ import com.blink.dtn.ui.theme.Typography
 import com.blink.dtn.ui.theme.glassPanel
 
 /**
- * Crowd survival surface: short nearby feed, event room, duty Crowd, iPhone PWA anchor.
+ * Crowd survival surface: short nearby feed, event room, duty Crowd.
+ * Event Anchor / PWA removed — BLE + VPS only.
  */
 @Composable
 fun CrowdTab(viewModel: BLinkViewModel) {
@@ -58,7 +58,6 @@ fun CrowdTab(viewModel: BLinkViewModel) {
     val dense by com.blink.dtn.telemetry.MeshDutyTelemetry.snapshot.collectAsState()
     var draft by remember { mutableStateOf("") }
     var titleDraft by remember { mutableStateOf("") }
-    var anchorOn by remember { mutableStateOf(EventAnchorServer.isRunning()) }
 
     Column(
         modifier = Modifier
@@ -146,40 +145,12 @@ fun CrowdTab(viewModel: BLinkViewModel) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-        TukTukButton(onClick = {
-            if (anchorOn) {
-                EventAnchorServer.stop()
-                anchorOn = false
-                Toast.makeText(context, S.crowdAnchorOff(lang), Toast.LENGTH_SHORT).show()
-            } else {
-                EventAnchorServer.start(context)
-                anchorOn = true
-                Toast.makeText(
-                    context,
-                    S.crowdAnchorOn(lang, EventAnchorServer.lastBindHint),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }) {
-            Text(
-                if (anchorOn) S.crowdAnchorStop(lang) else S.crowdAnchorStart(lang),
-                color = TextPrimary
-            )
-        }
-        if (anchorOn) {
-            Text(
-                S.crowdAnchorHint(lang, EventAnchorServer.lastBindHint),
-                color = TextSecondary,
-                style = Typography.labelSmall,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TukTukButton(onClick = {
+                viewModel.startEmergencyBeacon()
                 viewModel.sendCrowd(CrowdFrame.KIND_SOS, draft.ifBlank { "SOS" })
                 draft = ""
+                Toast.makeText(context, "SOS beacon ≤3 min HIGH", Toast.LENGTH_SHORT).show()
             }) {
                 Text("SOS", color = TextPrimary)
             }

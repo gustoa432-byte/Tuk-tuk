@@ -929,6 +929,10 @@ class BLinkViewModel(
         bleMeshManager.sendCrowdMessage(kind, text)
     }
 
+    fun startEmergencyBeacon() {
+        bleMeshManager.startEmergencyBeacon()
+    }
+
     val nearbyUpdate = com.blink.dtn.update.VersionGossip.nearbyUpdate
 
     fun dismissNearbyUpdate() {

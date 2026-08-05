@@ -189,15 +189,35 @@ internal class BleIngressHandler(
                 if (consumed) return@launch
             } else when (packet.type) {
                 "IDENTITY_ANNOUNCEMENT", "SYSTEM_PROFILE" -> {
+                    if (!IdentityRelayPolicy.acceptDirectIdentity(
+                            ttl = packet.ttl,
+                            hopHistorySize = packet.hopHistory.size,
+                            defaultTtl = BleMeshManager.DEFAULT_TTL
+                        )
+                    ) {
+                        Log.d("DTN", "Drop relayed IDENTITY from ${packet.senderId} ttl=${packet.ttl}")
+                        return@launch
+                    }
                     handleIdentity(packet)
                     deps.bindPeerMac(fromMac, packet.senderId)
+                    return@launch // never multi-hop IDENTITY
                 }
                 "IDENTITY_REQUEST" -> {
                     if (!allowIdentityRequest(packet.senderId)) {
                         Log.w("DTN", "IDENTITY_REQUEST flood from ${packet.senderId}")
                         return@launch
                     }
+                    if (!IdentityRelayPolicy.acceptDirectIdentity(
+                            ttl = packet.ttl,
+                            hopHistorySize = packet.hopHistory.size,
+                            defaultTtl = BleMeshManager.DEFAULT_TTL
+                        )
+                    ) {
+                        Log.d("DTN", "Drop relayed IDENTITY_REQUEST from ${packet.senderId}")
+                        return@launch
+                    }
                     handleIdentityRequest(packet)
+                    return@launch
                 }
                 "UPDATE_REQUEST" -> {
                     if (packet.targetId == null || packet.targetId == myNodeId) {
@@ -254,7 +274,7 @@ internal class BleIngressHandler(
                 }
             }
 
-            // PUBLIC / announcements / identity: forward with hop custody when we are a relay hop.
+            // PUBLIC / announcements only — IDENTITY never reaches here (early return).
             if (packet.type == "PUBLIC" ||
                 packet.type == "SYSTEM_ANNOUNCEMENT" ||
                 packet.type == "VERSION_ANNOUNCEMENT"
@@ -278,6 +298,12 @@ internal class BleIngressHandler(
                         com.blink.dtn.telemetry.detailsOf("reason" to "ttl_exhausted")
                     )
                 }
+                return@launch
+            }
+
+            // Hard stop: never epidemic-relay IDENTITY* (defense in depth).
+            if (!IdentityRelayPolicy.mayRelay(packet.type)) {
+                Log.d("DTN", "Refuse IDENTITY relay type=${packet.type}")
                 return@launch
             }
 
@@ -328,9 +354,10 @@ internal class BleIngressHandler(
             return true
         }
         val status = if (ackedMsg.type == "PRIVATE") {
-            Message.STATUS_DELIVERED
+            Message.STATUS_DELIVERED_ACK
         } else {
-            Message.STATUS_SENT
+            // PUBLIC: ACK is not e2e to a target — stay honest about neighbor custody.
+            Message.STATUS_STORED_IN_NEIGHBOR
         }
         dao.updateMessageStatus(ackedMessageId, status)
         val latency = System.currentTimeMillis() - ackedMsg.timestamp
@@ -342,14 +369,14 @@ internal class BleIngressHandler(
                 "latencyMs" to latency,
                 "status" to status
             ),
-            visual = "✅ Доставлено"
+            visual = if (status == Message.STATUS_DELIVERED_ACK) "✅ Доставлено (ACK)" else "📦 У соседа"
         )
         com.blink.dtn.telemetry.TraceStore.finish(
             ackedMessageId,
-            if (status == Message.STATUS_DELIVERED) "Delivered" else "Sent",
+            if (status == Message.STATUS_DELIVERED_ACK) "DeliveredAck" else "StoredInNeighbor",
             com.blink.dtn.telemetry.detailsOf("ackLatencyMs" to latency)
         )
-        if (status == Message.STATUS_DELIVERED) {
+        if (status == Message.STATUS_DELIVERED_ACK) {
             com.blink.dtn.router.MessageRouter.noteShipmentStatus(ackedMessageId, "друг получил")
             com.blink.dtn.router.MessageRouter.clearShipmentIf(ackedMessageId)
             com.blink.dtn.ui.GamificationStore.noteSavedDelivery()

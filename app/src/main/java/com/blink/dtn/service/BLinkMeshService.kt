@@ -62,12 +62,9 @@ class BLinkMeshService : Service() {
         com.blink.dtn.crowd.EventRoomStore.init(this)
 
         runCatching {
-            val transports = mutableListOf<com.blink.dtn.transport.MeshTransport>(
+            val transports = listOf<com.blink.dtn.transport.MeshTransport>(
                 com.blink.dtn.transport.BleMeshTransport(bleMeshManager)
             )
-            if (com.blink.dtn.BuildConfig.ENABLE_WIFI_DIRECT) {
-                transports += com.blink.dtn.transport.WifiDirectTransport(applicationContext)
-            }
             val registry = com.blink.dtn.transport.MeshTransportRegistry(transports)
             bleMeshManager.attachTransportRegistry(registry)
             registry.startAll()
@@ -138,14 +135,14 @@ class BLinkMeshService : Service() {
                     when (result) {
                         is com.blink.dtn.ble.TxResult.Success -> {
                             val currentMsg = dao.getMessageById(result.msgId)
-                            // Don't clobber end-to-end DELIVERED; SENT means "у соседей" / "в пути".
+                            // Don't clobber e2e DELIVERED_ACK; STORED_IN_NEIGHBOR = GATT to neighbor only.
                             if (currentMsg != null &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_SENT &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED_ACK
                             ) {
-                                dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_SENT)
+                                dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR)
                             }
-                            com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "в пути")
+                            com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "у соседа")
                             // Courier emotion: this phone helped move a package (relay of others' mail)
                             if (currentMsg == null ||
                                 (!currentMsg.isMine && currentMsg.senderId != myNodeId)
@@ -156,8 +153,8 @@ class BLinkMeshService : Service() {
                         is com.blink.dtn.ble.TxResult.Failure -> {
                             val currentMsg = dao.getMessageById(result.msgId)
                             if (currentMsg != null &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_SENT &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED_ACK
                             ) {
                                 val newRetry = currentMsg.retryCount + 1
                                 if (newRetry >= 10) {

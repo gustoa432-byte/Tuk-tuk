@@ -41,12 +41,12 @@ object DeliveryVoyageLabels {
             Message.STATUS_PENDING -> if (lang == "en") "waiting" else "ждёт"
             Message.STATUS_PENDING_KEY -> if (lang == "en") "almost" else "почти"
             Message.STATUS_IN_FLIGHT -> if (lang == "en") "with people" else "у людей"
-            Message.STATUS_SENT -> if (msg.type == "PRIVATE") {
-                if (lang == "en") "on the way" else "в пути"
+            Message.STATUS_STORED_IN_NEIGHBOR -> if (msg.type == "PRIVATE") {
+                if (lang == "en") "with a neighbor" else "у соседа"
             } else {
                 if (lang == "en") "passed on" else "передано"
             }
-            Message.STATUS_DELIVERED -> if (lang == "en") "delivered" else "доставлено"
+            Message.STATUS_DELIVERED_ACK -> if (lang == "en") "delivered" else "доставлено"
             Message.STATUS_FAILED -> if (lang == "en") "stuck" else "застряло"
             else -> if (lang == "en") "waiting" else "ждёт"
         }
@@ -54,8 +54,8 @@ object DeliveryVoyageLabels {
     }
 
     fun color(msg: Message): Color = when (msg.status) {
-        Message.STATUS_DELIVERED -> TextPrimary
-        Message.STATUS_SENT -> TextSecondary
+        Message.STATUS_DELIVERED_ACK -> TextPrimary
+        Message.STATUS_STORED_IN_NEIGHBOR -> TextSecondary
         Message.STATUS_FAILED -> DangerColor
         else -> DividerColor
     }
@@ -72,16 +72,16 @@ object DeliveryVoyageLabels {
             Message.STATUS_IN_FLIGHT ->
                 if (lang == "en") "Neighbors are carrying it$via"
                 else "Соседи уже несут$via"
-            Message.STATUS_SENT ->
+            Message.STATUS_STORED_IN_NEIGHBOR ->
                 if (msg.type == "PRIVATE") {
-                    if (lang == "en") "Left your phone — waiting for the friend$via"
-                    else "Ушло с телефона — ждём друга$via"
+                    if (lang == "en") "On a neighbor's phone — waiting for your friend's ACK"
+                    else "На телефоне соседа — ждём подтверждение друга"
                 } else {
                     if (lang == "en") "Shared with people nearby$via"
                     else "Передано людям рядом$via"
                 }
-            Message.STATUS_DELIVERED ->
-                if (lang == "en") "Your friend got it$via" else "Друг получил$via"
+            Message.STATUS_DELIVERED_ACK ->
+                if (lang == "en") "Your friend confirmed receipt$via" else "Друг подтвердил получение$via"
             Message.STATUS_FAILED ->
                 if (lang == "en") "Couldn't get through — tap to try again"
                 else "Не удалось пробиться — нажмите, чтобы повторить"
@@ -113,8 +113,9 @@ data class DeliveryHealthSummary(
             var pending = 0
             for (t in traces) {
                 when (t.terminalStatus?.lowercase()) {
-                    "delivered", "sent" -> delivered++
+                    "deliveredack", "delivered" -> delivered++
                     "failed", "expired", "timeout", "cancelled" -> failed++
+                    // StoredInNeighbor / Sent = not e2e success
                     else -> pending++
                 }
             }

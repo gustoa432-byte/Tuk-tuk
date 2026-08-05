@@ -28,7 +28,6 @@ import com.blink.dtn.ui.theme.Typography
 /** Human-readable route path (kept after NetworkTab removal). */
 fun humanPathLabel(path: RoutePath, lang: String): String = when (path) {
     RoutePath.INTERNET -> S.pathInternet(lang)
-    RoutePath.WIFI_DIRECT -> S.pathNearbyGroup(lang)
     RoutePath.BLE -> S.pathPeople(lang)
 }
 
@@ -49,7 +48,6 @@ fun MessageTrackerStrip(
         TrackerNode(
             when (path) {
                 RoutePath.INTERNET -> S.pathInternetShort(lang)
-                RoutePath.WIFI_DIRECT -> S.pathNearbyShort(lang)
                 RoutePath.BLE -> S.pathPeopleShort(lang)
             },
             accent = true

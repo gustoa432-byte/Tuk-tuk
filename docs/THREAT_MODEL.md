@@ -35,7 +35,7 @@ Humanitarian BLE mesh messenger. Assumptions below match the product as shipped.
 ## Mitigations in code
 
 - RSA keypair in Android Keystore; node id = hash of public key (`NodeIdentity`).
-- PRIVATE encrypt-at-source in relay path; ACK updates `STATUS_DELIVERED`.
+- PRIVATE encrypt-at-source in relay path; ACK updates `STATUS_DELIVERED_ACK` (e2e only). GATT success is `STATUS_STORED_IN_NEIGHBOR`.
 - Mesh envelope encryption (`CryptoUtils`) for wire framing — **not** a substitute for dialog E2E; review passphrase / key derivation in external audits.
 - Seen-set / TTL to limit replay loops (not a cryptographic anti-replay for all cases).
 

@@ -65,11 +65,17 @@ internal class BleRadioFront(
     private var advertiser: BluetoothLeAdvertiser? = null
     private var scanner: BluetoothLeScanner? = null
     private var scanJob: Job? = null
+    private var emergencyJob: Job? = null
     private val cadenceRef = AtomicReference(MeshDutyCadence.forPreset(MeshDutyPreset.NORMAL))
     @Volatile private var running = false
+    @Volatile private var emergencyActive = false
+    private var preEmergencyCadence: MeshDutyCadence? = null
 
     fun start() {
         running = true
+        emergencyActive = false
+        emergencyJob?.cancel()
+        emergencyJob = null
         cadenceRef.set(MeshDutyPrefs.cadence())
         startGattServer()
         startAdvertising()
@@ -78,6 +84,10 @@ internal class BleRadioFront(
 
     fun stop() {
         running = false
+        emergencyActive = false
+        emergencyJob?.cancel()
+        emergencyJob = null
+        preEmergencyCadence = null
         scanJob?.cancel()
         scanJob = null
         try {
@@ -100,17 +110,71 @@ internal class BleRadioFront(
         scanner = null
     }
 
+    /**
+     * Explicit SOS radio scream: LOW_LATENCY + HIGH TX for at most [durationMs],
+     * then hard-reset advertise to LOW_POWER (never leave HIGH on forever).
+     */
+    fun startEmergencyBeacon(durationMs: Long = EMERGENCY_BEACON_MS) {
+        if (!running) return
+        emergencyJob?.cancel()
+        if (!emergencyActive) {
+            preEmergencyCadence = cadenceRef.get()
+            emergencyActive = true
+        }
+        val scream = (preEmergencyCadence ?: cadenceRef.get()).copy(
+            advertiseMode = AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY,
+            advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
+        )
+        cadenceRef.set(scream)
+        restartAdvertisingOnly()
+        Log.w("DTN", "Emergency beacon ON for ${durationMs}ms")
+        emergencyJob = scopeProvider().launch {
+            delay(durationMs.coerceIn(5_000L, EMERGENCY_BEACON_MS))
+            stopEmergencyBeacon()
+        }
+    }
+
+    fun stopEmergencyBeacon() {
+        emergencyJob?.cancel()
+        emergencyJob = null
+        if (!emergencyActive && preEmergencyCadence == null) return
+        emergencyActive = false
+        val restore = (preEmergencyCadence ?: MeshDutyPrefs.cadence()).copy(
+            advertiseMode = AdvertiseSettings.ADVERTISE_MODE_LOW_POWER,
+            advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_LOW
+        )
+        preEmergencyCadence = null
+        cadenceRef.set(restore)
+        if (running) {
+            restartAdvertisingOnly()
+            startScanningCycle()
+        }
+        Log.w("DTN", "Emergency beacon OFF → LOW_POWER advertise")
+    }
+
+    fun isEmergencyBeaconActive(): Boolean = emergencyActive
+
     /** Hot-swap scan/advertise aggressiveness without tearing down GATT server. */
     fun applyCadence(cadence: MeshDutyCadence) {
+        if (emergencyActive) {
+            // Keep screaming until timer; remember requested cadence for restore.
+            preEmergencyCadence = cadence
+            Log.i("DTN", "Cadence queued until emergency beacon ends")
+            return
+        }
         cadenceRef.set(cadence)
         if (!running) return
+        restartAdvertisingOnly()
+        startScanningCycle()
+        Log.i("DTN", "Radio cadence applied scan=${cadence.scanOnMs}/${cadence.scanOffMs}")
+    }
+
+    private fun restartAdvertisingOnly() {
         try {
             advertiser?.stopAdvertising(advertiseCallback)
         } catch (_: Exception) {
         }
         startAdvertising()
-        startScanningCycle()
-        Log.i("DTN", "Radio cadence applied scan=${cadence.scanOnMs}/${cadence.scanOffMs}")
     }
 
     private fun startGattServer() {
@@ -255,5 +319,10 @@ internal class BleRadioFront(
         override fun onScanFailed(errorCode: Int) {
             Log.e("DTN", "Scan failed: $errorCode")
         }
+    }
+
+    companion object {
+        /** Hard ceiling — emergency HIGH advertise never exceeds this. */
+        const val EMERGENCY_BEACON_MS = 3L * 60L * 1000L
     }
 }

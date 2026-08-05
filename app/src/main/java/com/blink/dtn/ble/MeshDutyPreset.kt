@@ -74,22 +74,23 @@ data class MeshDutyCadence(
             MeshDutyPreset.MAX -> MeshDutyCadence(
                 scanOnMs = 14_000L,
                 scanOffMs = 4_000L,
-                scanMode = ScanSettings.SCAN_MODE_LOW_LATENCY,
-                advertiseMode = AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY,
-                advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_HIGH,
+                scanMode = ScanSettings.SCAN_MODE_BALANCED,
+                // Never continuous LOW_LATENCY/HIGH — that burns airtime. Use emergency beacon for SOS.
+                advertiseMode = AdvertiseSettings.ADVERTISE_MODE_BALANCED,
+                advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM,
                 gattIdleTimeoutMs = 90_000L,
                 keyExchangeIntervalMs = 12_000L,
                 maxPeersPerBatch = 12,
                 peerTtlMs = 240_000L,
                 maxConcurrentGatt = 4
             )
-            // Stadium: advertise hard, peer table ruthless, GATT still tiny (Android limit).
+            // Stadium: ruthless peer TTL / tiny GATT. Advertise stays BALANCED — not an ADV storm.
             MeshDutyPreset.CROWD -> MeshDutyCadence(
                 scanOnMs = 8_000L,
                 scanOffMs = 2_000L,
-                scanMode = ScanSettings.SCAN_MODE_LOW_LATENCY,
-                advertiseMode = AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY,
-                advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_HIGH,
+                scanMode = ScanSettings.SCAN_MODE_BALANCED,
+                advertiseMode = AdvertiseSettings.ADVERTISE_MODE_BALANCED,
+                advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM,
                 gattIdleTimeoutMs = 20_000L,
                 keyExchangeIntervalMs = 90_000L,
                 maxPeersPerBatch = 4,

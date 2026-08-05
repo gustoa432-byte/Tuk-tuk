@@ -1,6 +1,6 @@
 # Версии TukTuk — хронология (не semver)
 
-**Актуальная версия: `0.1.108`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.108`).
+**Актуальная версия: `0.1.109`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.109`).
 
 ## Важно
 
@@ -27,6 +27,7 @@
 | 2026-08-05 | `v0.1.96`–`v0.1.105` — Hub, journals, RSA mesh, P0/P1 |
 | 2026-08-05 | `v0.1.106` — security inventory 1–34 |
 | 2026-08-05 | `v0.1.107` — fix Profile Save (name/nick) |
-| 2026-08-05 | **`v0.1.108`** — Crowd / Толпа: CROWD duty, short frames, Event Anchor PWA |
+| 2026-08-05 | `v0.1.108` — Crowd / Толпа: CROWD duty, short frames, Event Anchor PWA |
+| 2026-08-05 | **`v0.1.109`** — P0 harden: ADV budget, honest delivery statuses, IDENTITY 1-hop, amputate PWA/Wi‑Fi Direct |
 
 Скачать: https://github.com/gustoa432-byte/Tuk-tuk/releases/latest

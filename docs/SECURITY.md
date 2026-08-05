@@ -80,7 +80,7 @@ Auditors should prioritize:
 4. **Telemetry side-channels**
    - MessageTrace / Observatory export contents (may include peer MACs, route crumbs)
 5. **Optional transports**
-   - Wi‑Fi Direct (`transport/WifiDirectTransport.kt`) — experimental; must not weaken dialog E2E
+   - BLE mesh + optional VPS only (Wi‑Fi Direct / Event Anchor amputated in 0.1.109)
    - Cellular / VK bridges — treat as untrusted relays
 6. **Updates**
    - Peer APK transfer signature check (`security/BuildIntegrity.kt`)
