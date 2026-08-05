@@ -17,8 +17,6 @@ pub struct Config {
     /// HMAC secret for signed ban lists (must match Android BuildConfig).
     pub banlist_hmac_secret: String,
     pub otp_dev_log: bool,
-    /// When true (default), refuse empty/ephemeral JWT secrets.
-    pub require_jwt_secret: bool,
 }
 
 impl Config {
@@ -75,7 +73,6 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "tuktuk-banlist-v1".into()),
-            require_jwt_secret,
             otp_dev_log: std::env::var("TUKTUK_OTP_DEV_LOG")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
