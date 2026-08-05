@@ -142,7 +142,7 @@ fn build_cors(cfg: &Config) -> CorsLayer {
         header::CONTENT_TYPE,
         header::HeaderName::from_static("x-node-id"),
     ];
-    let mut layer = CorsLayer::new()
+    let layer = CorsLayer::new()
         .allow_methods(methods)
         .allow_headers(headers);
     let origins: Vec<HeaderValue> = cfg
