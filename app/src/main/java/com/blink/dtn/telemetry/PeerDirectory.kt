@@ -3,26 +3,37 @@ package com.blink.dtn.telemetry
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Persistent sightings of mesh peers (MAC / node id → human label).
- * Fed from BLE discovery and identity announcements; used by route/mesh UI.
+ * Cap + TTL + debounced disk writes to bound flash/battery use.
  */
 object PeerDirectory {
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
+    private const val MAX_PEERS = 400
+    private const val TTL_MS = 7L * 24 * 60 * 60 * 1000
+    private const val PERSIST_DEBOUNCE_MS = 5_000L
+
+    private val json = Json { prettyPrint = false; ignoreUnknownKeys = true; encodeDefaults = true }
     private val peers = ConcurrentHashMap<String, DeviceHistoryEntry>()
     private var file: File? = null
+    private val dirty = AtomicBoolean(false)
+    private val handler = Handler(Looper.getMainLooper())
+    private val persistRunnable = Runnable { flushPersist() }
 
     fun init(context: Context) {
         if (file != null) return
         val dir = File(context.applicationContext.filesDir, "traces").also { it.mkdirs() }
         file = File(dir, "peer_directory.json")
         load()
+        pruneExpired()
     }
 
     fun labelFor(id: String): String {
@@ -113,7 +124,7 @@ object PeerDirectory {
                 averageDelayMs = avg
             )
         }
-        persist()
+        schedulePersist()
     }
 
     fun noteError(id: String) {
@@ -121,7 +132,7 @@ object PeerDirectory {
         val existing = peers[id]
         peers[id] = (existing ?: DeviceHistoryEntry(id, short(id), firstSeen = now, lastSeen = now))
             .copy(lastSeen = now, errorCount = (existing?.errorCount ?: 0) + 1)
-        persist()
+        schedulePersist()
     }
 
     private fun upsert(
@@ -155,10 +166,34 @@ object PeerDirectory {
                 packetsForwarded = existing.packetsForwarded + if (forwarded) 1 else 0
             )
         }
-        persist()
+        pruneIfNeeded()
+        schedulePersist()
     }
 
     private fun short(id: String) = "peer"
+
+    private fun pruneExpired() {
+        val now = System.currentTimeMillis()
+        peers.entries.removeIf { now - it.value.lastSeen > TTL_MS }
+        pruneIfNeeded()
+    }
+
+    private fun pruneIfNeeded() {
+        if (peers.size <= MAX_PEERS) return
+        val overflow = peers.size - MAX_PEERS
+        peers.values.sortedBy { it.lastSeen }.take(overflow).forEach { peers.remove(it.nodeId) }
+    }
+
+    private fun schedulePersist() {
+        dirty.set(true)
+        handler.removeCallbacks(persistRunnable)
+        handler.postDelayed(persistRunnable, PERSIST_DEBOUNCE_MS)
+    }
+
+    private fun flushPersist() {
+        if (!dirty.compareAndSet(true, false)) return
+        persist()
+    }
 
     private fun load() {
         val f = file ?: return

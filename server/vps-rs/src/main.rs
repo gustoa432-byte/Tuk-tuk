@@ -88,11 +88,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => tracing::warn!(error = %e.message, "oracle prune failed"),
                 }
                 match mesh::prune_old_envelopes(&prune_db).await {
-                    Ok(n) if n > 0 => info!(deleted = n, "envelopes pruned (retention 7d)"),
+                    Ok(n) if n > 0 => info!(deleted = n, "envelopes pruned (retention 2d)"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e.message, "envelope prune failed"),
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
+                match mesh::prune_old_reports(&prune_db).await {
+                    Ok(n) if n > 0 => info!(deleted = n, "reports pruned (retention 30d)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e.message, "report prune failed"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
             }
         });
     }

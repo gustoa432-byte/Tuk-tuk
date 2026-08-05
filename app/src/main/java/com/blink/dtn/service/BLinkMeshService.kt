@@ -61,13 +61,13 @@ class BLinkMeshService : Service() {
         com.blink.dtn.ble.MeshDutyPrefs.init(this)
 
         runCatching {
-            val wifiDirect = com.blink.dtn.transport.WifiDirectTransport(applicationContext)
-            val registry = com.blink.dtn.transport.MeshTransportRegistry(
-                listOf(
-                    com.blink.dtn.transport.BleMeshTransport(bleMeshManager),
-                    wifiDirect
-                )
+            val transports = mutableListOf<com.blink.dtn.transport.MeshTransport>(
+                com.blink.dtn.transport.BleMeshTransport(bleMeshManager)
             )
+            if (com.blink.dtn.BuildConfig.ENABLE_WIFI_DIRECT) {
+                transports += com.blink.dtn.transport.WifiDirectTransport(applicationContext)
+            }
+            val registry = com.blink.dtn.transport.MeshTransportRegistry(transports)
             bleMeshManager.attachTransportRegistry(registry)
             registry.startAll()
         }.onFailure {

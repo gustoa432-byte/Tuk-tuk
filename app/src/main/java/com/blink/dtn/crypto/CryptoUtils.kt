@@ -39,11 +39,9 @@ object CryptoUtils {
         return null
     }
 
-    @Deprecated("Use packSigned(NetworkPacket) — shared AES removed", ReplaceWith("packSigned(packet)"))
+    @Deprecated("Removed — use packSigned(NetworkPacket)", level = DeprecationLevel.ERROR)
+    @Suppress("UNUSED_PARAMETER")
     fun encrypt(plainText: String): ByteArray {
-        // Last-resort: if caller still passes JSON string, ship as UTF-8 (unsigned).
-        // Prefer packSigned from relay path.
-        Log.w(TAG, "encrypt(String) is legacy; prefer packSigned")
-        return plainText.toByteArray(Charsets.UTF_8)
+        error("CryptoUtils.encrypt(String) removed — use packSigned(NetworkPacket)")
     }
 }

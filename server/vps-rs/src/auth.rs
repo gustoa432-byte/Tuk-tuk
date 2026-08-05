@@ -172,8 +172,8 @@ pub struct RefreshRequest {
     pub public_ble_key: String,
 }
 
-/// Quiet token upgrade for clients that still hold a valid JWT without `node_id`.
-/// `POST /auth/refresh` — Bearer required; no OTP / Telegram initData.
+/// Quiet token renewal. Bearer required; BLE key rotation is forbidden here —
+/// stolen JWT must not rebind `public_ble_key` / node_id (use email/TG verify).
 pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -184,16 +184,64 @@ pub async fn refresh(
         .and_then(|v| v.to_str().ok());
     let token = bearer_from_header(auth)?;
     let claims = verify_token(&state.cfg.jwt_secret, token)?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_refresh(&claims.sub, &ip)?;
+
+    if is_account_banned(&state.db, &claims.sub).await? {
+        return Err(AppError::forbidden("account_banned"));
+    }
+
+    let mut rows = state
+        .db
+        .query(
+            "SELECT auth_method, auth_id, public_ble_key FROM users WHERE id = ?1",
+            params![claims.sub.clone()],
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or_else(|| AppError::unauthorized("user_not_found"))?;
+    let method: String = row.get(0)?;
+    let auth_id: String = row.get(1)?;
+    let stored_ble: String = row.get(2)?;
 
     let mut ble = body.public_ble_key.trim().to_string();
     if ble.is_empty() {
         ble = claims.public_ble_key.trim().to_string();
     }
     if ble.is_empty() {
+        ble = stored_ble.clone();
+    }
+    if ble.is_empty() {
         return Err(AppError::bad("public_ble_key_required"));
     }
+    // Hard bind: refresh cannot change the device key bound into the JWT / DB.
+    if ble != claims.public_ble_key.trim() || ble != stored_ble.trim() {
+        return Err(AppError::unauthorized("ble_key_rotation_requires_reauth"));
+    }
 
-    upsert_user_and_token(&state, &claims.auth_method, &claims.auth_id, &ble).await
+    let node_id = derive_node_id(&ble)
+        .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
+    let token = issue_token(
+        &state.cfg.jwt_secret,
+        &claims.sub,
+        &method,
+        &auth_id,
+        &ble,
+    )?;
+
+    Ok(Json(AuthResponse {
+        ok: true,
+        token,
+        user_id: claims.sub,
+        auth_method: method,
+        auth_id,
+        public_ble_key: ble,
+        node_id,
+    }))
 }
 
 async fn upsert_user_and_token(

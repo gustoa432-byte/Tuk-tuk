@@ -1,11 +1,13 @@
 package com.blink.dtn.repository
 
+import com.blink.dtn.crypto.MessageAtRest
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.Conversation
 import com.blink.dtn.db.ConversationDao
 import com.blink.dtn.db.Message
 import com.blink.dtn.utils.MeshIdGenerator
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 class BLinkRepository(
     private val bLinkDao: BLinkDao,
@@ -14,7 +16,16 @@ class BLinkRepository(
     private val myNick: String
 ) {
     fun getAllConversations(): Flow<List<Conversation>> {
-        return conversationDao.getAllConversations()
+        return conversationDao.getAllConversations().map { list ->
+            list.map { conv ->
+                val preview = conv.lastMessage
+                if (preview == null || !MessageAtRest.isSealed(preview)) {
+                    conv
+                } else {
+                    conv.copy(lastMessage = MessageAtRest.reveal(preview).take(120))
+                }
+            }
+        }
     }
 
     fun getPublicChatHistory(): Flow<List<Message>> {
@@ -27,7 +38,15 @@ class BLinkRepository(
     }
 
     fun getDialogHistory(conversationId: String): Flow<List<Message>> {
-        return conversationDao.getMessagesForConversation(conversationId)
+        return conversationDao.getMessagesForConversation(conversationId).map { list ->
+            list.map { msg ->
+                if (msg.type == "PRIVATE" && MessageAtRest.isSealed(msg.text)) {
+                    msg.copy(text = MessageAtRest.reveal(msg.text))
+                } else {
+                    msg
+                }
+            }
+        }
     }
 
     suspend fun createAndSavePublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL): Message {
@@ -57,13 +76,14 @@ class BLinkRepository(
         replyToId: String? = null
     ): Pair<Message, Message?> {
         val now = System.currentTimeMillis()
+        val plain = com.blink.dtn.ble.MeshLimits.clampText(text)
         val localMsg = Message(
             id = MeshIdGenerator.next(myNodeId),
             type = "PRIVATE",
             senderId = myNodeId,
             senderNick = myNick,
             targetId = targetId,
-            text = com.blink.dtn.ble.MeshLimits.clampText(text),
+            text = plain,
             timestamp = now,
             ttl = 7,
             isMine = true,
@@ -72,12 +92,12 @@ class BLinkRepository(
             receivedAt = now
         )
         bLinkDao.insertMessageWithConversation(localMsg)
-        
+
         val networkMsg = if (!isPendingKey && encryptedText != null) {
             localMsg.copy(text = encryptedText)
         } else null
-        
-        return Pair(localMsg, networkMsg)
+
+        return Pair(localMsg.copy(text = plain), networkMsg)
     }
 
     suspend fun createAndSavePrivateImage(

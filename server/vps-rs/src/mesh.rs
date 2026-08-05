@@ -21,13 +21,6 @@ pub(crate) struct RegisterRequest {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct HealthResponse {
-    ok: bool,
-    nodes: i64,
-    envelopes: i64,
-}
-
-#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DirectoryNode {
     node_id: String,
@@ -87,18 +80,10 @@ pub(crate) struct PullQuery {
     since: Option<i64>,
 }
 
-async fn scalar_i64(conn: &libsql::Connection, sql: &str) -> Result<i64, AppError> {
-    let mut rows = conn.query(sql, ()).await?;
-    let row = rows.next().await?.ok_or_else(|| AppError::internal("empty scalar"))?;
-    Ok(row.get::<i64>(0)?)
-}
-
-pub async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, AppError> {
-    Ok(Json(HealthResponse {
-        ok: true,
-        nodes: scalar_i64(&state.db, "SELECT COUNT(*) FROM nodes").await?,
-        envelopes: scalar_i64(&state.db, "SELECT COUNT(*) FROM envelopes").await?,
-    }))
+pub async fn health(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+    // No roster sizes for anonymous recon — just liveness.
+    let _ = &state;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn directory(
@@ -111,7 +96,7 @@ pub async fn directory(
     let mut rows = state
         .db
         .query(
-            "SELECT node_id, nick, pubkey, seen_at FROM nodes ORDER BY seen_at DESC",
+            "SELECT node_id, nick, pubkey, seen_at FROM nodes ORDER BY seen_at DESC LIMIT 200",
             (),
         )
         .await?;
@@ -208,13 +193,17 @@ pub async fn push(
         .rate_limits
         .check_push(&principal.node_id, &ip)?;
     // Soft cap: refuse absurd batches even within body limit.
-    if body.envelopes.len() > 100 {
+    if body.envelopes.len() > 50 {
         return Err(AppError::bad("too_many_envelopes"));
     }
     let mut accepted = 0u32;
+    let mut broadcast_count = 0u32;
     for env in body.envelopes {
         if env.id.is_empty() {
             continue;
+        }
+        if env.payload_b64.len() > 96 * 1024 {
+            return Err(AppError::bad("payload_too_large"));
         }
         // Bind sender to authenticated mesh device — no anonymous / spoofed from.
         let from = if env.from.is_empty() || env.from == principal.node_id {
@@ -223,7 +212,17 @@ pub async fn push(
             return Err(AppError::unauthorized("envelope_from_mismatch_jwt"));
         };
         let receiver = env.to.unwrap_or_default();
-        let receiver_sql: Option<String> = if receiver.is_empty() || receiver == "*" {
+        let is_broadcast = receiver.is_empty() || receiver == "*";
+        if is_broadcast {
+            broadcast_count += 1;
+            if broadcast_count > 10 {
+                return Err(AppError::bad("too_many_broadcast_envelopes"));
+            }
+            if env.payload_b64.len() > 24 * 1024 {
+                return Err(AppError::bad("broadcast_payload_too_large"));
+            }
+        }
+        let receiver_sql: Option<String> = if is_broadcast {
             None
         } else {
             Some(receiver)
@@ -312,13 +311,26 @@ pub async fn pull(
     Ok(Json(PullResponse { envelopes }))
 }
 
-/// Drop mesh envelopes older than 7 days (bounds disk growth from push floods).
+/// Drop mesh envelopes older than 2 days (bounds disk growth from push floods).
 pub async fn prune_old_envelopes(conn: &libsql::Connection) -> Result<u64, AppError> {
-    const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    const RETENTION_MS: i64 = 2 * 24 * 60 * 60 * 1000;
     let cutoff = now_ms().saturating_sub(RETENTION_MS);
     let changed = conn
         .execute(
             "DELETE FROM envelopes WHERE created_at > 0 AND created_at < ?1",
+            params![cutoff],
+        )
+        .await?;
+    Ok(changed)
+}
+
+/// Drop moderation report plaintext older than 30 days.
+pub async fn prune_old_reports(conn: &libsql::Connection) -> Result<u64, AppError> {
+    const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+    let cutoff = now_ms().saturating_sub(RETENTION_MS);
+    let changed = conn
+        .execute(
+            "DELETE FROM reports WHERE created_at > 0 AND created_at < ?1",
             params![cutoff],
         )
         .await?;

@@ -22,6 +22,10 @@ internal class BleIngressHandler(
     private val scopeProvider: () -> CoroutineScope,
     private val deps: Deps
 ) {
+    /** Per-peer RX token buckets (MAC or senderId) — ~20 packets / 2s window. */
+    private val rxWindows = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
+    private val identityRequestWindows = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
+
     data class DecodedWirePacket(
         val packet: NetworkPacket,
         val message: Message,
@@ -97,9 +101,14 @@ internal class BleIngressHandler(
     }
 
     fun handle(packet: Message, dedupKey: String = packet.id, fromMac: String? = null) {
-        Log.d("DTN", "Received packet: id=${packet.id} type=${packet.type} from=${packet.senderNick} ttl=${packet.ttl}")
         scopeProvider().launch {
             if (packet.senderId == myNodeId && !packet.isAck) {
+                return@launch
+            }
+
+            val rateKey = fromMac?.takeIf { it.isNotBlank() } ?: packet.senderId
+            if (!allowRx(rateKey)) {
+                Log.w("DTN", "RX rate-limit drop from=$rateKey type=${packet.type}")
                 return@launch
             }
 
@@ -134,8 +143,21 @@ internal class BleIngressHandler(
             if (now - packet.timestamp > messageTtlMs) {
                 return@launch
             }
+            // Reject far-future clocks (would never age out of TTL window).
+            if (packet.timestamp > now + 5 * 60_000L) {
+                Log.w("DTN", "Dropped future-dated packet ${packet.id}")
+                return@launch
+            }
 
-            // Photos must never enter mesh chat ingress.
+            var packet = packet
+            if (packet.hopHistory.size > 16) {
+                packet = packet.copy(hopHistory = packet.hopHistory.takeLast(16))
+            }
+            if (packet.ttl > 32) {
+                packet = packet.copy(ttl = 32)
+            } else if (packet.ttl < 0) {
+                packet = packet.copy(ttl = 0)
+            }
             if (packet.type == Message.TYPE_PRIVATE_IMAGE) {
                 Log.w("DTN", "Dropped PRIVATE_IMAGE on mesh ingress ${packet.id}")
                 com.blink.dtn.telemetry.ErrorJournal.record(
@@ -170,7 +192,13 @@ internal class BleIngressHandler(
                     handleIdentity(packet)
                     deps.bindPeerMac(fromMac, packet.senderId)
                 }
-                "IDENTITY_REQUEST" -> handleIdentityRequest(packet)
+                "IDENTITY_REQUEST" -> {
+                    if (!allowIdentityRequest(packet.senderId)) {
+                        Log.w("DTN", "IDENTITY_REQUEST flood from ${packet.senderId}")
+                        return@launch
+                    }
+                    handleIdentityRequest(packet)
+                }
                 "UPDATE_REQUEST" -> {
                     if (packet.targetId == null || packet.targetId == myNodeId) {
                         deps.onApkUpdateRequest(packet.senderId)
@@ -273,26 +301,39 @@ internal class BleIngressHandler(
 
     /** @return true if this node consumed the ACK (no further flood). */
     private suspend fun handleAck(packet: Message, now: Long): Boolean {
+        val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
+            ?: packet.text.takeIf { it.isNotEmpty() }
+            ?: return packet.targetId == myNodeId
+
         packet.originalMessageId?.takeIf { it.isNotEmpty() }?.let { ackedId ->
             deps.markSeen(ackedId)
             dao.rememberSeenPacket(ackedId, now)
-            if (packet.targetId != myNodeId) {
-                dao.deleteMessageById(ackedId)
-            }
         }
-        if (packet.targetId != myNodeId) return false
 
-        val ackedMessageId = packet.originalMessageId?.takeIf { it.isNotEmpty() }
-            ?: packet.text.takeIf { it.isNotEmpty() }
-            ?: return true
-        val ackedMsg = dao.getMessageById(ackedMessageId)
-        val status = if (ackedMsg?.type == "PRIVATE") {
+        if (packet.targetId != myNodeId) {
+            // Relay path: only drop backpack copy if ACK is from the real destination.
+            val held = dao.getMessageById(ackedMessageId)
+            if (held != null && AckPolicy.acceptBackpackWipe(held.targetId, packet.senderId)) {
+                dao.deleteMessageById(ackedMessageId)
+            }
+            return false
+        }
+
+        val ackedMsg = dao.getMessageById(ackedMessageId) ?: return true
+        if (!AckPolicy.acceptDeliveryAck(ackedMsg.targetId, packet.senderId)) {
+            Log.w(
+                "DTN",
+                "Rejected ACK forgery id=$ackedMessageId from=${packet.senderId} expected=${ackedMsg.targetId}"
+            )
+            return true
+        }
+        val status = if (ackedMsg.type == "PRIVATE") {
             Message.STATUS_DELIVERED
         } else {
             Message.STATUS_SENT
         }
         dao.updateMessageStatus(ackedMessageId, status)
-        val latency = ackedMsg?.let { System.currentTimeMillis() - it.timestamp }
+        val latency = System.currentTimeMillis() - ackedMsg.timestamp
         deps.trace(
             ackedMessageId,
             com.blink.dtn.telemetry.TraceStages.ACK_RECEIVED,
@@ -524,7 +565,8 @@ internal class BleIngressHandler(
             visual = "🔓 Расшифровано"
         )
         val convStart = System.currentTimeMillis()
-        val finalMsg = packet.copy(text = plainText)
+        val sealed = com.blink.dtn.crypto.MessageAtRest.seal(plainText)
+        val finalMsg = packet.copy(text = sealed)
         dao.insertMessageWithConversation(finalMsg)
         deps.trace(
             packet.id,
@@ -532,7 +574,7 @@ internal class BleIngressHandler(
             com.blink.dtn.telemetry.detailsOf("insertDurationMs" to (System.currentTimeMillis() - convStart))
         )
         com.blink.dtn.ui.GamificationStore.noteReceived()
-        deps.notifyIncoming(finalMsg)
+        deps.notifyIncoming(finalMsg.copy(text = plainText))
 
         val ack = Message(
             id = com.blink.dtn.utils.MeshIdGenerator.next(myNodeId),
@@ -557,5 +599,27 @@ internal class BleIngressHandler(
             com.blink.dtn.telemetry.TraceStages.ACK_QUEUED,
             com.blink.dtn.telemetry.detailsOf("ackId" to ack.id)
         )
+    }
+
+    private fun allowRx(key: String): Boolean =
+        allowWindow(rxWindows, key, max = 20, windowMs = 2_000L)
+
+    private fun allowIdentityRequest(senderId: String): Boolean =
+        allowWindow(identityRequestWindows, senderId, max = 3, windowMs = 60_000L)
+
+    private fun allowWindow(
+        map: java.util.concurrent.ConcurrentHashMap<String, LongArray>,
+        key: String,
+        max: Int,
+        windowMs: Long
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        val arr = map.compute(key) { _, prev ->
+            val kept = (prev?.filter { now - it < windowMs } ?: emptyList()).toMutableList()
+            if (kept.size >= max) return@compute kept.toLongArray()
+            kept.add(now)
+            kept.toLongArray()
+        } ?: return false
+        return arr.size <= max && arr.isNotEmpty() && arr.last() == now
     }
 }

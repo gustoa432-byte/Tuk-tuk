@@ -2,6 +2,8 @@ package com.blink.dtn.net
 
 import android.content.Context
 import android.util.Log
+import com.blink.dtn.BuildConfig
+import com.blink.dtn.moderation.BanlistVerifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -44,9 +46,17 @@ class ModerationApi(private val context: Context) {
                     if (!resp.isSuccessful) {
                         throw ApiException(resp.code, text.ifBlank { "blacklist_failed" })
                     }
-                    json.decodeFromString<List<String>>(text)
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
+                    val body = json.decodeFromString<BlacklistResponseDto>(text)
+                    if (!BanlistVerifier.verify(
+                            body.nodes,
+                            body.exp,
+                            body.sig,
+                            BuildConfig.BANLIST_HMAC_SECRET
+                        )
+                    ) {
+                        throw ApiException(resp.code, "blacklist_sig_invalid")
+                    }
+                    body.nodes.map { it.trim() }.filter { it.isNotEmpty() }
                 }
             }
         }.onFailure { Log.w(TAG, "fetchBlacklist: ${it.message}") }
@@ -89,6 +99,13 @@ class ModerationApi(private val context: Context) {
         private val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+@Serializable
+data class BlacklistResponseDto(
+    val nodes: List<String> = emptyList(),
+    val exp: Long = 0,
+    val sig: String = ""
+)
 
 @Serializable
 data class ReportRequestDto(

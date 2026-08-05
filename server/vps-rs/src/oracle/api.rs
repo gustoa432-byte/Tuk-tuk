@@ -53,6 +53,13 @@ pub async fn sync(
 ) -> Result<Json<SyncResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_oracle(&principal.node_id, &ip)?;
+    if body.orbits.len() > 64 {
+        return Err(AppError::bad("too_many_orbits"));
+    }
     let source = principal.node_id;
     let now_secs = now_ms() / 1000;
 
@@ -66,7 +73,7 @@ pub async fn sync(
             }
             Some(OrbitIngestRow {
                 target_node: target,
-                meet_count: o.meet_count.max(0),
+                meet_count: o.meet_count.clamp(0, 10_000),
                 last_meet_at: normalize_unix_secs(o.last_meet_at),
             })
         })
@@ -87,6 +94,10 @@ pub async fn hint(
 ) -> Result<Json<HintResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_oracle(&principal.node_id, &ip)?;
     let sender = principal.node_id;
     let target = body.target_node.trim().to_string();
     if target.is_empty() {

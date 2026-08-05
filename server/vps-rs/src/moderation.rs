@@ -123,6 +123,7 @@ pub async fn report(
 ) -> Result<Json<ReportResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
+    state.rate_limits.check_report(&principal.node_id)?;
 
     let reported = body.reported_node_id.trim().to_string();
     if reported.is_empty() {
@@ -168,15 +169,23 @@ pub async fn report(
     Ok(Json(ReportResponse { ok: true, id }))
 }
 
-/// `GET /v1/moderation/blacklist` — JWT required; JSON array of banned mesh node ids
-/// (`banned_nodes` ∪ derived ids from banned accounts' current BLE keys).
+#[derive(Debug, Serialize)]
+pub struct BlacklistResponse {
+    pub nodes: Vec<String>,
+    pub exp: i64,
+    pub sig: String,
+}
+
+/// `GET /v1/moderation/blacklist` — JWT required; HMAC-signed node id list.
 pub async fn blacklist(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<String>>, AppError> {
+) -> Result<Json<BlacklistResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
 
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
     use std::collections::BTreeSet;
 
     let mut banned: BTreeSet<String> = BTreeSet::new();
@@ -213,5 +222,13 @@ pub async fn blacklist(
         }
     }
 
-    Ok(Json(banned.into_iter().collect()))
+    let nodes: Vec<String> = banned.into_iter().collect();
+    let exp = (now_ms() / 1000) + 3600;
+    let payload = format!("{}|{}", nodes.join("|"), exp);
+    let mut mac = Hmac::<Sha256>::new_from_slice(state.cfg.banlist_hmac_secret.as_bytes())
+        .map_err(|_| AppError::internal("banlist_hmac_init"))?;
+    mac.update(payload.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+
+    Ok(Json(BlacklistResponse { nodes, exp, sig }))
 }

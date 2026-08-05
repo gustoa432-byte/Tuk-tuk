@@ -41,7 +41,7 @@ object VkRelayManager {
             }
             return@withContext false
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.w("VkRelay", "push failed: ${e.message}")
             return@withContext false
         }
     }
@@ -83,7 +83,7 @@ object VkRelayManager {
             }
         } catch (e: Exception) {
             _relayActive.value = false
-            e.printStackTrace()
+            android.util.Log.w("VkRelay", "fetch failed: ${e.message}")
         }
         return@withContext payloads
     }

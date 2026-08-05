@@ -61,7 +61,8 @@ class BleMeshManager private constructor(
     )
 
     private val _txResults = kotlinx.coroutines.channels.Channel<TxResult>(
-        kotlinx.coroutines.channels.Channel.UNLIMITED
+        capacity = 256,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
     val txResults = _txResults.receiveAsFlow()
 
@@ -283,7 +284,7 @@ class BleMeshManager private constructor(
             }
             override fun onNewPeerFromScan(device: BluetoothDevice) {
                 triggerRelay()
-                enqueueProfileBroadcast()
+                maybeAnnounceIdentity(device.address)
             }
             override fun onNewPeerFromGatt(device: BluetoothDevice) {
                 // Stable connect at radio layer — identity handshake follows via profile broadcast.
@@ -361,6 +362,20 @@ class BleMeshManager private constructor(
         } catch (e: Exception) {
             showToast("Profile Broadcast Error: ${e.message}")
         }
+    }
+
+    /** Throttle IDENTITY_ANNOUNCEMENT storms on dense scans (item #18). */
+    private val lastIdentityAnnounceAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private fun maybeAnnounceIdentity(peerMac: String) {
+        val now = System.currentTimeMillis()
+        val prev = lastIdentityAnnounceAt[peerMac] ?: 0L
+        if (now - prev < 30_000L) return
+        lastIdentityAnnounceAt[peerMac] = now
+        // Also global floor: at most one flood every 5s regardless of MAC churn.
+        val lastGlobal = lastIdentityAnnounceAt["*"] ?: 0L
+        if (now - lastGlobal < 5_000L) return
+        lastIdentityAnnounceAt["*"] = now
+        enqueueProfileBroadcast()
     }
 
     companion object {
@@ -762,8 +777,6 @@ class BleMeshManager private constructor(
                 return@launch
             }
             val message = decoded.message
-            Log.d("BLE_RX_RAW", "MessageId=${message.id} Size=${assembledValue.size} SenderMAC=${device.address}")
-            Log.d("BLE_PACKET", "Type=${message.type} SenderId=${message.senderId} ReceiverId=${message.targetId ?: "null"} TTL=${message.ttl}")
             ingress.handle(message, decoded.dedupKey, fromMac = device.address)
         }
     }
@@ -781,7 +794,7 @@ class BleMeshManager private constructor(
                 ingress.handle(decoded.message, decoded.dedupKey)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "injectEncryptedPayload: ${e.message}")
         }
     }
 

@@ -70,7 +70,5 @@ data class AddContactRequest(val userId: String)
 data class AddContactResponse(
     val ok: Boolean = false,
     val userId: String = "",
-    val publicBleKey: String = "",
-    val authMethod: String = "",
-    val authId: String = ""
+    val publicBleKey: String = ""
 )

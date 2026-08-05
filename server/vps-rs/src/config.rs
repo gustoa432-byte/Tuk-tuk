@@ -14,15 +14,31 @@ pub struct Config {
     /// Comma-separated browser origins for CORS (native OkHttp ignores CORS).
     /// Empty = no `Access-Control-Allow-Origin` reflection (browsers blocked; apps OK).
     pub cors_origins: Vec<String>,
+    /// HMAC secret for signed ban lists (must match Android BuildConfig).
+    pub banlist_hmac_secret: String,
     pub otp_dev_log: bool,
+    /// When true (default), refuse empty/ephemeral JWT secrets.
+    pub require_jwt_secret: bool,
 }
 
 impl Config {
     pub fn from_env() -> Self {
-        let jwt_secret = std::env::var("TUKTUK_JWT_SECRET").unwrap_or_else(|_| {
-            tracing::warn!("TUKTUK_JWT_SECRET unset — using ephemeral secret (tokens reset on restart)");
-            uuid::Uuid::new_v4().to_string()
-        });
+        let require_jwt_secret = std::env::var("TUKTUK_REQUIRE_JWT_SECRET")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+        let jwt_secret = match std::env::var("TUKTUK_JWT_SECRET") {
+            Ok(s) if !s.is_empty() && s != "CHANGE_ME" && !s.starts_with("CHANGE_ME") => s,
+            Ok(_) | Err(_) if require_jwt_secret => {
+                panic!(
+                    "TUKTUK_JWT_SECRET must be set to a strong value (openssl rand -hex 32). \
+                     Set TUKTUK_REQUIRE_JWT_SECRET=false only for local throwaway runs."
+                );
+            }
+            _ => {
+                tracing::warn!("TUKTUK_JWT_SECRET unset — ephemeral secret (dev only)");
+                uuid::Uuid::new_v4().to_string()
+            }
+        };
         let cors_origins = std::env::var("TUKTUK_CORS_ORIGINS")
             .ok()
             .map(|s| {
@@ -32,7 +48,6 @@ impl Config {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| {
-                // Sensible defaults for nip.io HTTPS + local web tooling.
                 vec![
                     "https://157.228.136.239.nip.io".into(),
                     "http://127.0.0.1:5173".into(),
@@ -56,7 +71,11 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty()),
             cors_origins,
-            // Production default: false. Opt in with TUKTUK_OTP_DEV_LOG=true|1 only for local SMTP-less debugging.
+            banlist_hmac_secret: std::env::var("TUKTUK_BANLIST_HMAC")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "tuktuk-banlist-v1".into()),
+            require_jwt_secret,
             otp_dev_log: std::env::var("TUKTUK_OTP_DEV_LOG")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),

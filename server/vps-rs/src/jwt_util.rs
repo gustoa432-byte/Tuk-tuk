@@ -7,11 +7,16 @@ use serde::{Deserialize, Serialize};
 use crate::node_id::derive_node_id;
 use crate::state::AppError;
 
+/// Access-token lifetime (was 30d — shortened to limit stolen-token window).
+const ACCESS_TTL_DAYS: i64 = 7;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     /// Account UUID (one user, possibly many devices).
     pub sub: String,
     pub auth_method: String,
+    /// Intentionally empty in new tokens — PII stays server-side only.
+    #[serde(default)]
     pub auth_id: String,
     pub public_ble_key: String,
     /// Mesh device id for this token (derived from `public_ble_key` at issue).
@@ -25,7 +30,7 @@ pub fn issue_token(
     secret: &str,
     user_id: &str,
     auth_method: &str,
-    auth_id: &str,
+    _auth_id: &str,
     public_ble_key: &str,
 ) -> Result<String, AppError> {
     let node_id = derive_node_id(public_ble_key)
@@ -34,11 +39,11 @@ pub fn issue_token(
     let claims = Claims {
         sub: user_id.to_string(),
         auth_method: auth_method.to_string(),
-        auth_id: auth_id.to_string(),
+        auth_id: String::new(),
         public_ble_key: public_ble_key.to_string(),
         node_id,
         iat: now.timestamp(),
-        exp: (now + Duration::days(30)).timestamp(),
+        exp: (now + Duration::days(ACCESS_TTL_DAYS)).timestamp(),
     };
     encode(
         &Header::default(),

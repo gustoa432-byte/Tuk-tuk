@@ -42,6 +42,14 @@ abstract class BLinkDao {
             normalisedMsg.type == Message.TYPE_PRIVATE_IMAGE ->
                 if (normalisedMsg.text.isBlank() || normalisedMsg.text == "📷") "📷 Фото"
                 else normalisedMsg.text
+            normalisedMsg.type == "PRIVATE" -> {
+                val plain = com.blink.dtn.crypto.MessageAtRest.reveal(normalisedMsg.text)
+                    .ifBlank { normalisedMsg.text }
+                normalisedMsg = normalisedMsg.copy(
+                    text = com.blink.dtn.crypto.MessageAtRest.seal(plain)
+                ).also { it.conversationId = convId }
+                com.blink.dtn.crypto.MessageAtRest.seal(plain.take(120))
+            }
             else -> normalisedMsg.text
         }
 
@@ -68,7 +76,6 @@ abstract class BLinkDao {
         }
 
         insertMessage(normalisedMsg)
-        android.util.Log.d("DB_INSERT", "ConversationId=${normalisedMsg.conversationId} MessageId=${normalisedMsg.id} Status=${normalisedMsg.status}")
     }
 
     @androidx.room.Transaction
@@ -96,7 +103,6 @@ abstract class BLinkDao {
             msg
         }
         insertMessage(toStore)
-        android.util.Log.d("DB_INSERT", "RelayPacketId=${toStore.id} Type=${toStore.type} Status=${toStore.status}")
     }
 
     @Query("SELECT * FROM conversations WHERE conversationId = :id LIMIT 1")

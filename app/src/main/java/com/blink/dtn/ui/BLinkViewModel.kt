@@ -328,7 +328,7 @@ class BLinkViewModel(
                             .ifBlank { id }
                         upsertPeerAsContact(
                             peerId = meshId,
-                            nick = resp.authId.ifBlank { meshId },
+                            nick = meshId,
                             pubKeyBase64 = bleKey,
                             verifiedOutOfBand = true
                         )
@@ -857,7 +857,7 @@ class BLinkViewModel(
             }
             val result = com.blink.dtn.net.ModerationApi(app).report(
                 reportedNodeId = msg.senderId,
-                decryptedMessageContent = msg.text.take(8_000)
+                decryptedMessageContent = com.blink.dtn.crypto.MessageAtRest.reveal(msg.text).take(8_000)
             )
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 android.widget.Toast.makeText(

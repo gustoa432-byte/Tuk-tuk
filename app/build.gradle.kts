@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 35
-        versionName = "0.1.105"
+        versionCode = 36
+        versionName = "0.1.106"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -76,6 +76,10 @@ android {
             "BUILD_IS_RELEASE_SIGNING",
             "${hasReleaseSigning && expectedReleaseCertSha256.isNotEmpty()}"
         )
+        // Must match server TUKTUK_BANLIST_HMAC (default tuktuk-banlist-v1).
+        buildConfigField("String", "BANLIST_HMAC_SECRET", "\"tuktuk-banlist-v1\"")
+        // Wi‑Fi Direct is experimental surface area — off by default (item #34).
+        buildConfigField("boolean", "ENABLE_WIFI_DIRECT", "false")
     }
 
     signingConfigs {

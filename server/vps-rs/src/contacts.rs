@@ -22,8 +22,6 @@ pub struct AddContactResponse {
     pub ok: bool,
     pub user_id: String,
     pub public_ble_key: String,
-    pub auth_method: String,
-    pub auth_id: String,
 }
 
 pub async fn add_contact(
@@ -48,7 +46,7 @@ pub async fn add_contact(
     let mut rows = state
         .db
         .query(
-            "SELECT id, auth_method, auth_id, public_ble_key FROM users WHERE id = ?1",
+            "SELECT id, public_ble_key FROM users WHERE id = ?1",
             params![target.clone()],
         )
         .await?;
@@ -57,9 +55,7 @@ pub async fn add_contact(
         .await?
         .ok_or_else(|| AppError::not_found("user_not_found"))?;
     let user_id: String = row.get(0)?;
-    let auth_method: String = row.get(1)?;
-    let auth_id: String = row.get(2)?;
-    let public_ble_key: String = row.get(3)?;
+    let public_ble_key: String = row.get(1)?;
     if public_ble_key.is_empty() {
         return Err(AppError::bad("contact_missing_ble_key"));
     }
@@ -91,7 +87,5 @@ pub async fn add_contact(
         ok: true,
         user_id,
         public_ble_key,
-        auth_method,
-        auth_id,
     }))
 }
