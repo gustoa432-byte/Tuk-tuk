@@ -11,6 +11,8 @@ use sha2::Sha256;
 use tracing::{info, warn};
 
 use crate::jwt_util::{bearer_from_header, issue_token, verify_token};
+use crate::moderation::is_account_banned;
+use crate::node_id::derive_node_id;
 use crate::state::{now_ms, AppError, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -200,6 +202,10 @@ async fn upsert_user_and_token(
     auth_id: &str,
     public_ble_key: &str,
 ) -> Result<Json<AuthResponse>, AppError> {
+    // Fail closed: key must self-certify before we touch users / issue JWT.
+    let node_id = derive_node_id(public_ble_key)
+        .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
+
     let now = now_ms();
     let mut existing = state
         .db
@@ -211,6 +217,9 @@ async fn upsert_user_and_token(
 
     let user_id = if let Some(row) = existing.next().await? {
         let id: String = row.get(0)?;
+        if is_account_banned(&state.db, &id).await? {
+            return Err(AppError::forbidden("account_banned"));
+        }
         state
             .db
             .execute(
@@ -221,6 +230,10 @@ async fn upsert_user_and_token(
         id
     } else {
         let id = uuid::Uuid::new_v4().to_string();
+        // New accounts cannot already be banned; still check for safety.
+        if is_account_banned(&state.db, &id).await? {
+            return Err(AppError::forbidden("account_banned"));
+        }
         state
             .db
             .execute(
@@ -241,8 +254,11 @@ async fn upsert_user_and_token(
         auth_id,
         public_ble_key,
     )?;
-    let node_id = crate::node_id::derive_node_id(public_ble_key)
-        .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
+    // issue_token derives the same way — assert lockstep.
+    let issued_node = crate::jwt_util::verify_token(&state.cfg.jwt_secret, &token)?.node_id;
+    if issued_node != node_id {
+        return Err(AppError::internal("node_id_derive_mismatch"));
+    }
 
     Ok(Json(AuthResponse {
         ok: true,

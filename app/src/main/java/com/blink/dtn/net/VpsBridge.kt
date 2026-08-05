@@ -245,6 +245,14 @@ class VpsBridge private constructor(
             val dir = json.decodeFromString<DirectoryResponse>(text)
             for (node in dir.nodes) {
                 if (node.nodeId.isBlank() || node.nodeId == myNodeId) continue
+                // Identity binding: refuse directory rows where pubkey does not derive to nodeId.
+                if (node.pubkey.isNotBlank()) {
+                    val derived = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(node.pubkey)
+                    if (derived.isBlank() || derived != node.nodeId) {
+                        Log.w(TAG, "Skip directory node unbound pubkey nodeId=${node.nodeId}")
+                        continue
+                    }
+                }
                 val existing = dao.getProfileById(node.nodeId)
                 if (existing?.isBlocked == true) continue
                 val nick = node.nick.ifBlank { existing?.nickname.orEmpty() }

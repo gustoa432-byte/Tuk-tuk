@@ -52,7 +52,7 @@ pub async fn sync(
     Json(body): Json<SyncRequest>,
 ) -> Result<Json<SyncResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
-    reject_if_banned(&state.db, &principal.node_id).await?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let source = principal.node_id;
     let now_secs = now_ms() / 1000;
 
@@ -86,6 +86,7 @@ pub async fn hint(
     Json(body): Json<HintRequest>,
 ) -> Result<Json<HintResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let sender = principal.node_id;
     let target = body.target_node.trim().to_string();
     if target.is_empty() {

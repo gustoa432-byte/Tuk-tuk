@@ -8,6 +8,7 @@ use libsql::params;
 use serde::{Deserialize, Serialize};
 
 use crate::moderation::reject_if_banned;
+use crate::node_id::derive_node_id;
 use crate::oracle::auth::require_node;
 use crate::state::{now_ms, AppError, AppState};
 
@@ -106,7 +107,7 @@ pub async fn directory(
 ) -> Result<Json<DirectoryResponse>, AppError> {
     // No anonymous scrape of mesh roster / pubkeys.
     let principal = require_node(&state, &headers)?;
-    reject_if_banned(&state.db, &principal.node_id).await?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let mut rows = state
         .db
         .query(
@@ -116,11 +117,22 @@ pub async fn directory(
         .await?;
     let mut nodes = Vec::new();
     while let Some(row) = rows.next().await? {
+        let node_id: String = row.get(0)?;
+        let nick: String = row.get(1)?;
+        let pubkey: String = row.get(2)?;
+        let seen_at: i64 = row.get(3)?;
+        // Drop poisoned rows: pubkey must self-certify node_id.
+        if !pubkey.is_empty() {
+            match derive_node_id(&pubkey) {
+                Ok(derived) if derived == node_id => {}
+                _ => continue,
+            }
+        }
         nodes.push(DirectoryNode {
-            node_id: row.get(0)?,
-            nick: row.get(1)?,
-            pubkey: row.get(2)?,
-            seen_at: row.get(3)?,
+            node_id,
+            nick,
+            pubkey,
+            seen_at,
         });
     }
     Ok(Json(DirectoryResponse { nodes }))
@@ -132,7 +144,7 @@ pub async fn register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<Response, AppError> {
     let principal = require_node(&state, &headers)?;
-    reject_if_banned(&state.db, &principal.node_id).await?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let header_id = headers
         .get("X-Node-Id")
         .and_then(|v| v.to_str().ok())
@@ -151,6 +163,16 @@ pub async fn register(
         None => principal.node_id.clone(),
     };
 
+    let pubkey = body.pubkey.unwrap_or_default().trim().to_string();
+    if pubkey.is_empty() {
+        return Err(AppError::bad("pubkey_required"));
+    }
+    let derived = derive_node_id(&pubkey)
+        .map_err(|e| AppError::bad(format!("invalid_pubkey: {e}")))?;
+    if derived != node_id {
+        return Err(AppError::bad("pubkey_node_id_mismatch"));
+    }
+
     state
         .db
         .execute(
@@ -165,7 +187,7 @@ pub async fn register(
             params![
                 node_id,
                 body.nick.unwrap_or_default(),
-                body.pubkey.unwrap_or_default(),
+                pubkey,
                 now_ms()
             ],
         )
@@ -180,7 +202,7 @@ pub async fn push(
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
-    reject_if_banned(&state.db, &principal.node_id).await?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let ip = crate::rate_limit::client_ip(&headers);
     state
         .rate_limits
@@ -246,7 +268,7 @@ pub async fn pull(
     Query(q): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
-    reject_if_banned(&state.db, &principal.node_id).await?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     // Ignore spoofable query node_id — always pull for the JWT device.
     let node_id = principal.node_id;
     if let Some(claimed) = q.node_id.as_ref().filter(|s| !s.is_empty()) {
