@@ -110,6 +110,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
@@ -482,15 +483,24 @@ fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 }
 
 @Composable
-fun TukTukButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+fun TukTukButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit
+) {
+    // Prefer clickable over detectTapGestures — works reliably inside verticalScroll + IME.
     Box(
         modifier = Modifier
             .glassPanel(corner = 16.dp)
-            .bounceClick(onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, content = content)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            content = content
+        )
     }
 }
 
@@ -1905,6 +1915,7 @@ fun ProfileTab(
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     var nameFieldValue by remember {
         mutableStateOf(TextFieldValue(viewModel.displayName()))
@@ -2072,22 +2083,40 @@ fun ProfileTab(
                     Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
                 }
         )
-        if (profileDirty || showSavedFlash) {
-            Spacer(modifier = Modifier.height(8.dp))
-            TukTukButton(onClick = {
+        Spacer(modifier = Modifier.height(8.dp))
+        TukTukButton(
+            enabled = profileDirty || showSavedFlash,
+            onClick = {
                 if (!profileDirty) return@TukTukButton
+                keyboardController?.hide()
                 viewModel.updateMyNameAndNick(nameFieldValue.text, nickFieldValue.text)
                 val resolvedName = viewModel.displayName()
-                nameFieldValue = TextFieldValue(text = resolvedName, selection = TextRange(resolvedName.length))
-                nickFieldValue = TextFieldValue(text = viewModel.myNick, selection = TextRange(viewModel.myNick.length))
+                val resolvedNick = viewModel.myNick
+                nameFieldValue = TextFieldValue(
+                    text = resolvedName,
+                    selection = TextRange(resolvedName.length)
+                )
+                nickFieldValue = TextFieldValue(
+                    text = resolvedNick,
+                    selection = TextRange(resolvedNick.length)
+                )
                 savedName = resolvedName
-                savedNick = viewModel.myNick
+                savedNick = resolvedNick
                 showSavedFlash = true
-            }) {
-                Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(S.save(lang), color = TextPrimary)
+                Toast.makeText(context, S.nameSaved(lang), Toast.LENGTH_SHORT).show()
             }
+        ) {
+            Icon(
+                Icons.Filled.Check,
+                null,
+                tint = if (profileDirty || showSavedFlash) AccentLime else TextSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                if (showSavedFlash && !profileDirty) S.saved(lang) else S.save(lang),
+                color = TextPrimary
+            )
         }
 
         Spacer(modifier = Modifier.height(20.dp))

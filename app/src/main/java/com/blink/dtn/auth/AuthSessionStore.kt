@@ -200,4 +200,10 @@ object AuthSessionStore {
             .putString(KEY_DISPLAY_NAME, displayName.take(DinoNameGenerator.MAX_LEN))
             .apply()
     }
+
+    fun setNick(context: Context, nick: String) {
+        prefs(context).edit()
+            .putString(KEY_NICK, nick.take(DinoNameGenerator.MAX_LEN))
+            .apply()
+    }
 }

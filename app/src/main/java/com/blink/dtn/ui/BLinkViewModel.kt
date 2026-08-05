@@ -213,10 +213,14 @@ class BLinkViewModel(
     fun updateMyNameAndNick(displayName: String, nick: String) {
         val lang = com.blink.dtn.ui.AppLang.lang.value
         val name = com.blink.dtn.auth.DinoNameGenerator.resolveDisplayName(displayName, lang)
-        val trimmedNick = nick.trim().take(com.blink.dtn.auth.DinoNameGenerator.MAX_LEN)
+        val trimmedNick = nick.trim()
+            .removePrefix("@")
+            .replace("@", "")
+            .take(com.blink.dtn.auth.DinoNameGenerator.MAX_LEN)
         val meshNick = trimmedNick.ifEmpty { name }
         val app = getApplication<Application>()
         com.blink.dtn.auth.AuthSessionStore.setDisplayName(app, name)
+        com.blink.dtn.auth.AuthSessionStore.setNick(app, meshNick)
         updateMyProfile(meshNick, false)
     }
 

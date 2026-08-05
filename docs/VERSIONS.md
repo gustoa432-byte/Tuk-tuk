@@ -1,6 +1,6 @@
 # Версии TukTuk — хронология (не semver)
 
-**Актуальная версия: `0.1.106`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.106`).
+**Актуальная версия: `0.1.107`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.107`).
 
 ## Важно
 
@@ -24,8 +24,8 @@
 |-------|-----|
 | 2026-08-03 | `v0.1.4` … `v0.1.94` |
 | 2026-08-04 | `v0.1.95` — AuthApi/ContactsApi, JWT, hidden handshake |
-| 2026-08-05 | `v0.1.96`–`v0.1.98` — Hub / Two Journals |
-| 2026-08-05 | `v0.1.100`–`v0.1.105` — RSA mesh, Oracle, moderation, P0/P1/Sprint2 |
-| 2026-08-05 | **`v0.1.106`** — security inventory 1–34 (ACK, ban HMAC, at-rest seal, RL, …) |
+| 2026-08-05 | `v0.1.96`–`v0.1.105` — Hub, journals, RSA mesh, P0/P1 |
+| 2026-08-05 | `v0.1.106` — security inventory 1–34 |
+| 2026-08-05 | **`v0.1.107`** — fix Profile Save (name/nick) |
 
 Скачать: https://github.com/gustoa432-byte/Tuk-tuk/releases/latest
