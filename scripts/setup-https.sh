@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Configure Nginx reverse-proxy + Let's Encrypt TLS for TukTuk VPS (Rust on :8080).
 #
-# Usage (on VPS as root):
-#   TUKTUK_DOMAIN=node.tuktuk.dev TUKTUK_EMAIL=you@example.com \
-#     bash /opt/tuktuk/scripts/setup-https.sh
+# Default domain uses free nip.io wildcard DNS (IP → hostname, no registrar):
+#   157.228.136.239.nip.io  →  157.228.136.239
 #
-# After success, point Android VpsConfig at:
-#   https://node.tuktuk.dev
+# Usage (on VPS as root), one line:
+#   TUKTUK_EMAIL=ops@example.com bash /opt/tuktuk/scripts/setup-https.sh
 #
-# Prerequisites: DNS A/AAAA for DOMAIN → this host; port 80/443 open; tuktuk on 127.0.0.1:8080.
+# After success, Android VpsConfig default is:
+#   https://157.228.136.239.nip.io
+#
+# Prerequisites: port 80/443 open; tuktuk listening on 127.0.0.1:8080 (script sets TUKTUK_HOST).
 set -euo pipefail
 
-DOMAIN="${TUKTUK_DOMAIN:-node.tuktuk.dev}"
+DOMAIN="${TUKTUK_DOMAIN:-157.228.136.239.nip.io}"
 EMAIL="${TUKTUK_EMAIL:-}"
 UPSTREAM="${TUKTUK_UPSTREAM:-127.0.0.1:8080}"
 SITE_NAME="${TUKTUK_NGINX_SITE:-tuktuk}"
@@ -32,7 +34,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx certbot python3-certbot-nginx >/dev/null
 
-# Bind Rust to localhost only once TLS terminates at Nginx (optional hardening).
+# Bind Rust to localhost — TLS terminates at Nginx.
 ENV_FILE="${TUKTUK_ENV_FILE:-/etc/tuktuk.env}"
 if [[ -f "${ENV_FILE}" ]]; then
   if grep -q '^TUKTUK_HOST=' "${ENV_FILE}"; then
@@ -40,15 +42,24 @@ if [[ -f "${ENV_FILE}" ]]; then
   else
     echo "TUKTUK_HOST=127.0.0.1" >>"${ENV_FILE}"
   fi
+  # Keep port 8080 for upstream; public clients use https://${DOMAIN}
   systemctl restart tuktuk 2>/dev/null || true
   sleep 1
 fi
 
+# Verify nip.io (or custom DNS) resolves before ACME challenge.
+RESOLVED="$(getent hosts "${DOMAIN}" | awk '{print $1}' | head -n1 || true)"
+echo "==> ${DOMAIN} resolves to: ${RESOLVED:-unknown}"
+if [[ -z "${RESOLVED}" ]]; then
+  echo "WARN: could not resolve ${DOMAIN} — certbot may fail" >&2
+fi
+
 cat >"${NGINX_AVAIL}" <<EOF
-# TukTuk — HTTP (certbot will upgrade to HTTPS)
+# TukTuk — HTTP (certbot upgrades to HTTPS + redirect)
+# Domain: ${DOMAIN} (nip.io or custom)
 server {
-    listen 80;
-    listen [::]:80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name ${DOMAIN};
 
     location /.well-known/acme-challenge/ {
@@ -65,13 +76,13 @@ server {
         proxy_set_header Authorization \$http_authorization;
         proxy_pass_header Authorization;
         client_max_body_size 8m;
+        proxy_connect_timeout 10s;
         proxy_read_timeout 60s;
     }
 }
 EOF
 
 ln -sfn "${NGINX_AVAIL}" "${NGINX_ENABLED}"
-# Remove default site if it steals :80
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
@@ -92,4 +103,4 @@ echo
 echo "OK HTTPS https://${DOMAIN}/"
 echo "Health: curl -fsS https://${DOMAIN}/v1/health"
 echo "Android default URL: https://${DOMAIN}"
-echo "Rust upstream: ${UPSTREAM} (prefer TUKTUK_HOST=127.0.0.1)"
+echo "Rust upstream: http://${UPSTREAM} (TUKTUK_HOST=127.0.0.1)"

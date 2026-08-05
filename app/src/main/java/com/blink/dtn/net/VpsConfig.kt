@@ -8,29 +8,38 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * VPS endpoint config (device-local).
- * Default production bridge: FirstByte TukTuk node (override in Settings).
+ * Default: HTTPS via nip.io → FirstByte node (see scripts/setup-https.sh).
  */
 object VpsConfig {
     private const val PREFS = "blink_prefs"
     private const val KEY_BASE_URL = "vps_base_url"
 
-    /** Shipped default: TLS via Nginx (see scripts/setup-https.sh). */
-    const val DEFAULT_BASE_URL = "https://node.tuktuk.dev"
+    /** Shipped default: TLS at Nginx, host via free nip.io DNS. */
+    const val DEFAULT_BASE_URL = "https://157.228.136.239.nip.io"
+
+    private val LEGACY_DEFAULTS = setOf(
+        "http://157.228.136.239:8080",
+        "https://node.tuktuk.dev",
+        "http://node.tuktuk.dev",
+        "https://node.tuktuk.dev:443"
+    )
 
     private val _baseUrl = MutableStateFlow("")
     val baseUrl: StateFlow<String> = _baseUrl
 
     fun init(context: Context) {
-        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_BASE_URL, null)
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val stored = prefs.getString(KEY_BASE_URL, null)
             ?.trim()
             .orEmpty()
             .trimEnd('/')
-        val effective = stored.ifBlank { DEFAULT_BASE_URL }
-        if (stored.isBlank()) {
-            // Persist default once so Settings / VpsBridge see the same URL.
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_BASE_URL, effective).apply()
+        val effective = when {
+            stored.isBlank() -> DEFAULT_BASE_URL
+            stored in LEGACY_DEFAULTS -> DEFAULT_BASE_URL
+            else -> stored
+        }
+        if (stored != effective) {
+            prefs.edit().putString(KEY_BASE_URL, effective).apply()
         }
         _baseUrl.value = effective
     }
