@@ -43,6 +43,7 @@ const PUSH_PER_IP: Window = Window {
     period: Duration::from_secs(60),
 };
 
+#[derive(Default)]
 struct Bucket {
     hits: Vec<Instant>,
 }
