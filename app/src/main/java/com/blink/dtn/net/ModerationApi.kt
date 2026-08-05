@@ -33,18 +33,21 @@ class ModerationApi(private val context: Context) {
 
     suspend fun fetchBlacklist(): Result<List<String>> = withContext(Dispatchers.IO) {
         runCatching {
-            val req = Request.Builder()
-                .url("${base()}/v1/moderation/blacklist")
-                .get()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) {
-                    throw ApiException(resp.code, text.ifBlank { "blacklist_failed" })
+            VpsJwtSupport.withJwtRetry(context) { jwt ->
+                val req = Request.Builder()
+                    .url("${base()}/v1/moderation/blacklist")
+                    .get()
+                    .header("Authorization", "Bearer $jwt")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        throw ApiException(resp.code, text.ifBlank { "blacklist_failed" })
+                    }
+                    json.decodeFromString<List<String>>(text)
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
                 }
-                json.decodeFromString<List<String>>(text)
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
             }
         }.onFailure { Log.w(TAG, "fetchBlacklist: ${it.message}") }
     }

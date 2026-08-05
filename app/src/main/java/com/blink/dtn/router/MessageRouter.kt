@@ -14,7 +14,11 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object MessageRouter {
 
+    private const val PATH_MAX_ENTRIES = 500
+    private const val PATH_MAX_AGE_MS = 30L * 60_000L
+
     private val lastPathByMessage = ConcurrentHashMap<String, RoutePath>()
+    private val pathNotedAt = ConcurrentHashMap<String, Long>()
     private val _networkLive = MutableStateFlow(NetworkSnapshot())
     val networkLive: StateFlow<NetworkSnapshot> = _networkLive
 
@@ -96,6 +100,8 @@ object MessageRouter {
 
     fun notePath(messageId: String, path: RoutePath, statusRu: String = "в пути") {
         lastPathByMessage[messageId] = path
+        pathNotedAt[messageId] = System.currentTimeMillis()
+        prunePaths()
         _activeShipment.value = ActiveShipment(messageId, path, statusRu)
         TraceStore.stage(
             messageId,
@@ -103,6 +109,29 @@ object MessageRouter {
             detailsOf("path" to path.traceId(), "label" to path.labelRu()),
             visual = "🔀 ${path.labelRu()}"
         )
+    }
+
+    /** Drop aged / excess route metadata (process lifetime leak guard). */
+    fun prunePaths(
+        maxAgeMs: Long = PATH_MAX_AGE_MS,
+        maxEntries: Int = PATH_MAX_ENTRIES
+    ) {
+        val now = System.currentTimeMillis()
+        for ((id, at) in pathNotedAt.entries.toList()) {
+            if (now - at > maxAgeMs) {
+                pathNotedAt.remove(id)
+                lastPathByMessage.remove(id)
+            }
+        }
+        if (lastPathByMessage.size <= maxEntries) return
+        val overflow = lastPathByMessage.size - maxEntries
+        pathNotedAt.entries
+            .sortedBy { it.value }
+            .take(overflow)
+            .forEach { (id, _) ->
+                pathNotedAt.remove(id)
+                lastPathByMessage.remove(id)
+            }
     }
 
     fun noteShipmentStatus(messageId: String, statusRu: String) {
@@ -114,6 +143,9 @@ object MessageRouter {
         if (_activeShipment.value?.messageId == messageId) {
             _activeShipment.value = null
         }
+        // Terminal shipment — drop path entry promptly.
+        lastPathByMessage.remove(messageId)
+        pathNotedAt.remove(messageId)
     }
 
     /**

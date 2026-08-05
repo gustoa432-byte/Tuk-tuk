@@ -156,6 +156,7 @@ class BleMeshManager private constructor(
                 }
                 override fun serviceUuid() = SERVICE_UUID
                 override fun characteristicUuid() = CHARACTERISTIC_UUID
+                override fun tryAcquireGattSlot(address: String) = pool.tryAcquireSlot(address)
             }
         )
     }
@@ -582,6 +583,14 @@ class BleMeshManager private constructor(
             }
             val cadence = MeshDutyPrefs.cadence()
             pool.setIdleTimeoutMs(cadence.gattIdleTimeoutMs)
+            pool.setMaxConcurrent(cadence.maxConcurrentGatt)
+            pool.onSweep = {
+                val dropped = peers.pruneStale(
+                    MeshDutyPrefs.cadence().peerTtlMs,
+                    protectAddresses = pool.connections.keys.toSet()
+                )
+                if (dropped > 0) Log.d(TAG, "Peer TTL pruned $dropped stale neighbors")
+            }
             keyExchange.setIntervalMs(cadence.keyExchangeIntervalMs)
             pool.startIdleCleanup()
             keyExchange.start()
@@ -722,6 +731,7 @@ class BleMeshManager private constructor(
         val cadence = MeshDutyCadence.forPreset(preset)
         radio.applyCadence(cadence)
         pool.setIdleTimeoutMs(cadence.gattIdleTimeoutMs)
+        pool.setMaxConcurrent(cadence.maxConcurrentGatt)
         keyExchange.setIntervalMs(cadence.keyExchangeIntervalMs)
         Log.i(TAG, "Duty preset → ${preset.labelRu}")
     }

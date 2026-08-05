@@ -35,7 +35,14 @@ data class MeshDutyCadence(
     /** IDENTITY_REQUEST poll interval. */
     val keyExchangeIntervalMs: Long,
     /** Soft cap on concurrent neighbor writes per relay tick (hint). */
-    val maxPeersPerBatch: Int
+    val maxPeersPerBatch: Int,
+    /**
+     * Drop discovered peers with no scan/GATT touch for this long
+     * (keeps tables small in 100+ advertiser crowds).
+     */
+    val peerTtlMs: Long,
+    /** Hard cap on simultaneous GATT client connections. */
+    val maxConcurrentGatt: Int
 ) {
     companion object {
         fun forPreset(preset: MeshDutyPreset): MeshDutyCadence = when (preset) {
@@ -47,7 +54,9 @@ data class MeshDutyCadence(
                 advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_LOW,
                 gattIdleTimeoutMs = 25_000L,
                 keyExchangeIntervalMs = 60_000L,
-                maxPeersPerBatch = 2
+                maxPeersPerBatch = 2,
+                peerTtlMs = 120_000L,
+                maxConcurrentGatt = 2
             )
             MeshDutyPreset.NORMAL -> MeshDutyCadence(
                 scanOnMs = 10_000L,
@@ -57,7 +66,9 @@ data class MeshDutyCadence(
                 advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM,
                 gattIdleTimeoutMs = 60_000L,
                 keyExchangeIntervalMs = 20_000L,
-                maxPeersPerBatch = 6
+                maxPeersPerBatch = 6,
+                peerTtlMs = 180_000L,
+                maxConcurrentGatt = 3
             )
             MeshDutyPreset.MAX -> MeshDutyCadence(
                 scanOnMs = 14_000L,
@@ -67,7 +78,9 @@ data class MeshDutyCadence(
                 advertiseTxPower = AdvertiseSettings.ADVERTISE_TX_POWER_HIGH,
                 gattIdleTimeoutMs = 90_000L,
                 keyExchangeIntervalMs = 12_000L,
-                maxPeersPerBatch = 12
+                maxPeersPerBatch = 12,
+                peerTtlMs = 240_000L,
+                maxConcurrentGatt = 4
             )
         }
     }

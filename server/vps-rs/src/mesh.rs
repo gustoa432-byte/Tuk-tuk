@@ -311,3 +311,16 @@ pub async fn pull(
     }
     Ok(Json(PullResponse { envelopes }))
 }
+
+/// Drop mesh envelopes older than 7 days (bounds disk growth from push floods).
+pub async fn prune_old_envelopes(conn: &libsql::Connection) -> Result<u64, AppError> {
+    const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    let cutoff = now_ms().saturating_sub(RETENTION_MS);
+    let changed = conn
+        .execute(
+            "DELETE FROM envelopes WHERE created_at > 0 AND created_at < ?1",
+            params![cutoff],
+        )
+        .await?;
+    Ok(changed)
+}

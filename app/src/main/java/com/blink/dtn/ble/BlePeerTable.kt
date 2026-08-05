@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Runtime view of nearby BLE peers and per-MAC TX backoff.
- * (Distinct from telemetry [com.blink.dtn.telemetry.PeerDirectory].)
+ * Peers expire after [peerTtlMs] without a fresh scan/GATT touch (crowd control).
  */
 internal class BlePeerTable {
     private val discovered = ConcurrentHashMap.newKeySet<BluetoothDevice>()
@@ -17,6 +17,8 @@ internal class BlePeerTable {
     /** GATT MAC → mesh nodeId after IDENTITY handshake. */
     private val nodeIdByMac = ConcurrentHashMap<String, String>()
     private val macByNodeId = ConcurrentHashMap<String, String>()
+    /** Last scan hit or GATT activity per MAC. */
+    private val lastSeenAt = ConcurrentHashMap<String, Long>()
 
     private val _peerCount = MutableStateFlow(0)
     private val _activePeers = MutableStateFlow<List<String>>(emptyList())
@@ -29,6 +31,7 @@ internal class BlePeerTable {
 
     /** @return true if this device was newly added to the discovery set. */
     fun noteDiscovered(device: BluetoothDevice): Boolean {
+        touchSeen(device.address)
         val added = discovered.add(device)
         if (added) publish()
         return added
@@ -37,16 +40,51 @@ internal class BlePeerTable {
     /** @return true if this device was newly added to the discovery set. */
     fun noteGattClientConnected(device: BluetoothDevice): Boolean {
         connectedClients.add(device)
+        touchSeen(device.address)
         val added = discovered.add(device)
         if (added) publish()
         return added
     }
 
+    /** Refresh freshness without requiring a new discovery entry. */
+    fun touchSeen(address: String) {
+        if (address.isBlank()) return
+        lastSeenAt[address] = System.currentTimeMillis()
+    }
+
     fun noteDisconnected(address: String) {
         discovered.removeIf { it.address == address }
         connectedClients.removeIf { it.address == address }
+        lastSeenAt.remove(address)
         nodeIdByMac.remove(address)?.let { macByNodeId.remove(it, address) }
         publish()
+    }
+
+    /**
+     * Drop peers with no scan/GATT activity for [ttlMs].
+     * Active GATT server clients and [protectAddresses] (outbound GATT) are kept.
+     * @return number of peers removed
+     */
+    fun pruneStale(ttlMs: Long, protectAddresses: Set<String> = emptySet()): Int {
+        val ttl = ttlMs.coerceAtLeast(30_000L)
+        val now = System.currentTimeMillis()
+        val connectedAddrs = connectedClients.map { it.address }.toHashSet()
+        var removed = 0
+        val stale = discovered.filter { device ->
+            val addr = device.address
+            if (addr in connectedAddrs || addr in protectAddresses) return@filter false
+            val seen = lastSeenAt[addr] ?: 0L
+            now - seen > ttl
+        }
+        for (device in stale) {
+            val addr = device.address
+            if (discovered.remove(device)) removed++
+            lastSeenAt.remove(addr)
+            txBackoffUntil.remove(addr)
+            nodeIdByMac.remove(addr)?.let { macByNodeId.remove(it, addr) }
+        }
+        if (removed > 0) publish()
+        return removed
     }
 
     fun bindNodeId(address: String, nodeId: String) {
@@ -54,6 +92,7 @@ internal class BlePeerTable {
         if (address.isBlank() || id.isEmpty()) return
         nodeIdByMac[address] = id
         macByNodeId[id] = address
+        touchSeen(address)
     }
 
     fun nodeIdFor(address: String): String? = nodeIdByMac[address]
@@ -73,6 +112,7 @@ internal class BlePeerTable {
         txBackoffUntil.clear()
         nodeIdByMac.clear()
         macByNodeId.clear()
+        lastSeenAt.clear()
         publish()
     }
 

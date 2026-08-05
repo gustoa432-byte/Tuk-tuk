@@ -18,10 +18,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::http::{header, HeaderValue, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use libsql::Builder;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 
 use crate::config::Config;
@@ -67,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Oracle retention: prune edges older than 30 days (once at boot + daily).
+    // Mesh envelopes: drop older than 7 days to bound disk DoS.
     {
         let prune_db = Arc::clone(&state.db);
         tokio::spawn(async move {
@@ -85,15 +87,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e.message, "oracle prune failed"),
                 }
+                match mesh::prune_old_envelopes(&prune_db).await {
+                    Ok(n) if n > 0 => info!(deleted = n, "envelopes pruned (retention 7d)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e.message, "envelope prune failed"),
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
             }
         });
     }
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = build_cors(&state.cfg);
+    info!(origins = ?state.cfg.cors_origins, "CORS lockdown active");
 
     let app = Router::new()
         // Mesh (Android VpsBridge)
@@ -112,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Oracle — social-orbit ingest + courier hints
         .route("/v1/oracle/sync", post(oracle::api::sync))
         .route("/v1/oracle/hint", post(oracle::api::hint))
-        // Moderation — reports + public ban list
+        // Moderation — reports + JWT-gated ban list
         .route("/v1/moderation/report", post(moderation::report))
         .route("/v1/moderation/blacklist", get(moderation::blacklist))
         .merge(telemetry::router())
@@ -124,6 +129,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn build_cors(cfg: &Config) -> CorsLayer {
+    let methods = [
+        Method::GET,
+        Method::POST,
+        Method::OPTIONS,
+    ];
+    let headers = [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::HeaderName::from_static("x-node-id"),
+    ];
+    let mut layer = CorsLayer::new()
+        .allow_methods(methods)
+        .allow_headers(headers);
+    let origins: Vec<HeaderValue> = cfg
+        .cors_origins
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    if origins.is_empty() {
+        // No browser origins: do not reflect Allow-Origin (OkHttp unaffected).
+        layer
+    } else {
+        layer.allow_origin(AllowOrigin::list(origins))
+    }
 }
 
 async fn open_db(path: &str) -> Result<libsql::Connection, Box<dyn std::error::Error>> {

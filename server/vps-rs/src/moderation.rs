@@ -168,9 +168,15 @@ pub async fn report(
     Ok(Json(ReportResponse { ok: true, id }))
 }
 
-/// `GET /v1/moderation/blacklist` — JSON array of banned mesh node ids
+/// `GET /v1/moderation/blacklist` — JWT required; JSON array of banned mesh node ids
 /// (`banned_nodes` ∪ derived ids from banned accounts' current BLE keys).
-pub async fn blacklist(State(state): State<AppState>) -> Result<Json<Vec<String>>, AppError> {
+pub async fn blacklist(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, AppError> {
+    let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
+
     use std::collections::BTreeSet;
 
     let mut banned: BTreeSet<String> = BTreeSet::new();

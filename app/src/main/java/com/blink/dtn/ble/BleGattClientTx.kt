@@ -33,6 +33,8 @@ internal class BleGattClientTx(
         fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null)
         fun serviceUuid(): UUID
         fun characteristicUuid(): UUID
+        /** Global GATT concurrency gate before a new connectGatt. */
+        fun tryAcquireGattSlot(address: String): Boolean
     }
 
     fun send(device: BluetoothDevice, payload: ByteArray, messageId: String) {
@@ -61,6 +63,17 @@ internal class BleGattClientTx(
                 deps.disconnectGatt(existingGatt)
                 deps.onWriteResult(messageId, device.address, false)
             }
+            return
+        }
+
+        if (!deps.tryAcquireGattSlot(device.address)) {
+            Log.w("BLE_TX", "GATT slot denied for ${device.address}")
+            deps.trace(
+                messageId,
+                com.blink.dtn.telemetry.TraceStages.GATT_CONNECT_FAIL,
+                com.blink.dtn.telemetry.detailsOf("peer" to device.address, "reason" to "gatt_slot_full")
+            )
+            deps.onWriteResult(messageId, device.address, false, softRetry = true)
             return
         }
 

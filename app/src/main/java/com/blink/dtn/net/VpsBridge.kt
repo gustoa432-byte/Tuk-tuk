@@ -530,6 +530,7 @@ class VpsBridge private constructor(
 
     /** Pull global ban list → Room + [com.blink.dtn.moderation.GlobalBanCache]. */
     private suspend fun syncModerationBlacklist() {
+        if (!com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)) return
         val ids = ModerationApi(context).fetchBlacklist().getOrElse { return }
         val db = com.blink.dtn.db.BLinkDatabase.getDatabase(context)
         db.bannedNodeDao().replaceAll(ids)
