@@ -150,7 +150,7 @@ object TraceStore {
         return try {
             val stamp = SimpleDateFormat("yyyy_MM_dd_HHmmss", Locale.US).format(Date())
             val outFile = File(context.cacheDir, "trace_$stamp.zip")
-            val traces = listRecent(100)
+            val traces = TelemetrySanitize.scrubTraces(listRecent(100))
             val reports = TraceAnalyzer.analyzeAll(traces)
             val latest = reports.firstOrNull()
             val bundle = TraceExportBundle(
@@ -208,7 +208,7 @@ object TraceStore {
         return try {
             val stamp = SimpleDateFormat("yyyy_MM_dd_HHmmss", Locale.US).format(Date())
             val outFile = File(context.cacheDir, "voyage_error_${messageId.take(12)}_$stamp.zip")
-            val trace = getByMessageId(messageId)
+            val trace = getByMessageId(messageId)?.let { TelemetrySanitize.scrubTrace(it) }
             val report = trace?.let { TraceAnalyzer.analyze(it) }
             val device = captureDevice(context)
             val appVersion = runCatching {

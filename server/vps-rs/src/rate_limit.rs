@@ -42,6 +42,14 @@ const PUSH_PER_IP: Window = Window {
     max: 240,
     period: Duration::from_secs(60),
 };
+const TELEMETRY_PER_NODE: Window = Window {
+    max: 3,
+    period: Duration::from_secs(60 * 60),
+};
+const TELEMETRY_PER_IP: Window = Window {
+    max: 6,
+    period: Duration::from_secs(60 * 60),
+};
 
 #[derive(Default)]
 struct Bucket {
@@ -99,6 +107,12 @@ impl RateLimitState {
     pub fn check_push(&self, node_id: &str, ip: &str) -> Result<(), AppError> {
         self.check(&format!("push:node:{node_id}"), PUSH_PER_NODE)?;
         self.check(&format!("push:ip:{ip}"), PUSH_PER_IP)?;
+        Ok(())
+    }
+
+    pub fn check_telemetry(&self, node_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("telemetry:node:{node_id}"), TELEMETRY_PER_NODE)?;
+        self.check(&format!("telemetry:ip:{ip}"), TELEMETRY_PER_IP)?;
         Ok(())
     }
 }

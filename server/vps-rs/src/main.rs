@@ -12,6 +12,7 @@ mod node_id;
 mod oracle;
 mod rate_limit;
 mod state;
+mod telemetry;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -114,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Moderation — reports + public ban list
         .route("/v1/moderation/report", post(moderation::report))
         .route("/v1/moderation/blacklist", get(moderation::blacklist))
+        .merge(telemetry::router())
         .layer(cors)
         .with_state(state);
 

@@ -9,6 +9,8 @@ pub struct Config {
     pub smtp_pass: Option<String>,
     pub smtp_from: Option<String>,
     pub telegram_bot_token: Option<String>,
+    /// Chat/channel id for telemetry ZIP proxies (Bot API sendDocument).
+    pub telegram_feedback_chat_id: Option<String>,
     pub otp_dev_log: bool,
 }
 
@@ -29,6 +31,9 @@ impl Config {
             smtp_pass: std::env::var("TUKTUK_SMTP_PASS").ok().filter(|s| !s.is_empty()),
             smtp_from: std::env::var("TUKTUK_SMTP_FROM").ok().filter(|s| !s.is_empty()),
             telegram_bot_token: std::env::var("TUKTUK_TELEGRAM_BOT_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            telegram_feedback_chat_id: std::env::var("TUKTUK_TELEGRAM_FEEDBACK_CHAT_ID")
                 .ok()
                 .filter(|s| !s.is_empty()),
             // Production default: false. Opt in with TUKTUK_OTP_DEV_LOG=true|1 only for local SMTP-less debugging.

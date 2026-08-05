@@ -2690,10 +2690,15 @@ fun InfoContent(compact: Boolean = false) {
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = {
-            com.blink.dtn.telemetry.FeedbackMailer.sendErrorReport(context)
-        }) {
+        var showErrorReport by remember { mutableStateOf(false) }
+        TukTukButton(onClick = { showErrorReport = true }) {
             Text(S.errorReportButton(lang), color = TextPrimary)
+        }
+        if (showErrorReport) {
+            ErrorReportDialog(
+                lang = lang,
+                onDismiss = { showErrorReport = false }
+            )
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(S.errorReportHint(lang), style = quietStyle, color = TextSecondary)
