@@ -7,6 +7,7 @@ use axum::Json;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 
+use crate::moderation::reject_if_banned;
 use crate::oracle::auth::require_node;
 use crate::state::{now_ms, AppError, AppState};
 
@@ -125,6 +126,7 @@ pub async fn register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<Response, AppError> {
     let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.node_id).await?;
     let header_id = headers
         .get("X-Node-Id")
         .and_then(|v| v.to_str().ok())
@@ -172,6 +174,7 @@ pub async fn push(
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.node_id).await?;
     let mut accepted = 0u32;
     for env in body.envelopes {
         if env.id.is_empty() {
@@ -229,6 +232,7 @@ pub async fn pull(
     Query(q): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.node_id).await?;
     // Ignore spoofable query node_id — always pull for the JWT device.
     let node_id = principal.node_id;
     if let Some(claimed) = q.node_id.as_ref().filter(|s| !s.is_empty()) {

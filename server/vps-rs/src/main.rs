@@ -7,6 +7,7 @@ mod db;
 mod jwt_util;
 mod mail;
 mod mesh;
+mod moderation;
 mod node_id;
 mod oracle;
 mod state;
@@ -44,7 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = open_db(&db_path).await?;
     db::init_schema(&db).await?;
     oracle::store::init_schema(&db).await?;
-    info!(%db_path, "libSQL ready (mesh + oracle)");
+    moderation::init_schema(&db).await?;
+    info!(%db_path, "libSQL ready (mesh + oracle + moderation)");
     if !cfg.smtp_ready() {
         info!("SMTP not configured — email OTP will use TUKTUK_OTP_DEV_LOG");
     }
@@ -103,6 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Oracle — social-orbit ingest + courier hints
         .route("/v1/oracle/sync", post(oracle::api::sync))
         .route("/v1/oracle/hint", post(oracle::api::hint))
+        // Moderation — reports + public ban list
+        .route("/v1/moderation/report", post(moderation::report))
+        .route("/v1/moderation/blacklist", get(moderation::blacklist))
         .layer(cors)
         .with_state(state);
 

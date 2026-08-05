@@ -68,6 +68,17 @@ ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
 
 JWT claims: `sub` (account UUID), `node_id` (mesh device id = Base32(SHA-256(DER pub)[0..10])), `public_ble_key`, …
 
+### Moderation
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| POST | `/v1/moderation/report` | Bearer JWT | `{ "reported_node_id", "decrypted_message_content" }` |
+| GET | `/v1/moderation/blacklist` | — | JSON array of banned `node_id` |
+
+Banned JWT `node_id` → **403** `node_banned` on `/v1/push`, `/v1/pull`, `/v1/register`, `/v1/oracle/sync`.
+
+Tables: `banned_nodes(node_id, reason, banned_at)`, `reports(id, reporter_jwt, reported_node_id, message_content, created_at)`.
+
 ### Oracle (social orbit → courier hints)
 
 | Method | Path | Headers | Body |

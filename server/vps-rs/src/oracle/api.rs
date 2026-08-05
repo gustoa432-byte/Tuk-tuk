@@ -5,6 +5,7 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::moderation::reject_if_banned;
 use crate::oracle::auth::require_node;
 use crate::oracle::domain::calculate_weight;
 use crate::oracle::store::{self, OrbitIngestRow};
@@ -51,6 +52,7 @@ pub async fn sync(
     Json(body): Json<SyncRequest>,
 ) -> Result<Json<SyncResponse>, AppError> {
     let principal = require_node(&state, &headers)?;
+    reject_if_banned(&state.db, &principal.node_id).await?;
     let source = principal.node_id;
     let now_secs = now_ms() / 1000;
 
