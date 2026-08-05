@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Online VPS store-and-forward bridge.
- * Pushes opaque encrypted mesh payloads and pulls envelopes addressed to this node.
+ * Pushes opaque signed mesh payloads ([CryptoUtils.packSigned]); PRIVATE bodies are
+ * hybrid-encrypted before leave the device. Pull ingest reuses BLE verifyEnvelope rules.
  */
 class VpsBridge private constructor(
     private val context: Context,
@@ -271,40 +272,46 @@ class VpsBridge private constructor(
 
     private suspend fun performSync() {
         val jwt = meshJwtOrNull() ?: return
-        // 1) Push unsynced DB messages as opaque best-effort JSON fallback
-        //    (PRIVATE_IMAGE is pushed only via [pushPrivateImage] with JPEG bytes).
+        // 1) Push unsynced outbound as opaque signed mesh_bytes (same wire as BLE).
+        //    PRIVATE bodies are RSA-hybrid ciphertext — never plaintext Room JSON.
+        //    PRIVATE_IMAGE stays on [pushPrivateImage] only.
         val unsynced = dao.getUnsyncedMessages()
             .filter { it.type != Message.TYPE_PRIVATE_IMAGE }
             .filter { it.senderId == myNodeId || it.isMine }
             .take(40)
         if (unsynced.isNotEmpty()) {
-            val envelopes = unsynced.map { msg ->
-                VpsEnvelope(
-                    id = msg.id,
-                    from = myNodeId,
-                    to = msg.targetId ?: "*",
-                    payloadB64 = Base64.encodeToString(
-                        json.encodeToString(msg).toByteArray(Charsets.UTF_8),
-                        Base64.NO_WRAP
-                    ),
-                    ts = msg.timestamp,
-                    kind = "message_json"
+            val envelopes = mutableListOf<VpsEnvelope>()
+            val syncedIds = mutableListOf<String>()
+            for (msg in unsynced) {
+                val bytes = prepareOpaqueMeshPayload(msg) ?: continue
+                envelopes.add(
+                    VpsEnvelope(
+                        id = msg.id,
+                        from = myNodeId,
+                        to = msg.targetId ?: "*",
+                        payloadB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                        ts = msg.timestamp,
+                        kind = "mesh_bytes"
+                    )
                 )
+                syncedIds.add(msg.id)
             }
-            val body = json.encodeToString(PushRequest(envelopes))
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-            val req = Request.Builder()
-                .url("${baseUrl()}/v1/push")
-                .post(body)
-                .header("X-Node-Id", myNodeId)
-                .header("Authorization", "Bearer $jwt")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    dao.markAsSynced(unsynced.map { it.id })
-                    reachable.set(true)
-                } else {
-                    reachable.set(false)
+            if (envelopes.isNotEmpty()) {
+                val body = json.encodeToString(PushRequest(envelopes))
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
+                val req = Request.Builder()
+                    .url("${baseUrl()}/v1/push")
+                    .post(body)
+                    .header("X-Node-Id", myNodeId)
+                    .header("Authorization", "Bearer $jwt")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        dao.markAsSynced(syncedIds)
+                        reachable.set(true)
+                    } else {
+                        reachable.set(false)
+                    }
                 }
             }
         }
@@ -337,6 +344,79 @@ class VpsBridge private constructor(
         }
     }
 
+    /**
+     * BLE-equivalent wire bytes for VPS store-and-forward.
+     * PRIVATE: hybrid RSA envelope in payload, then MeshEnvelopeCrypto sign.
+     * Returns null if we cannot encrypt yet (missing peer key) — leave unsynced.
+     */
+    private suspend fun prepareOpaqueMeshPayload(msg: Message): ByteArray? {
+        var wire = msg.copy(senderId = myNodeId)
+        if (wire.type == Message.TYPE_PRIVATE || wire.type == "PRIVATE") {
+            val target = wire.targetId
+            if (target.isNullOrBlank()) {
+                Log.w(TAG, "Skip VPS push PRIVATE ${wire.id}: no targetId")
+                return null
+            }
+            if (!com.blink.dtn.crypto.RsaUtils.looksLikePrivateEnvelope(wire.text)) {
+                val profile = dao.getProfileById(target)
+                val pub = profile?.publicKey.orEmpty()
+                if (pub.isBlank()) {
+                    Log.w(TAG, "Skip VPS push PRIVATE ${wire.id}: missing recipient pubkey")
+                    return null
+                }
+                val enc = com.blink.dtn.crypto.RsaUtils.encryptAsymmetric(wire.text, pub)
+                if (enc.isEmpty()) {
+                    Log.w(TAG, "Skip VPS push PRIVATE ${wire.id}: encrypt failed")
+                    return null
+                }
+                wire = wire.copy(text = enc)
+            }
+        }
+        return try {
+            com.blink.dtn.crypto.CryptoUtils.packSigned(
+                com.blink.dtn.ble.NetworkPacket.fromMessage(wire)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "packSigned failed for ${msg.id}: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Same trust gate as BLE [com.blink.dtn.ble.BleIngressHandler.verifyEnvelope]:
+     * senderId ↔ pubkey binding + MeshEnvelopeCrypto signature.
+     */
+    private suspend fun verifyInboundMeshPacket(
+        packet: com.blink.dtn.ble.NetworkPacket
+    ): Boolean {
+        val pubFromIdentity = if (
+            packet.type == "IDENTITY_ANNOUNCEMENT" || packet.type == "SYSTEM_PROFILE"
+        ) {
+            packet.payload.split("|").getOrNull(2).orEmpty()
+        } else {
+            ""
+        }
+        val profileKey = dao.getProfileById(packet.senderId)?.publicKey.orEmpty()
+        val pubKey = when {
+            pubFromIdentity.isNotBlank() -> pubFromIdentity
+            profileKey.isNotBlank() -> profileKey
+            else -> ""
+        }
+        if (pubKey.isBlank()) {
+            Log.w(TAG, "No pubkey to verify VPS packet from ${packet.senderId} type=${packet.type}")
+            return packet.type == "IDENTITY_REQUEST"
+        }
+        if (!com.blink.dtn.crypto.MeshEnvelopeCrypto.senderMatchesKey(packet.senderId, pubKey)) {
+            Log.w(TAG, "senderId/key mismatch on VPS ingest ${packet.senderId}")
+            return false
+        }
+        val ok = com.blink.dtn.crypto.MeshEnvelopeCrypto.verify(packet, pubKey)
+        if (!ok) {
+            Log.w(TAG, "Bad mesh envelope signature on VPS ingest from ${packet.senderId}")
+        }
+        return ok
+    }
+
     private suspend fun ingestEnvelope(env: VpsEnvelope) {
         if (dao.hasSeenPacket(env.id)) return
         dao.rememberSeenPacket(env.id)
@@ -351,6 +431,11 @@ class VpsBridge private constructor(
                     json.decodeFromString<PrivateImagePayload>(String(raw, Charsets.UTF_8))
                 }.getOrNull() ?: return
                 if (payload.to != myNodeId && payload.to.isNotBlank()) return
+                // Envelope `from` is JWT-bound on server; reject JSON spoof of sender.
+                if (payload.from.isNotBlank() && payload.from != env.from) {
+                    Log.w(TAG, "Dropped private_image spoof: json.from=${payload.from} env.from=${env.from}")
+                    return
+                }
                 val jpeg = try {
                     Base64.decode(payload.imageB64, Base64.DEFAULT)
                 } catch (_: Exception) {
@@ -362,7 +447,7 @@ class VpsBridge private constructor(
                 val msg = Message(
                     id = payload.id,
                     type = Message.TYPE_PRIVATE_IMAGE,
-                    senderId = payload.from,
+                    senderId = env.from,
                     senderNick = payload.senderNick,
                     targetId = payload.to.ifBlank { myNodeId },
                     text = payload.caption.ifBlank { "📷" },
@@ -378,22 +463,41 @@ class VpsBridge private constructor(
                 // No mesh relay for photos.
             }
             "message_json" -> {
+                // Legacy kind: still may exist on VPS. Never trust blindly —
+                // require MeshEnvelopeCrypto + env.from == senderId, then mesh ingress.
                 val msg = runCatching {
                     json.decodeFromString<Message>(String(raw, Charsets.UTF_8))
                 }.getOrNull() ?: return
-                if (msg.type == Message.TYPE_PRIVATE_IMAGE) {
-                    // Image bytes missing in JSON fallback — ignore.
+                if (msg.type == Message.TYPE_PRIVATE_IMAGE) return
+                if (msg.senderId.isBlank() || msg.senderId != env.from) {
+                    Log.w(
+                        TAG,
+                        "Dropped message_json spoof: senderId=${msg.senderId} env.from=${env.from}"
+                    )
                     return
                 }
-                msg.isBridgeSynced = true
-                dao.insertMessageWithConversation(msg)
-                if (msg.ttl > 1) {
-                    msg.ttl = msg.ttl - 1
-                    bleMeshManager.enqueueMessage(msg)
+                val packet = com.blink.dtn.ble.NetworkPacket.fromMessage(msg)
+                if (!verifyInboundMeshPacket(packet)) {
+                    Log.w(TAG, "Dropped message_json without valid mesh signature id=${msg.id}")
+                    return
+                }
+                if ((packet.type == Message.TYPE_PRIVATE || packet.type == "PRIVATE") &&
+                    !com.blink.dtn.crypto.RsaUtils.looksLikePrivateEnvelope(packet.payload)
+                ) {
+                    Log.w(TAG, "Dropped plaintext PRIVATE over VPS bridge id=${msg.id}")
+                    return
+                }
+                try {
+                    // Re-enter the same verify+handle path as BLE (signature checked again).
+                    bleMeshManager.injectEncryptedPayload(
+                        json.encodeToString(packet).toByteArray(Charsets.UTF_8)
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "message_json inject failed: ${e.message}")
                 }
             }
             else -> {
-                // Opaque encrypted NetworkPacket bytes → mesh ingress
+                // Opaque signed NetworkPacket bytes → mesh ingress (verify inside).
                 try {
                     bleMeshManager.injectEncryptedPayload(raw)
                 } catch (e: Exception) {
