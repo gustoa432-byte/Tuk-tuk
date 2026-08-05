@@ -162,11 +162,13 @@ echo "POST /v1/oracle/hint (no JWT) -> ${code_oracle_hint} (expect 401)"
 cat /tmp/tuktuk_oracle_hint.json 2>/dev/null || true
 echo
 
+# Do NOT send a real OTP: SMTP is live (Yandex) and example.com rejects mail (nullMX bounce).
+# Invalid address proves the route is mounted without triggering lettre/SMTP.
 code_send="$(curl -sS -o /tmp/tuktuk_auth_send.json -w '%{http_code}' \
   -X POST "${BASE}/auth/email/send" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"deploy-smoke@example.com"}')"
-echo "POST /auth/email/send -> ${code_send}"
+  -d '{"email":"not-an-email"}')"
+echo "POST /auth/email/send (invalid) -> ${code_send} (expect 400)"
 cat /tmp/tuktuk_auth_send.json 2>/dev/null || true
 echo
 
