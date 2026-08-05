@@ -187,11 +187,16 @@ internal class BleRelayEngine(
      */
     private fun qosPriority(msg: Message): Int {
         if (msg.isAck) return 0
+        // In Crowd mode, deprioritize identity storms so short PUBLIC/SOS DTN can breathe.
+        val crowd = MeshDutyPrefs.isCrowd()
         return when (msg.type) {
             "IDENTITY_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT",
-            "IDENTITY_REQUEST", "SYSTEM_PROFILE", "UPDATE_REQUEST" -> 0
-            "PRIVATE" -> 2      // PRIVATE always mid-priority regardless of room
-            "PUBLIC", "SYSTEM_ANNOUNCEMENT" -> MeshRoom.priority(msg.room)
+            "IDENTITY_REQUEST", "SYSTEM_PROFILE", "UPDATE_REQUEST" -> if (crowd) 3 else 0
+            "PRIVATE" -> 2
+            "PUBLIC", "SYSTEM_ANNOUNCEMENT" -> {
+                val roomPri = MeshRoom.priority(msg.room)
+                if (crowd && roomPri == 1) 0 else roomPri // SOS first in crowd
+            }
             else -> 2
         }
     }

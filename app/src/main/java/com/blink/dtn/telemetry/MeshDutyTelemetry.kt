@@ -31,6 +31,12 @@ object MeshDutyTelemetry {
     private val gattConnectOk = AtomicLong(0)
     private val gattConnectFail = AtomicLong(0)
     private val budgetDownshifts = AtomicLong(0)
+    private val scanPeersPeak = AtomicLong(0)
+    private val crowdFramesRx = AtomicLong(0)
+    private val crowdFramesTx = AtomicLong(0)
+    private val crowdFramesForwarded = AtomicLong(0)
+    private val crowdAutoSwitches = AtomicLong(0)
+    private val denseWindowPeers = AtomicLong(0)
 
     private val batterySamples = CopyOnWriteArrayList<BatterySample>()
     private val downshiftLog = CopyOnWriteArrayList<BudgetDownshiftEvent>()
@@ -127,6 +133,36 @@ object MeshDutyTelemetry {
         publish()
     }
 
+    fun noteScanPeer(windowUnique: Int) {
+        denseWindowPeers.set(windowUnique.toLong())
+        while (true) {
+            val cur = scanPeersPeak.get()
+            if (windowUnique.toLong() <= cur) break
+            if (scanPeersPeak.compareAndSet(cur, windowUnique.toLong())) break
+        }
+        publish()
+    }
+
+    fun noteCrowdFrameRx() {
+        crowdFramesRx.incrementAndGet()
+        publish()
+    }
+
+    fun noteCrowdFrameTx() {
+        crowdFramesTx.incrementAndGet()
+        publish()
+    }
+
+    fun noteCrowdFrameForward() {
+        crowdFramesForwarded.incrementAndGet()
+        publish()
+    }
+
+    fun noteCrowdAutoSwitch() {
+        crowdAutoSwitches.incrementAndGet()
+        publish()
+    }
+
     fun sampleBatteryOnce(context: Context) {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             ?: return
@@ -178,6 +214,12 @@ object MeshDutyTelemetry {
             gattConnectOk = gattConnectOk.get(),
             gattConnectFail = gattConnectFail.get(),
             budgetDownshifts = budgetDownshifts.get(),
+            scanPeersPeak = scanPeersPeak.get(),
+            denseWindowPeers = denseWindowPeers.get(),
+            crowdFramesRx = crowdFramesRx.get(),
+            crowdFramesTx = crowdFramesTx.get(),
+            crowdFramesForwarded = crowdFramesForwarded.get(),
+            crowdAutoSwitches = crowdAutoSwitches.get(),
             batterySamples = samples,
             batteryDrainPct = drainPct,
             recentDownshifts = downshiftLog.toList().takeLast(12)
@@ -214,6 +256,12 @@ data class DutySnapshot(
     val gattConnectOk: Long = 0,
     val gattConnectFail: Long = 0,
     val budgetDownshifts: Long = 0,
+    val scanPeersPeak: Long = 0,
+    val denseWindowPeers: Long = 0,
+    val crowdFramesRx: Long = 0,
+    val crowdFramesTx: Long = 0,
+    val crowdFramesForwarded: Long = 0,
+    val crowdAutoSwitches: Long = 0,
     val batterySamples: List<BatterySample> = emptyList(),
     val batteryDrainPct: Int? = null,
     val recentDownshifts: List<BudgetDownshiftEvent> = emptyList()

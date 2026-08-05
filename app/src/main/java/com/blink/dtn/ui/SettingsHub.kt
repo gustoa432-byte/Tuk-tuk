@@ -326,6 +326,7 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
             when (dutyPreset) {
                 com.blink.dtn.ble.MeshDutyPreset.ECONOMY -> S.modeEconomy(lang)
                 com.blink.dtn.ble.MeshDutyPreset.MAX -> S.modeMax(lang)
+                com.blink.dtn.ble.MeshDutyPreset.CROWD -> S.modeCrowd(lang)
                 else -> S.modeBalance(lang)
             },
             color = TextSecondary,

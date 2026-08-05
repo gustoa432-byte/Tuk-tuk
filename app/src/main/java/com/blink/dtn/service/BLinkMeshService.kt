@@ -59,6 +59,7 @@ class BLinkMeshService : Service() {
         com.blink.dtn.telemetry.MeshDutyTelemetry.init(this)
         com.blink.dtn.telemetry.MeshDutyTelemetry.startBatteryReceiver(this)
         com.blink.dtn.ble.MeshDutyPrefs.init(this)
+        com.blink.dtn.crowd.EventRoomStore.init(this)
 
         runCatching {
             val transports = mutableListOf<com.blink.dtn.transport.MeshTransport>(

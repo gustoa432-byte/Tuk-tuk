@@ -254,6 +254,44 @@ object S {
         "Balance between discovery and battery."
     else
         "Баланс обнаружения и батареи."
+    fun modeCrowd(lang: String) = if (lang == LANG_EN)
+        "Stadium mode — short frames, ruthless peer TTL, tiny GATT."
+    else
+        "Режим стадиона — короткие кадры, жёсткий TTL соседей, мало GATT."
+
+    fun crowdTitle(lang: String) = if (lang == LANG_EN) "Nearby / Crowd" else "Рядом / Толпа"
+    fun crowdSubtitle(lang: String) = if (lang == LANG_EN)
+        "Short messages in dense air. VPS still builds contacts & Oracle hints."
+    else
+        "Короткие сообщения в плотном эфире. VPS по-прежнему для контактов и Оракула."
+    fun crowdDensity(lang: String, window: Int, peak: Int) = if (lang == LANG_EN)
+        "Dense window: $window advertisers · peak $peak"
+    else
+        "Плотность: $window реклам в окне · пик $peak"
+    fun crowdEnable(lang: String) = if (lang == LANG_EN) "Crowd on" else "Толпа вкл"
+    fun crowdDisable(lang: String) = if (lang == LANG_EN) "Crowd off" else "Толпа выкл"
+    fun crowdModeOn(lang: String) = if (lang == LANG_EN) "Crowd radio on (4h)" else "Режим Толпа включён (4ч)"
+    fun crowdModeOff(lang: String) = if (lang == LANG_EN) "Back to Normal duty" else "Снова обычный режим"
+    fun crowdRoomHint(lang: String) = if (lang == LANG_EN) "Event title…" else "Название события…"
+    fun crowdCreateRoom(lang: String) = if (lang == LANG_EN) "Create offline room" else "Создать офлайн-комнату"
+    fun crowdRoomCreated(lang: String) = if (lang == LANG_EN) "Room ready — share QR later" else "Комната готова"
+    fun crowdRoomActive(lang: String, title: String, id: String) =
+        if (lang == LANG_EN) "Room «$title» · $id" else "Комната «$title» · $id"
+    fun crowdLeaveRoom(lang: String) = if (lang == LANG_EN) "Leave room" else "Выйти из комнаты"
+    fun crowdAnchorStart(lang: String) = if (lang == LANG_EN) "iPhone Wi‑Fi anchor" else "Якорь Wi‑Fi для iPhone"
+    fun crowdAnchorStop(lang: String) = if (lang == LANG_EN) "Stop anchor" else "Остановить якорь"
+    fun crowdAnchorOn(lang: String, url: String) =
+        if (lang == LANG_EN) "Anchor on · $url" else "Якорь включён · $url"
+    fun crowdAnchorOff(lang: String) = if (lang == LANG_EN) "Anchor stopped" else "Якорь выключен"
+    fun crowdAnchorHint(lang: String, url: String) = if (lang == LANG_EN)
+        "Hotspot this phone → open $url in Safari (PWA, no App Store)."
+    else
+        "Раздайте Wi‑Fi с этого телефона → в Safari откройте $url (PWA, без App Store)."
+    fun crowdPresence(lang: String) = if (lang == LANG_EN) "Ping" else "Пинг"
+    fun crowdComposeHint(lang: String) = if (lang == LANG_EN) "Short nearby text…" else "Короткий текст рядом…"
+    fun crowdSend(lang: String) = if (lang == LANG_EN) "Send nearby" else "Отправить рядом"
+    fun hubCrowd(lang: String) = if (lang == LANG_EN) "Crowd" else "Толпа"
+
     fun langLabel(lang: String) = if (lang == LANG_EN) "Language" else "Язык"
 
     // Settings

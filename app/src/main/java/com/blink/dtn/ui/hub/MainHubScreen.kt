@@ -36,6 +36,7 @@ private val PillActive = Color(0xFF2A2A2A)
 
 enum class HubPage {
     Radar,
+    Crowd,
     Courier,
     Chronicle
 }
@@ -71,6 +72,7 @@ fun MainHubScreen(
         ) { page ->
             when (HubPage.entries[page]) {
                 HubPage.Radar -> RadarTab(viewModel)
+                HubPage.Crowd -> CrowdTab(viewModel)
                 HubPage.Courier -> CourierTab(viewModel)
                 HubPage.Chronicle -> ChronicleTab(viewModel)
             }
@@ -101,6 +103,7 @@ fun MainHubScreen(
                     Text(
                         text = when (page) {
                             HubPage.Radar -> S.hubRadar(lang)
+                            HubPage.Crowd -> S.hubCrowd(lang)
                             HubPage.Courier -> S.hubCourier(lang)
                             HubPage.Chronicle -> S.hubChronicle(lang)
                         },

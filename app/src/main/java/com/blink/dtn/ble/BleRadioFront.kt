@@ -53,6 +53,8 @@ internal class BleRadioFront(
         fun onNewPeerFromGatt(device: BluetoothDevice)
         fun onWriteValue(device: BluetoothDevice, value: ByteArray)
         fun showToast(msg: String)
+        /** Dense auto-switch flipped preset to CROWD — re-apply cadence. */
+        fun onCrowdAutoSwitched() {}
     }
 
     private val bluetoothManager =
@@ -236,7 +238,15 @@ internal class BleRadioFront(
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            com.blink.dtn.telemetry.PeerDirectory.noteBleDevice(result.device, result.rssi)
+            val mac = result.device.address
+            DenseCrowdDetector.noteAdvertiser(mac)
+            if (DenseCrowdDetector.maybeAutoSwitch(context)) {
+                deps.onCrowdAutoSwitched()
+            }
+            // In crowd mode skip PeerDirectory MAC persist storm — only verified nodes later.
+            if (!MeshDutyPrefs.isCrowd()) {
+                com.blink.dtn.telemetry.PeerDirectory.noteBleDevice(result.device, result.rssi)
+            }
             if (deps.noteDiscovered(result.device)) {
                 deps.onNewPeerFromScan(result.device)
             }

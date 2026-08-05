@@ -924,6 +924,11 @@ class BLinkViewModel(
     fun currentDutyPreset(): com.blink.dtn.ble.MeshDutyPreset =
         bleMeshManager.currentDutyPreset()
 
+    /** Stadium / nearby short frame (Crowd plane). */
+    fun sendCrowd(kind: Byte, text: String) {
+        bleMeshManager.sendCrowdMessage(kind, text)
+    }
+
     val nearbyUpdate = com.blink.dtn.update.VersionGossip.nearbyUpdate
 
     fun dismissNearbyUpdate() {

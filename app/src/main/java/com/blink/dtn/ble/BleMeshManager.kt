@@ -284,7 +284,9 @@ class BleMeshManager private constructor(
             }
             override fun onNewPeerFromScan(device: BluetoothDevice) {
                 triggerRelay()
-                maybeAnnounceIdentity(device.address)
+                if (!MeshDutyPrefs.isCrowd()) {
+                    maybeAnnounceIdentity(device.address)
+                }
             }
             override fun onNewPeerFromGatt(device: BluetoothDevice) {
                 // Stable connect at radio layer — identity handshake follows via profile broadcast.
@@ -295,8 +297,20 @@ class BleMeshManager private constructor(
                 handleIncomingWrite(device, value)
             }
             override fun showToast(msg: String) = this@BleMeshManager.showToast(msg)
+            override fun onCrowdAutoSwitched() {
+                applyDutyPreset(MeshDutyPreset.CROWD)
+                showToast("Толпа: плотная сеть рядом")
+            }
         }
     )
+
+    private val crowdPlane by lazy {
+        CrowdPlane(
+            myNodeId = myUniqueNodeId,
+            scope = { scope },
+            broadcastRaw = { bytes -> broadcastCrowdFrame(bytes) }
+        )
+    }
 
     private val keyExchange = BleKeyExchangeMaintenance(
         dao = dao,
@@ -367,6 +381,7 @@ class BleMeshManager private constructor(
     /** Throttle IDENTITY_ANNOUNCEMENT storms on dense scans (item #18). */
     private val lastIdentityAnnounceAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private fun maybeAnnounceIdentity(peerMac: String) {
+        if (MeshDutyPrefs.isCrowd()) return
         val now = System.currentTimeMillis()
         val prev = lastIdentityAnnounceAt[peerMac] ?: 0L
         if (now - prev < 30_000L) return
@@ -376,6 +391,24 @@ class BleMeshManager private constructor(
         if (now - lastGlobal < 5_000L) return
         lastIdentityAnnounceAt["*"] = now
         enqueueProfileBroadcast()
+    }
+
+    fun sendCrowdMessage(kind: Byte, text: String) {
+        crowdPlane.send(kind, text)
+    }
+
+    fun bridgeCrowdFromExternal(kind: Byte, text: String, fromHash: Int) {
+        crowdPlane.bridgeExternal(kind, text, fromHash)
+    }
+
+    private suspend fun broadcastCrowdFrame(bytes: ByteArray) {
+        val devices = peers.snapshot()
+        if (devices.isEmpty()) return
+        val id = "crowd-${System.currentTimeMillis()}"
+        val cap = MeshDutyPrefs.cadence().maxPeersPerBatch.coerceAtLeast(1)
+        devices.shuffled().take(cap).forEach { device ->
+            runCatching { gattClientTx.send(device, bytes, id) }
+        }
     }
 
     companion object {
@@ -399,6 +432,11 @@ class BleMeshManager private constructor(
                     myUniqueNodeId = myUniqueNodeId
                 ).also { INSTANCE = it }
             }
+        }
+
+        /** No-op if mesh service has not created the singleton yet. */
+        fun tryBridgeCrowd(kind: Byte, text: String, fromHash: Int) {
+            INSTANCE?.bridgeCrowdFromExternal(kind, text, fromHash)
         }
     }
 
@@ -769,6 +807,10 @@ class BleMeshManager private constructor(
 
     private fun handleIncomingWrite(device: BluetoothDevice, value: ByteArray) {
         val assembledValue = reassembler.ingest(value) ?: return
+        if (CrowdFrame.looksLike(assembledValue)) {
+            crowdPlane.onRawIngress(assembledValue)
+            return
+        }
         val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: return
         val decoded = ingress.decodeWirePacket(jsonString)
         scope.launch(Dispatchers.IO) {
