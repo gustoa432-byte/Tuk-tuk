@@ -8,7 +8,7 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::moderation::reject_if_banned;
-use crate::oracle::auth::require_node;
+use crate::oracle::auth::require_active_node;
 use crate::rate_limit::client_ip;
 use crate::state::{AppError, AppState};
 
@@ -35,7 +35,7 @@ pub async fn upload(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let ip = client_ip(&headers);
     state

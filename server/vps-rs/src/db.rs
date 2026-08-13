@@ -19,7 +19,10 @@ pub async fn init_schema(conn: &Connection) -> Result<(), libsql::Error> {
             receiver_id  TEXT,
             payload      TEXT NOT NULL,
             kind         TEXT NOT NULL DEFAULT 'mesh_bytes',
-            created_at   INTEGER NOT NULL
+            created_at   INTEGER NOT NULL,
+            -- ms when the addressee pulled it; 0 = still undelivered.
+            -- Delivered rows are dropped quickly (see mesh::prune_old_envelopes).
+            delivered_at INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_envelopes_created_at
@@ -27,6 +30,9 @@ pub async fn init_schema(conn: &Connection) -> Result<(), libsql::Error> {
 
         CREATE INDEX IF NOT EXISTS idx_envelopes_pull
             ON envelopes(created_at, receiver_id);
+
+        CREATE INDEX IF NOT EXISTS idx_envelopes_mailbox
+            ON envelopes(receiver_id, created_at);
 
         CREATE TABLE IF NOT EXISTS users (
             id              TEXT PRIMARY KEY NOT NULL,
@@ -52,8 +58,45 @@ pub async fn init_schema(conn: &Connection) -> Result<(), libsql::Error> {
             code        TEXT NOT NULL,
             expires_at  INTEGER NOT NULL
         );
+
+        -- Every BLE key that ever authenticated for an account.
+        -- Re-auth adds a device row; it never silently rewrites
+        -- users.public_ble_key (that would be an identity takeover path).
+        CREATE TABLE IF NOT EXISTS user_devices (
+            user_id         TEXT NOT NULL,
+            public_ble_key  TEXT NOT NULL,
+            node_id         TEXT NOT NULL DEFAULT '',
+            first_seen      INTEGER NOT NULL,
+            last_seen       INTEGER NOT NULL,
+            PRIMARY KEY (user_id, public_ble_key)
+        );
+
+        -- Revocation hook for issued JWTs (single token by jti).
+        CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti         TEXT PRIMARY KEY NOT NULL,
+            user_id     TEXT NOT NULL DEFAULT '',
+            revoked_at  INTEGER NOT NULL
+        );
+
+        -- "Log out everywhere": rejects any token issued before not_before.
+        -- Covers legacy tokens that carry no jti at all.
+        CREATE TABLE IF NOT EXISTS token_epochs (
+            user_id     TEXT PRIMARY KEY NOT NULL,
+            not_before  INTEGER NOT NULL
+        );
         "#,
     )
     .await?;
+
+    // Additive columns for databases created before these fields existed.
+    // libSQL has no "ADD COLUMN IF NOT EXISTS" — a duplicate column error is
+    // the expected no-op on an already-migrated deployment.
+    let _ = conn
+        .execute(
+            "ALTER TABLE envelopes ADD COLUMN delivered_at INTEGER NOT NULL DEFAULT 0",
+            (),
+        )
+        .await;
+
     Ok(())
 }

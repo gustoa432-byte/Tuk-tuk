@@ -8,21 +8,18 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * VPS endpoint config (device-local).
- * Default: HTTPS via nip.io → FirstByte node (see scripts/setup-https.sh).
+ *
+ * There is **no shipped default gateway**: a fresh install talks to nobody until
+ * the user enters a URL. The app is fully usable in that state — BLE mesh is the
+ * primary transport and the gateway is an optional extra. A previously stored
+ * URL is kept as-is, so existing installs do not silently lose their gateway.
  */
 object VpsConfig {
     private const val PREFS = "blink_prefs"
     private const val KEY_BASE_URL = "vps_base_url"
 
-    /** Shipped default: TLS at Nginx, host via free nip.io DNS. */
-    const val DEFAULT_BASE_URL = "https://157.228.136.239.nip.io"
-
-    private val LEGACY_DEFAULTS = setOf(
-        "http://157.228.136.239:8080",
-        "https://node.tuktuk.dev",
-        "http://node.tuktuk.dev",
-        "https://node.tuktuk.dev:443"
-    )
+    /** No gateway configured. Kept as a named constant for readability. */
+    const val DEFAULT_BASE_URL = ""
 
     private val _baseUrl = MutableStateFlow("")
     val baseUrl: StateFlow<String> = _baseUrl
@@ -33,15 +30,7 @@ object VpsConfig {
             ?.trim()
             .orEmpty()
             .trimEnd('/')
-        val effective = when {
-            stored.isBlank() -> DEFAULT_BASE_URL
-            stored in LEGACY_DEFAULTS -> DEFAULT_BASE_URL
-            else -> stored
-        }
-        if (stored != effective) {
-            prefs.edit().putString(KEY_BASE_URL, effective).apply()
-        }
-        _baseUrl.value = effective
+        _baseUrl.value = stored
     }
 
     fun setBaseUrl(context: Context, url: String) {
@@ -55,6 +44,9 @@ object VpsConfig {
         if (_baseUrl.value.isBlank()) init(context)
         return _baseUrl.value.isNotBlank()
     }
+
+    /** True when the user removed / never set a gateway — app stays fully usable. */
+    fun isGatewayDisabled(context: Context): Boolean = !isConfigured(context)
 
     fun isOnline(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

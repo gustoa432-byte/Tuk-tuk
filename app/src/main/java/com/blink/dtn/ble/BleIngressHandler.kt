@@ -27,6 +27,9 @@ internal class BleIngressHandler(
     private val rxWindows = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
     private val identityRequestWindows = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
 
+    /** One re-ACK per message per minute — see [reAckDuplicate]. */
+    private val reAckWindows = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
+
     data class DecodedWirePacket(
         val packet: NetworkPacket,
         val message: Message,
@@ -134,10 +137,13 @@ internal class BleIngressHandler(
 
             val now = System.currentTimeMillis()
 
-            if (!deps.markSeen(dedupKey)) {
-                return@launch
-            }
-            if (dao.hasSeenPacket(dedupKey)) {
+            // Dedup is per packet id, so a custody re-send of the *same* parcel is
+            // dropped here. That is correct for the payload (never store it twice)
+            // but it used to also swallow the ACK: if the first ACK was lost on the
+            // way back, the sender kept re-sending into silence until the 48h limit.
+            // A duplicate addressed to us therefore re-emits the receipt.
+            if (!deps.markSeen(dedupKey) || dao.hasSeenPacket(dedupKey)) {
+                reAckDuplicate(packet)
                 return@launch
             }
             dao.rememberSeenPacket(dedupKey, now)
@@ -353,7 +359,12 @@ internal class BleIngressHandler(
         }
 
         val ackedMsg = dao.getMessageById(ackedMessageId) ?: return true
-        if (!AckPolicy.acceptDeliveryAck(ackedMsg.targetId, packet.senderId)) {
+        if (!AckPolicy.acceptDeliveryAck(
+                originalTargetId = ackedMsg.targetId,
+                ackSenderId = packet.senderId,
+                requireTarget = ackedMsg.type == "PRIVATE"
+            )
+        ) {
             Log.w(
                 "DTN",
                 "Rejected ACK forgery id=$ackedMessageId from=${packet.senderId} expected=${ackedMsg.targetId}"
@@ -425,8 +436,9 @@ internal class BleIngressHandler(
             existingProfile?.publicKey.isNullOrEmpty() -> pubKey
             existingProfile?.publicKey == pubKey -> pubKey
             else -> {
-                Log.w("DTN", "Public key CHANGED for Node: ${packet.senderId}, accepting new key")
-                pubKey
+                Log.w("DTN", "Public key CHANGED for Node: ${packet.senderId} — keeping previous key until QR confirm")
+                KeyChangeAlerts.notify(packet.senderId)
+                existingProfile!!.publicKey
             }
         }
         // Preserve local alias, trust, and gifts — identity packets only refresh nick/key/version.
@@ -504,10 +516,11 @@ internal class BleIngressHandler(
         }
 
         if (trustedPublicKey.isNotEmpty()) {
-            val pendingMsgs = dao.getMessagesPendingKeyForUser(packet.senderId)
-            for (msg in pendingMsgs) {
-                deps.enqueueMessage(msg)
-            }
+            // Shared with BleKeyExchangeMaintenance — one release path, not two.
+            PendingKeyFlush.flushPeer(
+                PendingKeyFlush.store(dao),
+                packet.senderId
+            ) { deps.enqueueMessage(it) }
         }
     }
 
@@ -614,30 +627,53 @@ internal class BleIngressHandler(
         com.blink.dtn.ui.GamificationStore.noteReceived()
         deps.notifyIncoming(finalMsg.copy(text = plainText))
 
+        allowReAck(packet.id) // first receipt owns the throttle slot
+        sendAckFor(packet.id, packet.senderId)
+    }
+
+    /**
+     * Second (and later) copy of a PRIVATE parcel addressed to us: the payload is
+     * already stored, but the sender clearly never got our receipt. Re-send it,
+     * throttled per message so a chatty courier cannot turn this into an ACK storm.
+     */
+    private suspend fun reAckDuplicate(packet: Message) {
+        if (packet.isAck) return
+        if (packet.targetId != myNodeId) return
+        if (packet.type != Message.TYPE_PRIVATE && packet.type != "PRIVATE") return
+        if (packet.senderId.isBlank() || packet.senderId == myNodeId) return
+        if (dao.getMessageById(packet.id) == null) return
+        if (!allowReAck(packet.id)) return
+        sendAckFor(packet.id, packet.senderId)
+    }
+
+    private fun sendAckFor(originalMessageId: String, to: String) {
         val ack = Message(
             id = com.blink.dtn.utils.MeshIdGenerator.next(myNodeId),
             type = "ACK",
             senderId = myNodeId,
             senderNick = deps.currentNick(),
-            targetId = packet.senderId,
+            targetId = to,
             text = "",
-            originalMessageId = packet.id,
+            originalMessageId = originalMessageId,
             timestamp = System.currentTimeMillis(),
             ttl = 7,
             isAck = true
         )
         deps.trace(
-            packet.id,
+            originalMessageId,
             com.blink.dtn.telemetry.TraceStages.ACK_GENERATED,
-            com.blink.dtn.telemetry.detailsOf("ackId" to ack.id, "to" to packet.senderId)
+            com.blink.dtn.telemetry.detailsOf("ackId" to ack.id, "to" to to)
         )
         deps.enqueueMessage(ack)
         deps.trace(
-            packet.id,
+            originalMessageId,
             com.blink.dtn.telemetry.TraceStages.ACK_QUEUED,
             com.blink.dtn.telemetry.detailsOf("ackId" to ack.id)
         )
     }
+
+    private fun allowReAck(messageId: String): Boolean =
+        allowWindow(reAckWindows, messageId, max = 1, windowMs = 60_000L)
 
     private fun allowRx(key: String): Boolean =
         allowWindow(rxWindows, key, max = 20, windowMs = 2_000L)

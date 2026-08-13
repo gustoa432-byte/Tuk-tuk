@@ -215,6 +215,38 @@ abstract class BLinkDao {
     @Query("UPDATE messages SET is_bridge_synced = :isSynced WHERE id IN (:ids)")
     abstract suspend fun markAsSynced(ids: List<String>, isSynced: Boolean = true)
 
+    /**
+     * Single outbound set for the internet gateway: our own parcels that have
+     * not been handed to the gateway yet and are not already terminal
+     * (delivered / expired). Photos never go through the gateway.
+     */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE is_bridge_synced = 0
+          AND status IN (0, 1, 2, 3, 4)
+          AND type != 'PRIVATE_IMAGE'
+          AND (senderId = :myId OR is_mine = 1)
+        ORDER BY timestamp ASC
+        LIMIT :limit
+        """
+    )
+    abstract suspend fun getGatewayOutbox(myId: String, limit: Int = 40): List<Message>
+
+    /**
+     * The gateway accepted the parcel: that is a carrier hop, not delivery.
+     * Sets the same custody clock as a BLE neighbour handover.
+     */
+    @Transaction
+    open suspend fun markPushedToGateway(msgId: String, now: Long = System.currentTimeMillis()) {
+        val msg = getMessageById(msgId) ?: return
+        val next = MessageDeliverySm.applyAuto(msg.status, Message.STATUS_STORED_IN_NEIGHBOR)
+        if (next == Message.STATUS_STORED_IN_NEIGHBOR) {
+            updateMessageStatusAndCustody(msgId, next, now)
+        }
+        markAsSynced(listOf(msgId))
+    }
+
     @Query("DELETE FROM messages WHERE id = :msgId AND senderId != :myId AND targetId != :myId")
     abstract suspend fun deleteTransitMessage(msgId: String, myId: String)
 
@@ -253,6 +285,76 @@ abstract class BLinkDao {
 
     @Query("UPDATE messages SET status = :status, retryCount = :retryCount WHERE id = :msgId")
     abstract suspend fun updateMessageStatusAndRetryCount(msgId: String, status: Int, retryCount: Int)
+
+    // ── Custody bookkeeping ([CustodyPolicy]) ────────────────────────────────
+
+    @Query("UPDATE messages SET status = :status, custody_since = :since WHERE id = :msgId")
+    abstract suspend fun updateMessageStatusAndCustody(msgId: String, status: Int, since: Long)
+
+    @Query(
+        """
+        UPDATE messages
+        SET status = :status,
+            custody_since = 0,
+            custody_rounds = :rounds,
+            is_bridge_synced = 0
+        WHERE id = :msgId
+        """
+    )
+    abstract suspend fun updateMessageCustodyRequeue(msgId: String, status: Int, rounds: Int)
+
+    /**
+     * Enter neighbour/gateway custody. Applies [MessageDeliverySm] so a message
+     * that was already ACKed cannot be downgraded by a late TX result.
+     */
+    @Transaction
+    open suspend fun noteHandedToCarrier(msgId: String, now: Long = System.currentTimeMillis()) {
+        val msg = getMessageById(msgId) ?: return
+        val next = MessageDeliverySm.applyAuto(msg.status, Message.STATUS_STORED_IN_NEIGHBOR)
+        if (next == Message.STATUS_STORED_IN_NEIGHBOR) {
+            updateMessageStatusAndCustody(msgId, next, now)
+        }
+    }
+
+    /** Mark the start of an outbound attempt (IN_FLIGHT) for the stale sweep. */
+    @Transaction
+    open suspend fun noteOutboundAttempt(msgId: String, now: Long = System.currentTimeMillis()) {
+        val msg = getMessageById(msgId) ?: return
+        val next = MessageDeliverySm.applyAuto(msg.status, Message.STATUS_IN_FLIGHT)
+        if (next == Message.STATUS_IN_FLIGHT && msg.status != Message.STATUS_IN_FLIGHT) {
+            updateMessageStatusAndCustody(msgId, next, now)
+        }
+    }
+
+    /**
+     * Own outbound parcels that the custody sweep has to look at: waiting for an
+     * end-to-end ACK at a neighbour, or stuck mid-attempt.
+     */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE senderId = :myId
+          AND isAck = 0
+          AND status IN (1, 2)
+          AND type IN ('PRIVATE', 'PUBLIC')
+        ORDER BY timestamp ASC
+        LIMIT 400
+        """
+    )
+    abstract suspend fun getCustodyCandidates(myId: String): List<Message>
+
+    /** Own parcels that never reached a carrier and are past the hard age limit. */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE senderId = :myId
+          AND isAck = 0
+          AND status IN (0, 1, 2, 3, 4)
+          AND timestamp < :ageThreshold
+        LIMIT 400
+        """
+    )
+    abstract suspend fun getAgedOutOwnMessages(myId: String, ageThreshold: Long): List<Message>
 
     @Query("UPDATE messages SET text = :text, edited_at = :editedAt WHERE id = :msgId")
     abstract suspend fun updateMessageText(msgId: String, text: String, editedAt: Long)
@@ -307,6 +409,14 @@ abstract class BLinkDao {
     @Query("SELECT * FROM messages WHERE status = 4 AND targetId = :userId")
     abstract suspend fun getMessagesPendingKeyForUser(userId: String): List<Message>
 
+    /**
+     * PENDING_KEY → PENDING once the target's public key is known.
+     * Without this the rows stay at status 4 forever: [getQueuedMessages] only
+     * selects 0/1, so nothing would ever pick them up again.
+     */
+    @Query("UPDATE messages SET status = 0, custody_since = 0 WHERE status = 4 AND targetId = :userId")
+    abstract suspend fun releasePendingKeyMessages(userId: String)
+
     @Query("SELECT * FROM messages WHERE type = 'PRIVATE' AND targetId = :peerId AND senderId = :myId AND status IN (2, 3)")
     abstract suspend fun getUndeliveredPrivateToPeer(peerId: String, myId: String): List<Message>
 
@@ -325,7 +435,7 @@ abstract class BLinkDao {
         SELECT * FROM messages
         WHERE status IN (0, 1, 2, 4)
           AND isAck = 0
-          AND type IN ('PRIVATE', 'PRIVATE_IMAGE', 'PUBLIC')
+          AND type IN ('PRIVATE', 'PUBLIC')
         ORDER BY priority DESC, timestamp ASC
         """
     )

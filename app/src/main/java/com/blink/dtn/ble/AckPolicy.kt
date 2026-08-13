@@ -5,9 +5,20 @@ package com.blink.dtn.ble
  * original message had a target and the ACK sender is not that target.
  */
 object AckPolicy {
-    fun acceptDeliveryAck(originalTargetId: String?, ackSenderId: String): Boolean {
+    /**
+     * @param requireTarget true for PRIVATE: an end-to-end "delivered" claim is
+     *        only meaningful when the acked row actually has a destination, so a
+     *        missing/blank target must never be treated as "anyone may confirm".
+     *        PUBLIC keeps the permissive rule — its ACK only ever yields
+     *        neighbour custody, never DELIVERED_ACK.
+     */
+    fun acceptDeliveryAck(
+        originalTargetId: String?,
+        ackSenderId: String,
+        requireTarget: Boolean = false
+    ): Boolean {
         val expected = originalTargetId?.trim().orEmpty()
-        if (expected.isEmpty()) return true
+        if (expected.isEmpty()) return !requireTarget
         return expected == ackSenderId.trim()
     }
 

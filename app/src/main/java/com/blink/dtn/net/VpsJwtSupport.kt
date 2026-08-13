@@ -48,6 +48,31 @@ object VpsJwtSupport {
         }
     }
 
+    /**
+     * `exp` of a JWT in ms, or null when the token is unreadable.
+     * Claims are not verified here — this only drives proactive renewal, the
+     * server remains the authority on validity.
+     */
+    fun expiryMsOrNull(jwt: String): Long? {
+        val payload = jwt.split('.').getOrNull(1)?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val decoded = android.util.Base64.decode(
+                payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or
+                    android.util.Base64.NO_WRAP
+            )
+            val exp = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                .parseToJsonElement(String(decoded, Charsets.UTF_8))
+                .let { it as? kotlinx.serialization.json.JsonObject }
+                ?.get("exp")
+                ?.let { it as? kotlinx.serialization.json.JsonPrimitive }
+                ?.content
+                ?.toLongOrNull()
+                ?: return@runCatching null
+            exp * 1000L
+        }.getOrNull()
+    }
+
     suspend fun quietRefresh(context: Context): AuthResponse {
         refreshMutex.withLock {
             val result = AuthApi(context).refreshSession()

@@ -66,6 +66,15 @@ data class Message(
     @Transient @ColumnInfo(name = "media_path") val mediaPath: String? = null,
 
     /**
+     * Local-only: wall clock of the current outbound attempt — set when the parcel
+     * enters IN_FLIGHT and when a neighbour (or the gateway) takes custody.
+     * 0 = no attempt in progress. Drives [CustodyPolicy]; see [custodyRounds].
+     */
+    @Transient @ColumnInfo(name = "custody_since") val custodySince: Long = 0L,
+    /** Local-only: how many custody rounds this parcel already used ([CustodyPolicy.MAX_CUSTODY_ROUNDS]). */
+    @Transient @ColumnInfo(name = "custody_rounds") val custodyRounds: Int = 0,
+
+    /**
      * Parcel rarity / urgency ([MessagePriority]): 0 normal, 1 medium, 2 critical/SOS.
      * On the wire via [com.blink.dtn.ble.NetworkPacket.priority].
      */
@@ -92,6 +101,12 @@ data class Message(
         const val STATUS_PENDING_KEY = 4
         /** Cryptographic ACK from the destination [targetId]. Only this is "delivered". */
         const val STATUS_DELIVERED_ACK = 5
+        /**
+         * Honest TTL expiry: the parcel lived out its 48h age limit without an
+         * end-to-end ACK. Distinct from [STATUS_FAILED] ("could not hand it over"):
+         * this one *was* carried, nobody confirmed receipt in time.
+         */
+        const val STATUS_EXPIRED = 6
 
         const val TYPE_PRIVATE = "PRIVATE"
         const val TYPE_PRIVATE_IMAGE = "PRIVATE_IMAGE"

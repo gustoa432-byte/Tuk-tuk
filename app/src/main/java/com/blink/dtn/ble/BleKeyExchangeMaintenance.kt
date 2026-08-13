@@ -27,6 +27,7 @@ internal class BleKeyExchangeMaintenance(
     }
 
     private val requestBackoff = ConcurrentHashMap<String, Long>()
+    private val store = PendingKeyFlush.store(dao)
     private var job: Job? = null
 
     @Volatile
@@ -58,6 +59,11 @@ internal class BleKeyExchangeMaintenance(
     }
 
     private suspend fun tick() {
+        // Keys can arrive by routes that never touch mesh ingress (QR, VPS
+        // directory, /contacts/add). Release anything already unblocked first —
+        // same helper the IDENTITY ingress path uses.
+        PendingKeyFlush.flushAllKnownKeys(store) { deps.enqueueMessage(it) }
+
         val targets = dao.getPendingKeyTargets()
         val now = System.currentTimeMillis()
         val interval = intervalMs

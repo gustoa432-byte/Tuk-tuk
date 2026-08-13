@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tracing::{info, warn};
 
-use crate::jwt_util::{bearer_from_header, issue_token, verify_token};
+use crate::jwt_util::{
+    bearer_from_header, ensure_token_active, issue_token_with_ttl, revoke_all_for_user,
+    revoke_token, verify_token,
+};
 use crate::moderation::is_account_banned;
 use crate::node_id::derive_node_id;
 use crate::state::{now_ms, AppError, AppState};
@@ -37,6 +40,10 @@ pub struct EmailVerifyRequest {
     pub email: String,
     pub otp: String,
     pub public_ble_key: String,
+    /// Explicit opt-in to make this device's key the account's primary one.
+    /// Absent (old clients) = never rewrite an existing binding silently.
+    #[serde(default)]
+    pub rebind_primary: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +52,8 @@ pub struct TelegramAuthRequest {
     /// Raw `window.Telegram.WebApp.initData` query string.
     pub init_data: String,
     pub public_ble_key: String,
+    #[serde(default)]
+    pub rebind_primary: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,11 +152,12 @@ pub async fn email_verify(
         .execute("DELETE FROM email_otps WHERE email = ?1", params![email.clone()])
         .await?;
 
-    upsert_user_and_token(&state, "email", &email, &ble).await
+    upsert_user_and_token(&state, "email", &email, &ble, body.rebind_primary).await
 }
 
 pub async fn telegram_auth(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<TelegramAuthRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
     let token = state
@@ -155,13 +165,44 @@ pub async fn telegram_auth(
         .telegram_bot_token
         .as_ref()
         .ok_or_else(|| AppError::internal("telegram_bot_token_not_configured"))?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state.rate_limits.check_telegram_auth(&ip)?;
     let ble = body.public_ble_key.trim().to_string();
     if ble.is_empty() {
         return Err(AppError::bad("public_ble_key_required"));
     }
 
     let tg_user_id = verify_telegram_init_data(token, &body.init_data)?;
-    upsert_user_and_token(&state, "tg", &tg_user_id, &ble).await
+    upsert_user_and_token(&state, "tg", &tg_user_id, &ble, body.rebind_primary).await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogoutRequest {
+    /// Revoke every token of this account, not just the presented one.
+    #[serde(default)]
+    pub all_devices: bool,
+}
+
+/// `POST /auth/logout` — revocation hook for issued JWTs.
+/// Tokens without a `jti` (issued before revocation existed) can only be
+/// revoked account-wide, so that path is taken automatically for them.
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LogoutRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let token = bearer_from_header(auth)?;
+    let claims = verify_token(&state.cfg.jwt_secret, token)?;
+    if body.all_devices {
+        revoke_all_for_user(&state.db, &claims.sub).await?;
+    } else {
+        revoke_token(&state.db, &claims).await?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,6 +225,7 @@ pub async fn refresh(
         .and_then(|v| v.to_str().ok());
     let token = bearer_from_header(auth)?;
     let claims = verify_token(&state.cfg.jwt_secret, token)?;
+    ensure_token_active(&state.db, &claims).await?;
     let ip = crate::rate_limit::client_ip(&headers);
     state
         .rate_limits
@@ -218,20 +260,28 @@ pub async fn refresh(
     if ble.is_empty() {
         return Err(AppError::bad("public_ble_key_required"));
     }
-    // Hard bind: refresh cannot change the device key bound into the JWT / DB.
-    if ble != claims.public_ble_key.trim() || ble != stored_ble.trim() {
+    // Hard bind: refresh cannot change the device key bound into the JWT, so a
+    // stolen token can never rebind node_id.
+    if ble != claims.public_ble_key.trim() {
+        return Err(AppError::unauthorized("ble_key_rotation_requires_reauth"));
+    }
+    // It need not equal the account's *primary* key though: since re-auth stopped
+    // silently rewriting that, a reinstalled device holds a valid non-primary key
+    // and must still be able to renew. Any key we ever saw authenticate counts.
+    if ble != stored_ble.trim() && !is_known_device(&state, &claims.sub, &ble).await? {
         return Err(AppError::unauthorized("ble_key_rotation_requires_reauth"));
     }
 
     let node_id = derive_node_id(&ble)
         .map_err(|e| AppError::bad(format!("invalid_public_ble_key: {e}")))?;
-    let token = issue_token(
+    let token = issue_token_with_ttl(
         &state.cfg.jwt_secret,
         &claims.sub,
         &method,
-        &auth_id,
         &ble,
+        state.cfg.jwt_ttl_hours,
     )?;
+    touch_device(&state, &claims.sub, &ble, &node_id).await?;
 
     Ok(Json(AuthResponse {
         ok: true,
@@ -249,6 +299,7 @@ async fn upsert_user_and_token(
     method: &str,
     auth_id: &str,
     public_ble_key: &str,
+    rebind_primary: bool,
 ) -> Result<Json<AuthResponse>, AppError> {
     // Fail closed: key must self-certify before we touch users / issue JWT.
     let node_id = derive_node_id(public_ble_key)
@@ -258,23 +309,44 @@ async fn upsert_user_and_token(
     let mut existing = state
         .db
         .query(
-            "SELECT id FROM users WHERE auth_method = ?1 AND auth_id = ?2",
+            "SELECT id, public_ble_key FROM users WHERE auth_method = ?1 AND auth_id = ?2",
             params![method, auth_id],
         )
         .await?;
 
     let user_id = if let Some(row) = existing.next().await? {
         let id: String = row.get(0)?;
+        let stored_key: String = row.get(1)?;
         if is_account_banned(&state.db, &id).await? {
             return Err(AppError::forbidden("account_banned"));
         }
-        state
-            .db
-            .execute(
-                "UPDATE users SET public_ble_key = ?1 WHERE id = ?2",
-                params![public_ble_key, id.clone()],
-            )
-            .await?;
+        // Re-auth must not silently rebind the account's primary key: with an
+        // intercepted OTP that would hand the account's published identity to
+        // the attacker. The login itself still succeeds — the JWT is scoped to
+        // the key presented here, so a reinstall is never locked out; only the
+        // *published* binding (directory / contacts) needs an explicit opt-in.
+        let rewrite = stored_key.trim().is_empty()
+            || stored_key.trim() == public_ble_key.trim()
+            || rebind_primary;
+        if rewrite {
+            state
+                .db
+                .execute(
+                    "UPDATE users SET public_ble_key = ?1 WHERE id = ?2",
+                    params![public_ble_key, id.clone()],
+                )
+                .await?;
+            if rebind_primary && stored_key.trim() != public_ble_key.trim() {
+                // Explicit device change — old tokens for this account die with it.
+                revoke_all_for_user(&state.db, &id).await?;
+                warn!(user_id = %id, "primary BLE key rebound on explicit request");
+            }
+        } else {
+            info!(
+                user_id = %id,
+                "auth with a non-primary device key — primary binding left unchanged"
+            );
+        }
         id
     } else {
         let id = uuid::Uuid::new_v4().to_string();
@@ -295,18 +367,19 @@ async fn upsert_user_and_token(
         id
     };
 
-    let token = issue_token(
+    let token = issue_token_with_ttl(
         &state.cfg.jwt_secret,
         &user_id,
         method,
-        auth_id,
         public_ble_key,
+        state.cfg.jwt_ttl_hours,
     )?;
     // issue_token derives the same way — assert lockstep.
     let issued_node = crate::jwt_util::verify_token(&state.cfg.jwt_secret, &token)?.node_id;
     if issued_node != node_id {
         return Err(AppError::internal("node_id_derive_mismatch"));
     }
+    touch_device(state, &user_id, public_ble_key, &node_id).await?;
 
     Ok(Json(AuthResponse {
         ok: true,
@@ -317,6 +390,46 @@ async fn upsert_user_and_token(
         public_ble_key: public_ble_key.to_string(),
         node_id,
     }))
+}
+
+async fn is_known_device(
+    state: &AppState,
+    user_id: &str,
+    public_ble_key: &str,
+) -> Result<bool, AppError> {
+    let mut rows = state
+        .db
+        .query(
+            "SELECT 1 FROM user_devices WHERE user_id = ?1 AND public_ble_key = ?2 LIMIT 1",
+            params![user_id, public_ble_key],
+        )
+        .await?;
+    Ok(rows.next().await?.is_some())
+}
+
+/// Remember every device key that authenticated for an account, so dropping the
+/// silent primary-key rewrite does not lose multi-device information.
+async fn touch_device(
+    state: &AppState,
+    user_id: &str,
+    public_ble_key: &str,
+    node_id: &str,
+) -> Result<(), AppError> {
+    let now = now_ms();
+    state
+        .db
+        .execute(
+            r#"
+            INSERT INTO user_devices (user_id, public_ble_key, node_id, first_seen, last_seen)
+            VALUES (?1, ?2, ?3, ?4, ?4)
+            ON CONFLICT(user_id, public_ble_key) DO UPDATE SET
+                node_id = excluded.node_id,
+                last_seen = excluded.last_seen
+            "#,
+            params![user_id, public_ble_key, node_id, now],
+        )
+        .await?;
+    Ok(())
 }
 
 fn normalize_email(raw: &str) -> Result<String, AppError> {

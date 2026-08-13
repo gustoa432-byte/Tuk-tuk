@@ -70,5 +70,11 @@ data class AddContactRequest(val userId: String)
 data class AddContactResponse(
     val ok: Boolean = false,
     val userId: String = "",
-    val publicBleKey: String = ""
+    /**
+     * Empty while [pending]: the gateway only hands out a key once the other
+     * side added you back, so a bare UUID can no longer harvest identities.
+     */
+    val publicBleKey: String = "",
+    /** Request recorded, consent still missing. Older servers never send this. */
+    val pending: Boolean = false
 )

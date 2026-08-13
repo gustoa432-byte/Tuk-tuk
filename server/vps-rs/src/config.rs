@@ -17,6 +17,9 @@ pub struct Config {
     /// HMAC secret for signed ban lists (must match Android BuildConfig).
     pub banlist_hmac_secret: String,
     pub otp_dev_log: bool,
+    /// Access-token lifetime. Shorten once clients ≤ 0.1.116 are gone — they do
+    /// not refresh proactively, newer builds renew 48h before expiry.
+    pub jwt_ttl_hours: i64,
 }
 
 impl Config {
@@ -76,10 +79,34 @@ impl Config {
             otp_dev_log: std::env::var("TUKTUK_OTP_DEV_LOG")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            jwt_ttl_hours: std::env::var("TUKTUK_JWT_TTL_HOURS")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+                .filter(|h| *h > 0)
+                .unwrap_or(crate::jwt_util::DEFAULT_ACCESS_TTL_HOURS),
         }
     }
 
     pub fn smtp_ready(&self) -> bool {
         self.smtp_host.is_some() && self.smtp_from.is_some()
+    }
+
+    /// Deterministic config for handler tests — never reads the environment.
+    #[cfg(test)]
+    pub fn for_tests(jwt_secret: &str) -> Self {
+        Self {
+            jwt_secret: jwt_secret.to_string(),
+            smtp_host: None,
+            smtp_port: 587,
+            smtp_user: None,
+            smtp_pass: None,
+            smtp_from: None,
+            telegram_bot_token: None,
+            telegram_feedback_chat_id: None,
+            cors_origins: Vec::new(),
+            banlist_hmac_secret: "test-banlist".into(),
+            otp_dev_log: true,
+            jwt_ttl_hours: crate::jwt_util::DEFAULT_ACCESS_TTL_HOURS,
+        }
     }
 }

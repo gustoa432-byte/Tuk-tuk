@@ -54,6 +54,12 @@ internal class BleRelayEngine(
         suspend fun deleteOldestNonSosMessages(n: Int) {}
         suspend fun isSenderBlocked(userId: String, nick: String): Boolean = false
         suspend fun deleteQueuedMessage(messageId: String) {}
+        /**
+         * Parcel reached its hard age / TTL limit: own rows become
+         * [Message.STATUS_EXPIRED], transit copies are dropped. Must take the row
+         * out of the send queue, otherwise the loop re-picks it every tick.
+         */
+        suspend fun onMessageExpired(messageId: String) {}
         /** Oracle-preferred courier nodeIds (from hint). Empty = no preference. */
         fun oraclePriorityNodeIds(): Set<String> = emptySet()
         fun nodeIdForMac(mac: String): String? = null
@@ -108,6 +114,7 @@ internal class BleRelayEngine(
         relayJob = scopeProvider().launch(exceptionHandler) {
             while (isActive) {
                 tickOnce()
+                delay(50)
             }
         }
     }
@@ -266,7 +273,7 @@ internal class BleRelayEngine(
             visual = "🌫 Распыляется по сети"
         )
 
-        val messageTtlMs = 48 * 60 * 60 * 1000L
+        val messageTtlMs = com.blink.dtn.db.CustodyPolicy.MAX_AGE_MS
         if (System.currentTimeMillis() - message.timestamp > messageTtlMs || message.ttl <= 0) {
             Log.w("ROUTE", "Message ${message.id} expired or TTL <= 0")
             com.blink.dtn.telemetry.TraceStore.finish(
@@ -277,7 +284,10 @@ internal class BleRelayEngine(
                     "ageMs" to (System.currentTimeMillis() - message.timestamp)
                 )
             )
-            deps.emitTxResult(TxResult.Failure(message.id, emptyList()))
+            // Terminal, and *not* a send failure: take it out of the queue so the
+            // loop stops re-selecting the same row on every tick.
+            deps.onMessageExpired(message.id)
+            messageBackoffMap[message.id] = now + 60_000L
             return
         }
 
@@ -359,7 +369,12 @@ internal class BleRelayEngine(
                     )
                     networkMessage = networkMessage.copy(text = encryptedText)
                 } else {
-                    deps.updateMessage(networkMessage.copy(status = Message.STATUS_PENDING_KEY))
+                    deps.updateMessage(
+                        networkMessage.copy(
+                            status = Message.STATUS_PENDING_KEY,
+                            custodySince = 0L
+                        )
+                    )
                     deps.trace(
                         networkMessage.id,
                         com.blink.dtn.telemetry.TraceStages.RSA_MISSING_KEY,
@@ -402,7 +417,9 @@ internal class BleRelayEngine(
         // Works even with zero BLE peers (group-only hop).
         if (deps.tryAlternateTransport(bytes, message.id, networkMessage.targetId)) {
             if (message.status == Message.STATUS_PENDING || message.status == Message.STATUS_FAILED) {
-                deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
+                deps.updateMessage(
+                    message.copy(status = Message.STATUS_IN_FLIGHT, custodySince = now)
+                )
             }
             val path = com.blink.dtn.router.MessageRouter.pathFor(message.id)
             val transport = path?.traceId() ?: "alternate"
@@ -453,7 +470,7 @@ internal class BleRelayEngine(
         if (validDevices.isEmpty()) {
             // Keep PENDING so UI stays "отправляется" until neighbors appear or retries exhaust.
             if (message.status == Message.STATUS_FAILED) {
-                deps.updateMessage(message.copy(status = Message.STATUS_PENDING))
+                deps.updateMessage(message.copy(status = Message.STATUS_PENDING, custodySince = 0L))
             }
             messageBackoffMap[message.id] = now + 5_000L
             return
@@ -466,7 +483,10 @@ internal class BleRelayEngine(
             message.status == Message.STATUS_FAILED ||
             message.status == Message.STATUS_PENDING_KEY
         ) {
-            deps.updateMessage(message.copy(status = Message.STATUS_IN_FLIGHT))
+            // custodySince also starts the stale-IN_FLIGHT clock ([CustodyPolicy]).
+            deps.updateMessage(
+                message.copy(status = Message.STATUS_IN_FLIGHT, custodySince = now)
+            )
         }
         batch.watchdogJob = scopeProvider().launch {
             delay(45_000L)

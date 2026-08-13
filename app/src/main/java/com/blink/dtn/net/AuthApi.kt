@@ -30,7 +30,8 @@ class AuthApi(private val context: Context) {
             VpsConfig.init(context)
         }
         val url = VpsConfig.baseUrl.value
-        if (url.isBlank()) error("VPS URL not configured")
+        // No gateway ships by default any more — say where to set one.
+        if (url.isBlank()) error("Gateway URL is not set (Settings → Internet gateway)")
         return url
     }
 
@@ -53,10 +54,17 @@ class AuthApi(private val context: Context) {
         }.onFailure { Log.w(TAG, "sendEmailOtp: ${it.message}") }
     }
 
+    /**
+     * @param rebindPrimary only pass true after the user explicitly confirmed
+     *        "this is my new device". The gateway no longer rewrites an
+     *        account's published key on every login — an intercepted OTP would
+     *        otherwise hand the account's identity to whoever holds it.
+     */
     suspend fun verifyEmailOtp(
         email: String,
         otp: String,
-        publicBleKey: String = RsaUtils.getPublicKeyBase64()
+        publicBleKey: String = RsaUtils.getPublicKeyBase64(),
+        rebindPrimary: Boolean = false
     ): Result<AuthResponse> = withContext(Dispatchers.IO) {
         runCatching {
             require(publicBleKey.isNotBlank()) { "publicBleKey missing — generate RSA first" }
@@ -64,7 +72,8 @@ class AuthApi(private val context: Context) {
                 EmailVerifyRequest(
                     email = email.trim(),
                     otp = otp.trim(),
-                    publicBleKey = publicBleKey
+                    publicBleKey = publicBleKey,
+                    rebindPrimary = rebindPrimary
                 )
             ).toRequestBody(JSON)
             val req = Request.Builder()
@@ -82,16 +91,19 @@ class AuthApi(private val context: Context) {
         }.onFailure { Log.w(TAG, "verifyEmailOtp: ${it.message}") }
     }
 
+    /** See [verifyEmailOtp] for [rebindPrimary]. */
     suspend fun telegramAuth(
         initData: String,
-        publicBleKey: String = RsaUtils.getPublicKeyBase64()
+        publicBleKey: String = RsaUtils.getPublicKeyBase64(),
+        rebindPrimary: Boolean = false
     ): Result<AuthResponse> = withContext(Dispatchers.IO) {
         runCatching {
             require(publicBleKey.isNotBlank()) { "publicBleKey missing" }
             val body = json.encodeToString(
                 TelegramAuthRequest(
                     initData = initData.trim(),
-                    publicBleKey = publicBleKey
+                    publicBleKey = publicBleKey,
+                    rebindPrimary = rebindPrimary
                 )
             ).toRequestBody(JSON)
             val req = Request.Builder()
@@ -165,13 +177,16 @@ data class EmailSendResponse(
 data class EmailVerifyRequest(
     val email: String,
     val otp: String,
-    val publicBleKey: String
+    val publicBleKey: String,
+    /** Ignored by servers older than the consent-gated key rebind. */
+    val rebindPrimary: Boolean = false
 )
 
 @Serializable
 data class TelegramAuthRequest(
     val initData: String,
-    val publicBleKey: String
+    val publicBleKey: String,
+    val rebindPrimary: Boolean = false
 )
 
 @Serializable

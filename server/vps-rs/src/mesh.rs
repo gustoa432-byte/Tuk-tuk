@@ -9,8 +9,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::moderation::reject_if_banned;
 use crate::node_id::derive_node_id;
-use crate::oracle::auth::require_node;
+use crate::oracle::auth::require_active_node;
 use crate::state::{now_ms, AppError, AppState};
+
+/// Undelivered mailbox items live this long (hours, not days).
+const UNDELIVERED_RETENTION_MS: i64 = 12 * 60 * 60 * 1000;
+/// Broadcast has no single addressee to delete on — keep it even shorter.
+const BROADCAST_RETENTION_MS: i64 = 6 * 60 * 60 * 1000;
+/// Grace window after a pull, so a client that crashed mid-batch can re-pull.
+const DELIVERED_GRACE_MS: i64 = 60 * 60 * 1000;
+/// Max envelopes queued for one recipient before we refuse more.
+const MAX_QUEUE_PER_RECIPIENT: i64 = 500;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +89,18 @@ pub(crate) struct PullQuery {
     since: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct AckRequest {
+    #[serde(default)]
+    ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AckResponse {
+    ok: bool,
+    deleted: u64,
+}
+
 pub async fn health(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
     // No roster sizes for anonymous recon — just liveness.
     let _ = &state;
@@ -91,7 +112,7 @@ pub async fn directory(
     headers: HeaderMap,
 ) -> Result<Json<DirectoryResponse>, AppError> {
     // No anonymous scrape of mesh roster / pubkeys.
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let mut rows = state
         .db
@@ -128,8 +149,13 @@ pub async fn register(
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Response, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    // Generous on purpose: 0.1.116 re-registers on every 12s sync tick. The row
+    // itself is already unforgeable (node_id is bound to the JWT and must be
+    // derivable from the pubkey), so this only bounds request volume.
+    state.rate_limits.check_register(&principal.node_id, &ip)?;
     let header_id = headers
         .get("X-Node-Id")
         .and_then(|v| v.to_str().ok())
@@ -186,7 +212,7 @@ pub async fn push(
     headers: HeaderMap,
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let ip = crate::rate_limit::client_ip(&headers);
     state
@@ -225,6 +251,11 @@ pub async fn push(
         let receiver_sql: Option<String> = if is_broadcast {
             None
         } else {
+            // One account must not be able to fill another user's mailbox.
+            let depth = queue_depth(&state, &receiver).await?;
+            if depth >= MAX_QUEUE_PER_RECIPIENT {
+                return Err(AppError::too_many("recipient_queue_full"));
+            }
             Some(receiver)
         };
         let created_at = env.ts.filter(|t| *t > 0).unwrap_or_else(now_ms);
@@ -266,7 +297,7 @@ pub async fn pull(
     headers: HeaderMap,
     Query(q): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     // Ignore spoofable query node_id — always pull for the JWT device.
     let node_id = principal.node_id;
@@ -308,20 +339,370 @@ pub async fn pull(
             kind: row.get(5)?,
         });
     }
+
+    // Delete-on-pull, softened: mark the mailbox items as delivered instead of
+    // dropping them inside the same request. The pruner removes them an hour
+    // later, which keeps a client that died mid-batch (or an old client that
+    // reset its `since` cursor) from losing mail it never processed.
+    // Newer clients call `/v1/ack` and the rows go immediately.
+    let now = now_ms();
+    for env in &envelopes {
+        if env.to != node_id {
+            continue; // broadcast: other nodes still need it
+        }
+        state
+            .db
+            .execute(
+                r#"
+                UPDATE envelopes
+                SET delivered_at = ?1
+                WHERE id = ?2 AND receiver_id = ?3 AND delivered_at = 0
+                "#,
+                params![now, env.id.clone(), node_id.clone()],
+            )
+            .await?;
+    }
+
     Ok(Json(PullResponse { envelopes }))
 }
 
-/// Drop mesh envelopes older than 2 days (bounds disk growth from push floods).
-pub async fn prune_old_envelopes(conn: &libsql::Connection) -> Result<u64, AppError> {
-    const RETENTION_MS: i64 = 2 * 24 * 60 * 60 * 1000;
-    let cutoff = now_ms().saturating_sub(RETENTION_MS);
-    let changed = conn
-        .execute(
-            "DELETE FROM envelopes WHERE created_at > 0 AND created_at < ?1",
-            params![cutoff],
+/// `POST /v1/ack` — the addressee processed these envelopes; drop them now.
+/// Only ever deletes from the caller's own mailbox.
+pub async fn ack(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AckRequest>,
+) -> Result<Json<AckResponse>, AppError> {
+    let principal = require_active_node(&state, &headers).await?;
+    if body.ids.len() > 500 {
+        return Err(AppError::bad("too_many_ids"));
+    }
+    let mut deleted = 0u64;
+    for id in body.ids {
+        if id.is_empty() {
+            continue;
+        }
+        deleted += state
+            .db
+            .execute(
+                "DELETE FROM envelopes WHERE id = ?1 AND receiver_id = ?2",
+                params![id, principal.node_id.clone()],
+            )
+            .await?;
+    }
+    Ok(Json(AckResponse { ok: true, deleted }))
+}
+
+async fn queue_depth(state: &AppState, receiver: &str) -> Result<i64, AppError> {
+    let mut rows = state
+        .db
+        .query(
+            "SELECT COUNT(*) FROM envelopes WHERE receiver_id = ?1 AND delivered_at = 0",
+            params![receiver.to_string()],
         )
         .await?;
-    Ok(changed)
+    let count: i64 = rows
+        .next()
+        .await?
+        .map(|r| r.get::<i64>(0))
+        .transpose()?
+        .unwrap_or(0);
+    Ok(count)
+}
+
+/// Retention: envelopes are transit state, not storage.
+///  - delivered mailbox items go one hour after the pull;
+///  - undelivered mailbox items live 12h;
+///  - broadcast (no addressee to delete on) lives 6h.
+pub async fn prune_old_envelopes(conn: &libsql::Connection) -> Result<u64, AppError> {
+    let now = now_ms();
+    let mut deleted = conn
+        .execute(
+            r#"
+            DELETE FROM envelopes
+            WHERE delivered_at > 0 AND delivered_at < ?1
+            "#,
+            params![now.saturating_sub(DELIVERED_GRACE_MS)],
+        )
+        .await?;
+    deleted += conn
+        .execute(
+            r#"
+            DELETE FROM envelopes
+            WHERE created_at > 0
+              AND created_at < ?1
+              AND receiver_id IS NOT NULL
+              AND receiver_id != ''
+              AND receiver_id != '*'
+            "#,
+            params![now.saturating_sub(UNDELIVERED_RETENTION_MS)],
+        )
+        .await?;
+    deleted += conn
+        .execute(
+            r#"
+            DELETE FROM envelopes
+            WHERE created_at > 0
+              AND created_at < ?1
+              AND (receiver_id IS NULL OR receiver_id = '' OR receiver_id = '*')
+            "#,
+            params![now.saturating_sub(BROADCAST_RETENTION_MS)],
+        )
+        .await?;
+    Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::jwt_util::issue_token;
+    use crate::rate_limit::RateLimitState;
+    use axum::http::header::AUTHORIZATION;
+    use std::sync::Arc;
+
+    const SECRET: &str = "test-secret";
+    // Two distinct base64 keys → two distinct derived node ids.
+    const KEY_A: &str = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB";
+    const KEY_B: &str = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC";
+
+    async fn state() -> AppState {
+        let db = libsql::Builder::new_local(":memory:")
+            .build()
+            .await
+            .unwrap()
+            .connect()
+            .unwrap();
+        crate::db::init_schema(&db).await.unwrap();
+        crate::moderation::init_schema(&db).await.unwrap();
+        AppState {
+            db: Arc::new(db),
+            cfg: Arc::new(Config::for_tests(SECRET)),
+            rate_limits: Arc::new(RateLimitState::new()),
+        }
+    }
+
+    fn auth(key: &str, user: &str) -> HeaderMap {
+        let token = issue_token(SECRET, user, "email", "", key).unwrap();
+        let mut h = HeaderMap::new();
+        h.insert(
+            AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        h
+    }
+
+    fn node(key: &str) -> String {
+        derive_node_id(key).unwrap()
+    }
+
+    fn envelope(id: &str, from: &str, to: Option<&str>) -> EnvelopeIn {
+        EnvelopeIn {
+            id: id.into(),
+            from: from.into(),
+            to: to.map(|s| s.to_string()),
+            payload_b64: "cGF5bG9hZA==".into(),
+            ts: Some(now_ms()),
+            kind: Some("mesh_bytes".into()),
+        }
+    }
+
+    async fn push_one(st: &AppState, h: &HeaderMap, env: EnvelopeIn) -> Result<u32, AppError> {
+        push(
+            State(st.clone()),
+            h.clone(),
+            Json(PushRequest {
+                envelopes: vec![env],
+            }),
+        )
+        .await
+        .map(|r| r.0.accepted)
+    }
+
+    async fn pull_for(st: &AppState, h: &HeaderMap) -> Vec<EnvelopeOut> {
+        pull(
+            State(st.clone()),
+            h.clone(),
+            Query(PullQuery {
+                node_id: None,
+                since: Some(0),
+            }),
+        )
+        .await
+        .unwrap()
+        .0
+        .envelopes
+    }
+
+    #[tokio::test]
+    async fn cannot_read_another_nodes_mailbox() {
+        let st = state().await;
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        push_one(&st, &a, envelope("m1", "", Some(&node(KEY_B))))
+            .await
+            .unwrap();
+
+        // B is the addressee and sees it; A (the sender) and nobody else does.
+        assert_eq!(pull_for(&st, &b).await.len(), 1);
+        assert!(pull_for(&st, &a).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cannot_spoof_envelope_sender() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        let err = push_one(&st, &a, envelope("m2", &node(KEY_B), Some("someone")))
+            .await
+            .unwrap_err();
+        assert_eq!(err.message, "envelope_from_mismatch_jwt");
+    }
+
+    #[tokio::test]
+    async fn cannot_pull_with_a_foreign_node_id() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        let err = pull(
+            State(st.clone()),
+            a,
+            Query(PullQuery {
+                node_id: Some(node(KEY_B)),
+                since: Some(0),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "node_id_mismatch_jwt");
+    }
+
+    #[tokio::test]
+    async fn cannot_register_another_nodes_identity() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        // Claiming B's node id outright.
+        let err = register(
+            State(st.clone()),
+            a.clone(),
+            Json(RegisterRequest {
+                node_id: Some(node(KEY_B)),
+                nick: None,
+                pubkey: Some(KEY_B.into()),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "node_id_mismatch_jwt");
+
+        // Own node id but someone else's pubkey — must not poison the directory.
+        let err = register(
+            State(st.clone()),
+            a.clone(),
+            Json(RegisterRequest {
+                node_id: Some(node(KEY_A)),
+                nick: None,
+                pubkey: Some(KEY_B.into()),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "pubkey_node_id_mismatch");
+    }
+
+    #[tokio::test]
+    async fn ack_only_deletes_own_mail() {
+        let st = state().await;
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        push_one(&st, &a, envelope("m3", "", Some(&node(KEY_B))))
+            .await
+            .unwrap();
+
+        // A tries to delete mail addressed to B.
+        let deleted = ack(
+            State(st.clone()),
+            a.clone(),
+            Json(AckRequest {
+                ids: vec!["m3".into()],
+            }),
+        )
+        .await
+        .unwrap()
+        .0
+        .deleted;
+        assert_eq!(deleted, 0);
+        assert_eq!(pull_for(&st, &b).await.len(), 1);
+
+        // B can.
+        let deleted = ack(
+            State(st.clone()),
+            b.clone(),
+            Json(AckRequest {
+                ids: vec!["m3".into()],
+            }),
+        )
+        .await
+        .unwrap()
+        .0
+        .deleted;
+        assert_eq!(deleted, 1);
+        assert!(pull_for(&st, &b).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pull_marks_delivered_and_prune_keeps_undelivered() {
+        let st = state().await;
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        push_one(&st, &a, envelope("m4", "", Some(&node(KEY_B))))
+            .await
+            .unwrap();
+        assert_eq!(pull_for(&st, &b).await.len(), 1);
+
+        let mut rows = st
+            .db
+            .query(
+                "SELECT delivered_at FROM envelopes WHERE id = 'm4'",
+                (),
+            )
+            .await
+            .unwrap();
+        let delivered_at: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert!(delivered_at > 0, "pull must stamp delivered_at");
+
+        // Inside the grace window nothing is dropped: a client that died
+        // mid-batch can still re-pull with a reset cursor.
+        assert_eq!(prune_old_envelopes(&st.db).await.unwrap(), 0);
+        assert_eq!(pull_for(&st, &b).await.len(), 1);
+
+        // Past the grace window it goes.
+        st.db
+            .execute(
+                "UPDATE envelopes SET delivered_at = ?1 WHERE id = 'm4'",
+                params![now_ms() - DELIVERED_GRACE_MS - 1_000],
+            )
+            .await
+            .unwrap();
+        assert_eq!(prune_old_envelopes(&st.db).await.unwrap(), 1);
+        assert!(pull_for(&st, &b).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recipient_queue_is_capped() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        let target = node(KEY_B);
+        for i in 0..MAX_QUEUE_PER_RECIPIENT {
+            st.db
+                .execute(
+                    r#"INSERT INTO envelopes (id, sender_id, receiver_id, payload, kind, created_at)
+                       VALUES (?1, ?2, ?3, 'x', 'mesh_bytes', ?4)"#,
+                    params![format!("seed-{i}"), node(KEY_A), target.clone(), now_ms()],
+                )
+                .await
+                .unwrap();
+        }
+        let err = push_one(&st, &a, envelope("overflow", "", Some(&target)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.message, "recipient_queue_full");
+    }
 }
 
 /// Drop moderation report plaintext older than 30 days.

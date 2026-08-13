@@ -45,7 +45,8 @@ fun interface SocialAuthGateway {
 class EmailOtpAuth(
     private val context: Context,
     private val email: String,
-    private val otp: String? = null
+    private val otp: String? = null,
+    private val rebindPrimary: Boolean = false
 ) : SocialAuthGateway {
     private val api = AuthApi(context)
 
@@ -58,7 +59,7 @@ class EmailOtpAuth(
                 onFailure = { AuthResult.Failed(it.message ?: "send_failed") }
             )
         }
-        val verified = api.verifyEmailOtp(email, otp)
+        val verified = api.verifyEmailOtp(email, otp, rebindPrimary = rebindPrimary)
         return verified.fold(
             onSuccess = { resp ->
                 AuthSessionStore.saveVpsSession(context, resp)
@@ -78,7 +79,8 @@ class EmailOtpAuth(
  */
 class TelegramAuth(
     private val context: Context,
-    private val initData: String
+    private val initData: String,
+    private val rebindPrimary: Boolean = false
 ) : SocialAuthGateway {
     private val api = AuthApi(context)
 
@@ -86,7 +88,7 @@ class TelegramAuth(
         if (initData.isBlank()) {
             return AuthResult.Failed("telegram_init_data_required")
         }
-        return api.telegramAuth(initData).fold(
+        return api.telegramAuth(initData, rebindPrimary = rebindPrimary).fold(
             onSuccess = { resp ->
                 AuthSessionStore.saveVpsSession(context, resp)
                 AuthResult.Success(

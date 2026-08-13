@@ -1,4 +1,10 @@
 //! Hidden BLE handshake via online contacts.
+//!
+//! Consent model: adding someone only records *your* side of the edge. The
+//! target's `public_ble_key` is handed out only once they added you back.
+//! Before that this endpoint is a request, not a lookup — otherwise anyone
+//! holding a user UUID could harvest keys (and therefore mesh node ids) with no
+//! consent at all. QR / out-of-band remains the primary exchange.
 
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -6,7 +12,8 @@ use axum::Json;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 
-use crate::jwt_util::{bearer_from_header, verify_token};
+use crate::jwt_util::ensure_token_active;
+use crate::oracle::auth::claims_from_headers;
 use crate::state::{now_ms, AppError, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -21,7 +28,10 @@ pub struct AddContactRequest {
 pub struct AddContactResponse {
     pub ok: bool,
     pub user_id: String,
+    /// Empty until the other side adds you back.
     pub public_ble_key: String,
+    /// True when we recorded the request but consent is still missing.
+    pub pending: bool,
 }
 
 pub async fn add_contact(
@@ -29,11 +39,11 @@ pub async fn add_contact(
     headers: HeaderMap,
     Json(body): Json<AddContactRequest>,
 ) -> Result<Json<AddContactResponse>, AppError> {
-    let auth = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    let token = bearer_from_header(auth)?;
-    let claims = verify_token(&state.cfg.jwt_secret, token)?;
+    let claims = claims_from_headers(&state, &headers)?;
+    ensure_token_active(&state.db, &claims).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    // Bound UUID guessing / enumeration attempts.
+    state.rate_limits.check_contacts(&claims.sub, &ip)?;
 
     let target = body.user_id.trim().to_string();
     if target.is_empty() {
@@ -61,7 +71,8 @@ pub async fn add_contact(
     }
 
     let now = now_ms();
-    // Directed edge: me → them (and reverse for mutual discovery convenience).
+    // Only our own directed edge. The reverse edge used to be inserted here,
+    // which manufactured "mutual consent" out of a one-sided request.
     state
         .db
         .execute(
@@ -72,20 +83,20 @@ pub async fn add_contact(
             params![claims.sub.clone(), user_id.clone(), now],
         )
         .await?;
-    state
+
+    let mut reverse = state
         .db
-        .execute(
-            r#"
-            INSERT OR IGNORE INTO contacts (user_id_1, user_id_2, created_at)
-            VALUES (?1, ?2, ?3)
-            "#,
-            params![user_id.clone(), claims.sub.clone(), now],
+        .query(
+            "SELECT 1 FROM contacts WHERE user_id_1 = ?1 AND user_id_2 = ?2 LIMIT 1",
+            params![user_id.clone(), claims.sub.clone()],
         )
         .await?;
+    let mutual = reverse.next().await?.is_some();
 
     Ok(Json(AddContactResponse {
         ok: true,
         user_id,
-        public_ble_key,
+        public_ble_key: if mutual { public_ble_key } else { String::new() },
+        pending: !mutual,
     }))
 }

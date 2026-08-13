@@ -45,8 +45,25 @@ class VpsBridge private constructor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val reachable = AtomicBoolean(false)
 
+    /**
+     * Single outbound gate for the gateway hop. Both the router path
+     * ([pushEncryptedPayload]) and the periodic [performSync] go through it, so
+     * the same message can never be pushed twice concurrently.
+     */
+    private val outboundInFlight: MutableSet<String> =
+        java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    @Volatile
+    private var lastRegisterAt = 0L
+
     companion object {
         private const val TAG = "VpsBridge"
+
+        /** Renew the access token this long before it expires. */
+        private const val JWT_RENEW_BEFORE_MS = 48L * 60L * 60L * 1000L
+
+        /** `/v1/register` only refreshes directory presence — 12s was pointless. */
+        private const val REGISTER_INTERVAL_MS = 10L * 60L * 1000L
 
         @Volatile
         private var INSTANCE: VpsBridge? = null
@@ -87,6 +104,7 @@ class VpsBridge private constructor(
             while (isActive) {
                 refreshRouterSnapshot()
                 if (isConfigured() && VpsConfig.isOnline(context)) {
+                    runCatching { renewSessionIfExpiringSoon() }
                     runCatching { register() }
                     // Messaging hop (push/pull) — always when VPS is up.
                     runCatching { performSync() }
@@ -112,11 +130,19 @@ class VpsBridge private constructor(
     suspend fun pushEncryptedPayload(bytes: ByteArray, messageId: String): Boolean {
         if (!isConfigured() || !VpsConfig.isOnline(context)) return false
         val jwt = meshJwtOrNull() ?: return false
+        val row = dao.getMessageById(messageId)
+        if (row != null && !isGatewayEligible(row)) return false
+        if (!isBroadcastWorthPushing(row)) return false
+        val to = recipientFor(row)
+        if (!outboundInFlight.add(messageId)) {
+            // Already being pushed by the sync loop — no double-push amplification.
+            return false
+        }
         return try {
             val envelope = VpsEnvelope(
                 id = messageId,
                 from = myNodeId,
-                to = "*",
+                to = to,
                 payloadB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
                 ts = System.currentTimeMillis()
             )
@@ -132,11 +158,8 @@ class VpsBridge private constructor(
                 val ok = resp.isSuccessful
                 reachable.set(ok)
                 if (ok) {
-                    // Mark matching DB row bridge-synced when present.
-                    dao.getMessageById(messageId)?.let { msg ->
-                        msg.isBridgeSynced = true
-                        dao.updateMessageInternal(msg)
-                    }
+                    // Gateway custody == neighbour custody: not an end-to-end ACK.
+                    dao.markPushedToGateway(messageId)
                 }
                 ok
             }
@@ -144,64 +167,50 @@ class VpsBridge private constructor(
             Log.w(TAG, "pushEncryptedPayload failed: ${e.message}")
             reachable.set(false)
             false
+        } finally {
+            outboundInFlight.remove(messageId)
         }
     }
 
     /**
-     * Internet-only photo: never meshes. Store-and-forward to [msg.targetId].
+     * Photos are **not** carried by the gateway any more.
+     *
+     * `private_image` shipped a base64 JPEG inside a JSON envelope and the server
+     * stored it verbatim — plaintext media on someone else's disk. Until media has
+     * real end-to-end encryption there is no honest way to route a photo through
+     * the gateway, so this refuses instead of leaking. Inbound `private_image`
+     * ingest stays (older peers may still send one) and locally stored photos are
+     * untouched.
      */
+    @Suppress("UNUSED_PARAMETER")
     suspend fun pushPrivateImage(msg: Message, jpegBytes: ByteArray): Boolean {
-        val to = msg.targetId ?: return false
-        if (!isConfigured() || !VpsConfig.isOnline(context)) return false
-        if (jpegBytes.isEmpty() || jpegBytes.size > 400_000) return false
-        val jwt = meshJwtOrNull() ?: return false
-        return try {
-            val payload = PrivateImagePayload(
-                id = msg.id,
-                from = msg.senderId.ifBlank { myNodeId },
-                to = to,
-                senderNick = msg.senderNick,
-                caption = msg.text,
-                timestamp = msg.timestamp,
-                imageB64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
-            )
-            val envelope = VpsEnvelope(
-                id = msg.id,
-                from = myNodeId,
-                to = to,
-                payloadB64 = Base64.encodeToString(
-                    json.encodeToString(payload).toByteArray(Charsets.UTF_8),
-                    Base64.NO_WRAP
-                ),
-                ts = System.currentTimeMillis(),
-                kind = "private_image"
-            )
-            val body = json.encodeToString(PushRequest(listOf(envelope)))
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-            val req = Request.Builder()
-                .url("${baseUrl()}/v1/push")
-                .post(body)
-                .header("X-Node-Id", myNodeId)
-                .header("Authorization", "Bearer $jwt")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                val ok = resp.isSuccessful
-                reachable.set(ok)
-                if (ok) {
-                    dao.updateMessageStatus(msg.id, Message.STATUS_STORED_IN_NEIGHBOR)
-                    dao.getMessageById(msg.id)?.let {
-                        it.isBridgeSynced = true
-                        dao.updateMessageInternal(it)
-                    }
-                    MessageRouter.notePath(msg.id, com.blink.dtn.router.RoutePath.INTERNET, "фото через интернет")
-                }
-                ok
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "pushPrivateImage failed: ${e.message}")
-            reachable.set(false)
-            false
-        }
+        Log.w(TAG, "Refused gateway push for PRIVATE_IMAGE ${msg.id}: no E2E for media")
+        return false
+    }
+
+    /** Photos never leave through the gateway; terminal rows are not re-pushed. */
+    private fun isGatewayEligible(msg: Message): Boolean =
+        msg.type != Message.TYPE_PRIVATE_IMAGE &&
+            !com.blink.dtn.db.MessageDeliverySm.isTerminal(msg.status)
+
+    /**
+     * Addressed delivery whenever the parcel has a destination: a PRIVATE body
+     * used to be pushed as `to = "*"`, i.e. handed to every polling node.
+     * Broadcast stays only for what is genuinely public (and Qq Core drops
+     * PUBLIC on ingest, so it is not pushed there at all).
+     */
+    private fun recipientFor(msg: Message?): String {
+        val target = msg?.targetId?.trim().orEmpty()
+        if (target.isNotEmpty()) return target
+        return "*"
+    }
+
+    private fun isBroadcastWorthPushing(msg: Message?): Boolean {
+        if (msg == null) return true
+        if (recipientFor(msg) != "*") return true
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return true
+        // Qq Core has no public chat surface — pushing PUBLIC to everyone is waste.
+        return msg.type != "PUBLIC"
     }
 
     private fun baseUrl(): String = VpsConfig.baseUrl.value.trimEnd('/')
@@ -211,10 +220,32 @@ class VpsBridge private constructor(
         return jwt.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Keep the session alive on its own instead of waiting for a hard 401.
+     * Lets the server shorten the access-token TTL without logging anyone out
+     * (`/auth/refresh` cannot rotate the device key, so this is not a takeover
+     * path for a stolen token).
+     */
+    private suspend fun renewSessionIfExpiringSoon() {
+        val jwt = meshJwtOrNull() ?: return
+        val expiresAt = VpsJwtSupport.expiryMsOrNull(jwt) ?: return
+        val remaining = expiresAt - System.currentTimeMillis()
+        if (remaining > JWT_RENEW_BEFORE_MS) return
+        Log.i(TAG, "JWT expires in ${remaining / 60_000}m — renewing")
+        runCatching { AuthApi(context).refreshSession() }
+    }
+
     private fun register() {
         val jwt = meshJwtOrNull() ?: return
-        val nick = context.getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
-            .getString("nick", "") ?: ""
+        // Was fired on every 12s sync tick; nothing about it changes that often.
+        val now = System.currentTimeMillis()
+        if (now - lastRegisterAt < REGISTER_INTERVAL_MS) return
+        lastRegisterAt = now
+        // Qq Core has no online directory surface — do not hand the server a nick.
+        val nick = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) "" else {
+            context.getSharedPreferences("blink_prefs", Context.MODE_PRIVATE)
+                .getString("nick", "") ?: ""
+        }
         val body = json.encodeToString(
             RegisterRequest(nodeId = myNodeId, nick = nick, pubkey = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
         ).toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -284,46 +315,56 @@ class VpsBridge private constructor(
 
     private suspend fun performSync() {
         val jwt = meshJwtOrNull() ?: return
-        // 1) Push unsynced outbound as opaque signed mesh_bytes (same wire as BLE).
+        // 1) Push outbound as opaque signed mesh_bytes (same wire as BLE).
         //    PRIVATE bodies are RSA-hybrid ciphertext — never plaintext Room JSON.
-        //    PRIVATE_IMAGE stays on [pushPrivateImage] only.
-        val unsynced = dao.getUnsyncedMessages()
-            .filter { it.type != Message.TYPE_PRIVATE_IMAGE }
-            .filter { it.senderId == myNodeId || it.isMine }
-            .take(40)
-        if (unsynced.isNotEmpty()) {
+        //    Photos never take this path at all.
+        val outbox = dao.getGatewayOutbox(myNodeId)
+            .filter { isGatewayEligible(it) && isBroadcastWorthPushing(it) }
+        if (outbox.isNotEmpty()) {
             val envelopes = mutableListOf<VpsEnvelope>()
-            val syncedIds = mutableListOf<String>()
-            for (msg in unsynced) {
-                val bytes = prepareOpaqueMeshPayload(msg) ?: continue
+            val pushedIds = mutableListOf<String>()
+            for (msg in outbox) {
+                // Same gate as the router path: never push a message twice.
+                if (!outboundInFlight.add(msg.id)) continue
+                val bytes = prepareOpaqueMeshPayload(msg)
+                if (bytes == null) {
+                    outboundInFlight.remove(msg.id)
+                    continue
+                }
                 envelopes.add(
                     VpsEnvelope(
                         id = msg.id,
                         from = myNodeId,
-                        to = msg.targetId ?: "*",
+                        to = recipientFor(msg),
                         payloadB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
                         ts = msg.timestamp,
                         kind = "mesh_bytes"
                     )
                 )
-                syncedIds.add(msg.id)
+                pushedIds.add(msg.id)
             }
             if (envelopes.isNotEmpty()) {
-                val body = json.encodeToString(PushRequest(envelopes))
-                    .toRequestBody("application/json; charset=utf-8".toMediaType())
-                val req = Request.Builder()
-                    .url("${baseUrl()}/v1/push")
-                    .post(body)
-                    .header("X-Node-Id", myNodeId)
-                    .header("Authorization", "Bearer $jwt")
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        dao.markAsSynced(syncedIds)
-                        reachable.set(true)
-                    } else {
-                        reachable.set(false)
+                try {
+                    val body = json.encodeToString(PushRequest(envelopes))
+                        .toRequestBody("application/json; charset=utf-8".toMediaType())
+                    val req = Request.Builder()
+                        .url("${baseUrl()}/v1/push")
+                        .post(body)
+                        .header("X-Node-Id", myNodeId)
+                        .header("Authorization", "Bearer $jwt")
+                        .build()
+                    client.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            // Accepted by the gateway == carrier custody, still not
+                            // delivery. The UI used to keep saying "queued" here.
+                            for (id in pushedIds) dao.markPushedToGateway(id)
+                            reachable.set(true)
+                        } else {
+                            reachable.set(false)
+                        }
                     }
+                } finally {
+                    outboundInFlight.removeAll(pushedIds.toSet())
                 }
             }
         }
@@ -337,6 +378,7 @@ class VpsBridge private constructor(
             .header("X-Node-Id", myNodeId)
             .header("Authorization", "Bearer $jwt")
             .build()
+        val consumedIds = mutableListOf<String>()
         client.newCall(pullReq).execute().use { resp ->
             if (!resp.isSuccessful) {
                 reachable.set(false)
@@ -351,8 +393,37 @@ class VpsBridge private constructor(
                 maxTs = maxOf(maxTs, env.ts)
                 if (env.from == myNodeId) continue
                 ingestEnvelope(env)
+                // Only mailbox items are ours to release; broadcast is shared.
+                if (env.to == myNodeId) consumedIds.add(env.id)
             }
             prefs.edit().putLong("vps_last_pull", maxTs).apply()
+        }
+        if (consumedIds.isNotEmpty()) {
+            ackConsumed(jwt, consumedIds)
+        }
+    }
+
+    /**
+     * Delete-on-ack: tell the gateway the mailbox items are processed so they do
+     * not linger on its disk. Best effort — the server also expires them.
+     */
+    private fun ackConsumed(jwt: String, ids: List<String>) {
+        try {
+            val body = json.encodeToString(AckRequest(ids.take(500)))
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val req = Request.Builder()
+                .url("${baseUrl()}/v1/ack")
+                .post(body)
+                .header("X-Node-Id", myNodeId)
+                .header("Authorization", "Bearer $jwt")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful && resp.code != 404) {
+                    Log.d(TAG, "ack rejected: ${resp.code}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "ack failed: ${e.message}")
         }
     }
 
@@ -466,7 +537,10 @@ class VpsBridge private constructor(
                     timestamp = payload.timestamp,
                     ttl = 1,
                     isMine = false,
-                    status = Message.STATUS_DELIVERED_ACK,
+                    // Inbound copy — nothing was ACKed end-to-end here. Same value
+                    // inbound PRIVATE rows get; DELIVERED_ACK used to make received
+                    // photos show up in the Chronicle as parcels *we* delivered.
+                    status = Message.STATUS_PENDING,
                     receivedAt = now,
                     mediaPath = file?.absolutePath,
                     isBridgeSynced = true
@@ -592,6 +666,9 @@ class VpsBridge private constructor(
 
     @Serializable
     private data class PushRequest(val envelopes: List<VpsEnvelope>)
+
+    @Serializable
+    private data class AckRequest(val ids: List<String>)
 
     @Serializable
     private data class PullResponse(val envelopes: List<VpsEnvelope> = emptyList())

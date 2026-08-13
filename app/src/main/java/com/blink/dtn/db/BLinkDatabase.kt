@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         SocialOrbitEntity::class,
         BannedNodeEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -330,6 +330,23 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Custody bookkeeping for [CustodyPolicy]: when the current outbound
+         * attempt started and how many custody rounds a parcel already used.
+         * Additive only — existing rows start at 0 and are adopted by the sweep
+         * using their `timestamp` as the reference point.
+         */
+        val MIGRATION_24_25 = object : androidx.room.migration.Migration(24, 25) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `custody_since` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `custody_rounds` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Never wipe blink_database on migration failure — user messages must survive.
@@ -360,7 +377,8 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_20_21,
                     MIGRATION_21_22,
                     MIGRATION_22_23,
-                    MIGRATION_23_24
+                    MIGRATION_23_24,
+                    MIGRATION_24_25
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)

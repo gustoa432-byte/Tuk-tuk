@@ -60,9 +60,12 @@ class BleMeshManager private constructor(
         )
     )
 
+    // Delivery status must not depend on a lossy channel: DROP_OLDEST used to
+    // silently discard TX outcomes under load, leaving rows stuck IN_FLIGHT
+    // until the next cold start. UNLIMITED never drops; the consumer is a single
+    // DB writer and the periodic sweep is the backstop if the process dies.
     private val _txResults = kotlinx.coroutines.channels.Channel<TxResult>(
-        capacity = 256,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+        capacity = kotlinx.coroutines.channels.Channel.UNLIMITED
     )
     val txResults = _txResults.receiveAsFlow()
 
@@ -219,6 +222,16 @@ class BleMeshManager private constructor(
                 override suspend fun isSenderBlocked(userId: String, nick: String): Boolean =
                     dao.isUserIdBlocked(userId) || dao.isUserBlocked(nick)
                 override suspend fun deleteQueuedMessage(messageId: String) { dao.deleteMessageById(messageId) }
+                override suspend fun onMessageExpired(messageId: String) {
+                    val msg = dao.getMessageById(messageId) ?: return
+                    if (msg.conversationId == BLinkDao.RELAY_CONVERSATION_ID) {
+                        // Transit copy of someone else's mail — its TTL is up.
+                        dao.deleteMessageById(messageId)
+                        return
+                    }
+                    val next = com.blink.dtn.db.MessageDeliverySm.applyExpiry(msg.status)
+                    if (next != msg.status) dao.updateMessageStatus(messageId, next)
+                }
                 override fun oraclePriorityNodeIds(): Set<String> = oraclePriorityNodes.toSet()
                 override fun nodeIdForMac(mac: String): String? = peers.nodeIdFor(mac)
                 override suspend fun refreshOracleHints(targetNode: String?) {
@@ -539,6 +552,8 @@ class BleMeshManager private constructor(
                             receivedAt = if (existing.receivedAt > 0L) existing.receivedAt else updatedMsg.receivedAt,
                             localSeq = if (existing.localSeq > 0L) existing.localSeq else updatedMsg.localSeq,
                             mediaPath = existing.mediaPath ?: updatedMsg.mediaPath,
+                            custodySince = existing.custodySince,
+                            custodyRounds = existing.custodyRounds,
                             isMine = existing.isMine || updatedMsg.isMine,
                             isBridgeSynced = existing.isBridgeSynced || updatedMsg.isBridgeSynced
                         )
@@ -662,6 +677,31 @@ class BleMeshManager private constructor(
         }
     }
 
+    /** Bluetooth went off — drop radio without forgetting the running mesh. */
+    fun pauseRadio() {
+        try {
+            radio.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "pauseRadio: ${e.message}")
+        }
+    }
+
+    /** Bluetooth came back — restart advertising/scan if the mesh is supposed to be up. */
+    fun resumeRadio() {
+        if (!isMeshRunning.get()) {
+            startMesh()
+            return
+        }
+        try {
+            radio.stop()
+            radio.start()
+            radio.applyCadence(MeshDutyPrefs.cadence())
+            triggerRelay()
+        } catch (e: Exception) {
+            Log.w(TAG, "resumeRadio: ${e.message}")
+        }
+    }
+
     fun writeBudgetSnapshot(): WriteBudgetSnapshot = writeBudget.snapshot()
 
     /** Optional multi-transport registry (BLE only after Wi‑Fi Direct amputation). */
@@ -731,20 +771,19 @@ class BleMeshManager private constructor(
     }
 
     private fun handleIncomingWrite(device: BluetoothDevice, value: ByteArray) {
-        val assembledValue = reassembler.ingest(value) ?: return
-        if (CrowdFrame.looksLike(assembledValue)) {
-            crowdPlane.onRawIngress(assembledValue)
-            return
-        }
-        val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: return
-        val decoded = ingress.decodeWirePacket(jsonString)
         scope.launch(Dispatchers.IO) {
+            val assembledValue = reassembler.ingest(value) ?: return@launch
+            if (CrowdFrame.looksLike(assembledValue)) {
+                crowdPlane.onRawIngress(assembledValue)
+                return@launch
+            }
+            val jsonString = com.blink.dtn.crypto.CryptoUtils.decrypt(assembledValue) ?: return@launch
+            val decoded = ingress.decodeWirePacket(jsonString)
             if (!ingress.verifyEnvelope(decoded.packet)) {
                 Log.w(TAG, "Dropped unsigned/invalid envelope ${decoded.dedupKey}")
                 return@launch
             }
-            val message = decoded.message
-            ingress.handle(message, decoded.dedupKey, fromMac = device.address)
+            ingress.handle(decoded.message, decoded.dedupKey, fromMac = device.address)
         }
     }
 

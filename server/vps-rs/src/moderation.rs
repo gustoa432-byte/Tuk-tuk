@@ -10,7 +10,7 @@ use libsql::params;
 use serde::{Deserialize, Serialize};
 
 use crate::node_id::derive_node_id;
-use crate::oracle::auth::require_node;
+use crate::oracle::auth::require_active_node;
 use crate::state::{now_ms, AppError, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -121,7 +121,7 @@ pub async fn report(
     headers: HeaderMap,
     Json(body): Json<ReportRequest>,
 ) -> Result<Json<ReportResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     state.rate_limits.check_report(&principal.node_id)?;
 
@@ -181,7 +181,7 @@ pub async fn blacklist(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<BlacklistResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
 
     use hmac::{Hmac, Mac};

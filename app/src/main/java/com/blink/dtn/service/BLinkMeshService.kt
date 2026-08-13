@@ -1,11 +1,13 @@
 package com.blink.dtn.service
-import kotlinx.coroutines.flow.collectLatest
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -20,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -33,6 +36,13 @@ class BLinkMeshService : Service() {
     private var vkRelayJob: Job? = null
     private var dtnRoutingJob: Job? = null
     private var txResultJob: Job? = null
+    private var custodySweepJob: Job? = null
+    private var bluetoothReceiver: BroadcastReceiver? = null
+
+    private companion object {
+        /** Custody / stale-in-flight reconciliation cadence. */
+        const val CUSTODY_SWEEP_INTERVAL_MS = 60_000L
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -114,6 +124,7 @@ class BLinkMeshService : Service() {
         } else {
             startForeground(1, notification)
         }
+        registerBluetoothReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -134,69 +145,92 @@ class BLinkMeshService : Service() {
 
 
     private fun startDtnRoutingEngine() {
-                txResultJob?.cancel()
-        
+        txResultJob?.cancel()
+        custodySweepJob?.cancel()
+
         val dao = BLinkDatabase.getDatabase(this).bLinkDao()
-        
-        // 1. Listen for TxResults
+
+        // 1. Listen for TxResults.
+        //    Sequential `collect` (not collectLatest): every outcome must reach
+        //    Room. collectLatest cancelled the previous handler mid-write, which
+        //    together with the old DROP_OLDEST channel silently lost statuses.
         txResultJob = serviceScope.launch {
-            bleMeshManager.txResults.collectLatest { result: com.blink.dtn.ble.TxResult ->
-                launch {
-                    when (result) {
-                        is com.blink.dtn.ble.TxResult.Success -> {
-                            val currentMsg = dao.getMessageById(result.msgId)
-                            val next = com.blink.dtn.db.MessageDeliverySm.applyAuto(
-                                currentMsg?.status ?: com.blink.dtn.db.Message.STATUS_PENDING,
-                                com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR
-                            )
-                            if (currentMsg != null && next != currentMsg.status) {
-                                dao.updateMessageStatus(result.msgId, next)
-                            }
-                            com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "у соседа")
-                            // Soft carry feedback — throttled; does not alter BLE path.
-                            com.blink.dtn.ui.MeshTransferFeedback.onHopCompleted(this@BLinkMeshService)
-                            // Courier emotion: this phone helped move a package (relay of others' mail)
-                            if (currentMsg == null ||
-                                (!currentMsg.isMine && currentMsg.senderId != myNodeId)
-                            ) {
-                                com.blink.dtn.ui.GamificationStore.noteHelpedRelay(this@BLinkMeshService)
-                            }
-                        }
-                        is com.blink.dtn.ble.TxResult.Failure -> {
-                            val currentMsg = dao.getMessageById(result.msgId)
-                            if (currentMsg != null &&
-                                com.blink.dtn.db.MessageDeliverySm.mayAutoUpdate(
-                                    currentMsg.status,
-                                    com.blink.dtn.db.Message.STATUS_FAILED
-                                ) &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR
-                            ) {
-                                val newRetry = currentMsg.retryCount + 1
-                                if (newRetry >= 10) {
-                                    dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_FAILED)
-                                    com.blink.dtn.telemetry.TraceStore.finish(
-                                        result.msgId,
-                                        "Failed",
-                                        com.blink.dtn.telemetry.detailsOf("retries" to newRetry)
-                                    )
-                                } else {
-                                    dao.updateMessageStatusAndRetryCount(result.msgId, com.blink.dtn.db.Message.STATUS_PENDING, newRetry)
-                                }
-                            }
-                            
-                            if (result.failedMacs.isNotEmpty()) {
-                                // Temporal trigger to wake up DTN router after backoff expires
-                                launch {
-                                    kotlinx.coroutines.delay(10_000L)
-                                    bleMeshManager.triggerRelay()
-                                }
-                            }
-                        }
+            bleMeshManager.txResults.collect { result: com.blink.dtn.ble.TxResult ->
+                runCatching { applyTxResult(dao, result) }
+                    .onFailure { android.util.Log.w("MeshService", "TxResult apply: ${it.message}") }
+            }
+        }
+
+        // 2. Custody / stale-in-flight / honest-expiry reconciliation.
+        //    Also the process-death and reboot recovery path: Room is the source
+        //    of truth, so a cold start re-derives everything from the rows.
+        custodySweepJob = serviceScope.launch {
+            runCatching { com.blink.dtn.db.DeliverySweeper.sweep(dao, myNodeId) }
+            while (isActive) {
+                delay(CUSTODY_SWEEP_INTERVAL_MS)
+                val result = runCatching {
+                    com.blink.dtn.db.DeliverySweeper.sweep(dao, myNodeId)
+                }.getOrNull()
+                if (result?.changed == true) {
+                    bleMeshManager.triggerRelay()
+                }
+            }
+        }
+    }
+
+    private suspend fun applyTxResult(
+        dao: com.blink.dtn.db.BLinkDao,
+        result: com.blink.dtn.ble.TxResult
+    ) {
+        when (result) {
+            is com.blink.dtn.ble.TxResult.Success -> {
+                val currentMsg = dao.getMessageById(result.msgId)
+                // Neighbour custody starts here — not delivery ([CustodyPolicy]).
+                dao.noteHandedToCarrier(result.msgId)
+                com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "у соседа")
+                val isOthersMail = currentMsg != null &&
+                    !currentMsg.isMine &&
+                    currentMsg.senderId != myNodeId
+                if (isOthersMail) {
+                    com.blink.dtn.ui.MeshTransferFeedback.onHopCompleted(this@BLinkMeshService)
+                    com.blink.dtn.ui.GamificationStore.noteHelpedRelay(this@BLinkMeshService)
+                }
+            }
+            is com.blink.dtn.ble.TxResult.Failure -> {
+                val currentMsg = dao.getMessageById(result.msgId)
+                if (currentMsg != null &&
+                    com.blink.dtn.db.MessageDeliverySm.mayAutoUpdate(
+                        currentMsg.status,
+                        com.blink.dtn.db.Message.STATUS_FAILED
+                    ) &&
+                    currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR
+                ) {
+                    val newRetry = currentMsg.retryCount + 1
+                    if (newRetry >= 10) {
+                        dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_FAILED)
+                        com.blink.dtn.telemetry.TraceStore.finish(
+                            result.msgId,
+                            "Failed",
+                            com.blink.dtn.telemetry.detailsOf("retries" to newRetry)
+                        )
+                    } else {
+                        dao.updateMessageStatusAndRetryCount(
+                            result.msgId,
+                            com.blink.dtn.db.Message.STATUS_PENDING,
+                            newRetry
+                        )
+                    }
+                }
+
+                if (result.failedMacs.isNotEmpty()) {
+                    // Temporal trigger to wake up DTN router after backoff expires
+                    serviceScope.launch {
+                        kotlinx.coroutines.delay(10_000L)
+                        bleMeshManager.triggerRelay()
                     }
                 }
             }
         }
-
     }
         private fun startVkRelayLoop() {
         vkRelayJob?.cancel()
@@ -261,11 +295,38 @@ class BLinkMeshService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterBluetoothReceiver()
         vkRelayJob?.cancel()
         txResultJob?.cancel()
+        custodySweepJob?.cancel()
         bleMeshManager.transportRegistry?.stopAll()
         com.blink.dtn.telemetry.MeshDutyTelemetry.stopBatteryReceiver()
         bleMeshManager.stopMesh()
+    }
+
+    private fun registerBluetoothReceiver() {
+        if (bluetoothReceiver != null) return
+        bluetoothReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+                when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                    BluetoothAdapter.STATE_OFF -> bleMeshManager.pauseRadio()
+                    BluetoothAdapter.STATE_ON -> bleMeshManager.resumeRadio()
+                }
+            }
+        }
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(bluetoothReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(bluetoothReceiver, filter)
+        }
+    }
+
+    private fun unregisterBluetoothReceiver() {
+        val receiver = bluetoothReceiver ?: return
+        runCatching { unregisterReceiver(receiver) }
+        bluetoothReceiver = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -295,21 +356,16 @@ class BLinkMeshService : Service() {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = if (en) "New message alerts" else "Уведомления о новых сообщениях"
-                
-                // Custom sound setup
-                val soundUri = android.net.Uri.parse("android.resource://${packageName}/raw/tuktuk")
                 val audioAttributes = android.media.AudioAttributes.Builder()
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
                     .build()
-                
-                // Check if resource exists, else fallback to default notification sound
-                val resId = resources.getIdentifier("tuktuk", "raw", packageName)
-                if (resId != 0) {
-                    setSound(soundUri, audioAttributes)
-                } else {
-                    setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION), audioAttributes)
-                }
+                setSound(
+                    android.media.RingtoneManager.getDefaultUri(
+                        android.media.RingtoneManager.TYPE_NOTIFICATION
+                    ),
+                    audioAttributes
+                )
             }
             notificationManager?.createNotificationChannel(messagesChannel)
         }

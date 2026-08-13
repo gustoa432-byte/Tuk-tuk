@@ -6,7 +6,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::moderation::reject_if_banned;
-use crate::oracle::auth::require_node;
+use crate::oracle::auth::require_active_node;
 use crate::oracle::domain::calculate_weight;
 use crate::oracle::store::{self, OrbitIngestRow};
 use crate::state::{now_ms, AppError, AppState};
@@ -51,7 +51,7 @@ pub async fn sync(
     headers: HeaderMap,
     Json(body): Json<SyncRequest>,
 ) -> Result<Json<SyncResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let ip = crate::rate_limit::client_ip(&headers);
     state
@@ -92,7 +92,7 @@ pub async fn hint(
     headers: HeaderMap,
     Json(body): Json<HintRequest>,
 ) -> Result<Json<HintResponse>, AppError> {
-    let principal = require_node(&state, &headers)?;
+    let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
     let ip = crate::rate_limit::client_ip(&headers);
     state

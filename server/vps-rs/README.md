@@ -2,6 +2,14 @@
 
 Store-and-forward mesh bridge + email/Telegram auth + online BLE-key contact handshake.
 
+> **This server is optional.** The Qq client works fully offline over BLE/DTN with no account; a gateway only adds an internet delivery path. Whoever runs an instance decides its retention, logging and terms — the client cannot speak for that.
+>
+> What an operator can see: metadata for every envelope (sender/recipient `node_id`, timestamps, sizes) plus account rows (email address or Telegram ID, public key). Private **text** arrives as ciphertext. **Images:** intended to travel over BLE only — earlier client builds pushed private images here as unencrypted base64 JPEG, so historical rows may contain viewable image data. See [`../../docs/PRIVACY.md`](../../docs/PRIVACY.md).
+>
+> There is currently **no account-deletion endpoint**; removing a user's row is a manual operator action. Known gap.
+>
+> Paths, DB and env names (`/opt/tuktuk`, `tuktuk.db`, `TUKTUK_*`, `node.tuktuk.dev`) are internal technical names kept from the project's former name and are not renamed with the product.
+
 ## Стек
 
 - Axum + Tokio
@@ -68,18 +76,23 @@ ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
 
 JWT claims: `sub` (account UUID), `node_id` (mesh device id = Base32(SHA-256(DER pub)[0..10])), `public_ble_key`, …
 
-### Moderation
+### Moderation (server-side / operator feature — not part of the product UI)
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
 | POST | `/v1/moderation/report` | Bearer JWT | `{ "reported_node_id", "decrypted_message_content" }` |
 | GET | `/v1/moderation/blacklist` | — | JSON array of banned `node_id` |
 
+Honest status of these two endpoints:
+
+- `report` accepts **decrypted** message text. Nothing is uploaded automatically: it requires a signed-in account and an explicit user action, and the client side of this path is being restricted. Do not describe it as normal operation. An operator who enables it is choosing to store user-submitted plaintext (`reports` table) and is responsible for that.
+- The **global ban-list is not a product feature**: blacklist synchronisation is disabled in the client's Core build (`QQ_CORE_ONLY`). Only local per-device blocking is effective. The endpoint remains here for server-side/experimental use.
+
 Banned JWT `node_id` → **403** `node_banned` on `/v1/push`, `/v1/pull`, `/v1/register`, `/v1/oracle/sync`.
 
 Tables: `banned_nodes(node_id, reason, banned_at)`, `reports(id, reporter_jwt, reported_node_id, message_content, created_at)`.
 
-### Oracle (social orbit → courier hints)
+### Oracle (social orbit → courier hints) — legacy / experimental, not used by the product UI
 
 | Method | Path | Headers | Body |
 |--------|------|---------|------|

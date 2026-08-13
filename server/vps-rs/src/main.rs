@@ -88,9 +88,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => tracing::warn!(error = %e.message, "oracle prune failed"),
                 }
                 match mesh::prune_old_envelopes(&prune_db).await {
-                    Ok(n) if n > 0 => info!(deleted = n, "envelopes pruned (retention 2d)"),
+                    Ok(n) if n > 0 => info!(deleted = n, "envelopes pruned (transit retention)"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e.message, "envelope prune failed"),
+                }
+                match jwt_util::prune_revocations(&prune_db).await {
+                    Ok(n) if n > 0 => info!(deleted = n, "expired revocations pruned"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e.message, "revocation prune failed"),
                 }
                 match mesh::prune_old_reports(&prune_db).await {
                     Ok(n) if n > 0 => info!(deleted = n, "reports pruned (retention 30d)"),
@@ -112,11 +117,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/pull", get(mesh::pull))
         .route("/v1/register", post(mesh::register))
         .route("/v1/push", post(mesh::push))
+        .route("/v1/ack", post(mesh::ack))
         // Auth
         .route("/auth/email/send", post(auth::email_send))
         .route("/auth/email/verify", post(auth::email_verify))
         .route("/auth/telegram", post(auth::telegram_auth))
         .route("/auth/refresh", post(auth::refresh))
+        .route("/auth/logout", post(auth::logout))
         // Contacts / hidden BLE handshake
         .route("/contacts/add", post(contacts::add_contact))
         // Oracle — social-orbit ingest + courier hints

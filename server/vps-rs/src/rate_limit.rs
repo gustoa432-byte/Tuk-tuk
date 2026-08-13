@@ -70,6 +70,30 @@ const REPORT_PER_NODE: Window = Window {
     max: 10,
     period: Duration::from_secs(60 * 60),
 };
+/// Deliberately loose: clients ≤ 0.1.116 re-register on every 12s sync tick
+/// (≈300/h). The endpoint cannot create foreign rows, so this only bounds
+/// request volume; newer builds register every 10 minutes.
+const REGISTER_PER_NODE: Window = Window {
+    max: 600,
+    period: Duration::from_secs(60 * 60),
+};
+const REGISTER_PER_IP: Window = Window {
+    max: 1_200,
+    period: Duration::from_secs(60 * 60),
+};
+/// Contact lookups are the only "who is this UUID" surface — keep them scarce.
+const CONTACTS_PER_USER: Window = Window {
+    max: 60,
+    period: Duration::from_secs(60 * 60),
+};
+const CONTACTS_PER_IP: Window = Window {
+    max: 120,
+    period: Duration::from_secs(60 * 60),
+};
+const TELEGRAM_AUTH_PER_IP: Window = Window {
+    max: 30,
+    period: Duration::from_secs(15 * 60),
+};
 
 #[derive(Default)]
 struct Bucket {
@@ -159,6 +183,40 @@ impl RateLimitState {
 
     pub fn check_report(&self, node_id: &str) -> Result<(), AppError> {
         self.check(&format!("report:node:{node_id}"), REPORT_PER_NODE)
+    }
+
+    pub fn check_register(&self, node_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("register:node:{node_id}"), REGISTER_PER_NODE)?;
+        self.check(&format!("register:ip:{ip}"), REGISTER_PER_IP)?;
+        Ok(())
+    }
+
+    pub fn check_contacts(&self, user_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("contacts:user:{user_id}"), CONTACTS_PER_USER)?;
+        self.check(&format!("contacts:ip:{ip}"), CONTACTS_PER_IP)?;
+        Ok(())
+    }
+
+    pub fn check_telegram_auth(&self, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("tg_auth:ip:{ip}"), TELEGRAM_AUTH_PER_IP)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_blocks_after_max_and_is_key_scoped() {
+        let rl = RateLimitState::new();
+        let w = Window {
+            max: 2,
+            period: Duration::from_secs(60),
+        };
+        assert!(rl.check("k1", w).is_ok());
+        assert!(rl.check("k1", w).is_ok());
+        assert!(rl.check("k1", w).is_err(), "third hit must be limited");
+        assert!(rl.check("k2", w).is_ok(), "other keys are independent");
     }
 }
 

@@ -32,6 +32,7 @@ pub struct ErrorBody {
     pub error: String,
 }
 
+#[derive(Debug)]
 pub struct AppError {
     pub status: StatusCode,
     pub message: String,

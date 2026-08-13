@@ -14,6 +14,16 @@ class AckPolicyTest {
     }
 
     @Test
+    fun privateDeliveryAck_neverAcceptsATargetlessRow() {
+        // PRIVATE always has a destination; a blank one means the ACK cannot be
+        // proven to come from it, so "delivered" must not be claimed.
+        assertFalse(AckPolicy.acceptDeliveryAck(null, "ANY", requireTarget = true))
+        assertFalse(AckPolicy.acceptDeliveryAck("   ", "ANY", requireTarget = true))
+        assertTrue(AckPolicy.acceptDeliveryAck("PEER_A", "PEER_A", requireTarget = true))
+        assertFalse(AckPolicy.acceptDeliveryAck("PEER_A", "ATTACKER", requireTarget = true))
+    }
+
+    @Test
     fun backpackWipe_onlyFromDestination() {
         assertTrue(AckPolicy.acceptBackpackWipe("DEST", "DEST"))
         assertFalse(AckPolicy.acceptBackpackWipe("DEST", "OTHER"))
