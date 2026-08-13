@@ -60,6 +60,7 @@ import kotlinx.coroutines.withContext
 enum class SettingsSection {
     Hub,
     Account,
+    VpsSignIn,
     Privacy,
     Notifications,
     Appearance,
@@ -80,8 +81,23 @@ fun SettingsHub(
         )
         SettingsSection.Account -> SettingsAccountSection(
             viewModel = viewModel,
-            onBack = { section = SettingsSection.Hub }
+            onBack = { section = SettingsSection.Hub },
+            onOpenVpsSignIn = { section = SettingsSection.VpsSignIn }
         )
+        SettingsSection.VpsSignIn -> {
+            val context = LocalContext.current
+            val lang by AppLang.lang.collectAsState()
+            Column(modifier = Modifier.fillMaxSize()) {
+                SettingsBackRow(S.vpsSignIn(lang)) { section = SettingsSection.Account }
+                Box(modifier = Modifier.weight(1f)) {
+                    AuthOnboardingScreen { displayName, nick, provider ->
+                        viewModel.completeOnboarding(displayName, nick, provider)
+                        Toast.makeText(context, S.vpsSignInOk(lang), Toast.LENGTH_SHORT).show()
+                        section = SettingsSection.Account
+                    }
+                }
+            }
+        }
         SettingsSection.Privacy -> SettingsSimpleSection(
             title = { S.settingsPrivacy(it) },
             body = { S.settingsPrivacyBody(it) },
@@ -167,9 +183,14 @@ fun AboutTukTukScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SettingsAccountSection(viewModel: BLinkViewModel, onBack: () -> Unit) {
+private fun SettingsAccountSection(
+    viewModel: BLinkViewModel,
+    onBack: () -> Unit,
+    onOpenVpsSignIn: () -> Unit
+) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
+    val signedIn = com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -204,6 +225,16 @@ private fun SettingsAccountSection(viewModel: BLinkViewModel, onBack: () -> Unit
             style = Typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp)
         )
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(S.vpsSessionLabel(lang), color = TextSecondary, style = Typography.labelSmall)
+        Text(
+            if (signedIn) S.vpsSessionOn(lang) else S.vpsSessionOff(lang),
+            color = if (signedIn) AccentLime else TextSecondary,
+            style = Typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SettingsNavRow(S.vpsSignIn(lang), onOpenVpsSignIn)
     }
 }
 
@@ -256,42 +287,40 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
         SettingsBackRow(S.settingsNetwork(lang), onBack)
         Spacer(modifier = Modifier.height(8.dp))
         Text(S.settingsNetworkHint(lang), color = TextSecondary, style = Typography.bodySmall)
-        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(S.deliveryServer(lang), color = TextSecondary, style = Typography.labelSmall)
-            Spacer(modifier = Modifier.height(6.dp))
-            BasicTextField(
-                value = vpsDraft,
-                onValueChange = { vpsDraft = it },
-                singleLine = true,
-                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
-                cursorBrush = SolidColor(TextPrimary),
-                decorationBox = { inner ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .glassPanel(corner = 12.dp)
-                            .padding(12.dp)
-                    ) {
-                        if (vpsDraft.isEmpty()) {
-                            Text(S.deliveryServerHint(lang), color = TextSecondary, style = Typography.bodySmall)
-                        }
-                        inner()
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(S.deliveryServer(lang), color = TextSecondary, style = Typography.labelSmall)
+        Spacer(modifier = Modifier.height(6.dp))
+        BasicTextField(
+            value = vpsDraft,
+            onValueChange = { vpsDraft = it },
+            singleLine = true,
+            textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+            cursorBrush = SolidColor(TextPrimary),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassPanel(corner = 12.dp)
+                        .padding(12.dp)
+                ) {
+                    if (vpsDraft.isEmpty()) {
+                        Text(S.deliveryServerHint(lang), color = TextSecondary, style = Typography.bodySmall)
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            TukTukButton(onClick = {
-                com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft.trim())
-                showSaved = true
-                Toast.makeText(context, S.deliveryServerSaved(lang), Toast.LENGTH_SHORT).show()
-            }) {
-                Text(S.save(lang), color = TextPrimary)
-                if (showSaved) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
+                    inner()
                 }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        TukTukButton(onClick = {
+            com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft.trim())
+            showSaved = true
+            Toast.makeText(context, S.deliveryServerSaved(lang), Toast.LENGTH_SHORT).show()
+        }) {
+            Text(S.save(lang), color = TextPrimary)
+            if (showSaved) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
             }
         }
         Spacer(modifier = Modifier.height(24.dp))

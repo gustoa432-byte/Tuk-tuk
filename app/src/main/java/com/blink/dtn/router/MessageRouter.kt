@@ -8,10 +8,10 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Unified send router.
- * Default (legacy): Internet (VPS) → BLE fallback.
- * QQ_CORE_ONLY: BLE-first; VPS never required for text delivery.
- * Wi‑Fi Direct removed — product surface is BLE GATT/ADV + optional VPS only.
+ * Unified send router: Internet (VPS) → BLE fallback.
+ * QQ Core gates Hub/PUBLIC UI elsewhere; VPS messaging stays an active transport
+ * when online + configured + JWT. BLE/DTN remains the offline path.
+ * Wi‑Fi Direct removed — product surface is BLE GATT/ADV + optional VPS.
  */
 object MessageRouter {
 
@@ -47,21 +47,6 @@ object MessageRouter {
         vpsReady: Boolean,
         blePeers: Int
     ): RouteDecision {
-        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-            return if (blePeers > 0) {
-                RouteDecision(
-                    RoutePath.BLE,
-                    "Люди рядом ($blePeers)",
-                    "People nearby ($blePeers)"
-                )
-            } else {
-                RouteDecision(
-                    RoutePath.BLE,
-                    "Ждём людей рядом",
-                    "Waiting for people nearby"
-                )
-            }
-        }
         return when {
             internetOnline && vpsReady -> RouteDecision(
                 RoutePath.INTERNET,
@@ -153,9 +138,7 @@ object MessageRouter {
     }
 
     /**
-     * Try alternate transports before BLE GATT.
-     * Legacy: VPS first. QQ_CORE_ONLY: never — BLE / DTN queue only.
-     * Returns true if the payload left without needing GATT.
+     * Try VPS before BLE. Returns true if the payload left without needing GATT.
      */
     suspend fun tryAlternateTransports(
         bytes: ByteArray,
@@ -167,10 +150,6 @@ object MessageRouter {
     ): Boolean {
         if (com.blink.dtn.moderation.GlobalBanCache.isBanned(targetNodeId)) {
             notePath(messageId, RoutePath.BLE, "получатель в бан-листе")
-            return false
-        }
-        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-            notePath(messageId, RoutePath.BLE, if (blePeers > 0) "через Bluetooth" else "ждём соседей")
             return false
         }
         val vpsReady = vps != null && vps.isConfigured() && internetOnline
@@ -193,10 +172,6 @@ object MessageRouter {
         vpsConfigured: Boolean,
         push: suspend () -> Boolean
     ): Boolean {
-        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-            notePath(messageId, RoutePath.BLE, "фото: только через интернет (вне Core)")
-            return false
-        }
         if (!internetOnline || !vpsConfigured) {
             notePath(messageId, RoutePath.INTERNET, "фото: нет интернета")
             return false
@@ -215,7 +190,6 @@ object MessageRouter {
         targetNode: String?,
         apply: (List<String>) -> Unit
     ) {
-        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         val target = targetNode?.trim().orEmpty()
         if (target.isEmpty()) return
         if (!com.blink.dtn.net.VpsConfig.isOnline(context)) return

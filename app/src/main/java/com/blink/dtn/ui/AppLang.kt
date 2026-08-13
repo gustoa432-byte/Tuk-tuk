@@ -147,6 +147,11 @@ object S {
     fun authTgConfirm(lang: String) = if (lang == LANG_EN) "Confirm Telegram" else "Подтвердить Telegram"
     fun authOrOffline(lang: String) = if (lang == LANG_EN) "or continue offline" else "или продолжить офлайн"
     fun authOfflineContinue(lang: String) = if (lang == LANG_EN) "Continue offline" else "Продолжить офлайн"
+    fun vpsSignIn(lang: String) = if (lang == LANG_EN) "Sign in to delivery server" else "Вход на сервер доставки"
+    fun vpsSignInOk(lang: String) = if (lang == LANG_EN) "Delivery server session saved" else "Сессия сервера доставки сохранена"
+    fun vpsSessionLabel(lang: String) = if (lang == LANG_EN) "Delivery server session" else "Сессия сервера доставки"
+    fun vpsSessionOn(lang: String) = if (lang == LANG_EN) "Signed in — messages can go via VPS" else "Вход выполнен — сообщения могут идти через VPS"
+    fun vpsSessionOff(lang: String) = if (lang == LANG_EN) "Not signed in — BLE only until you sign in" else "Нет входа — пока только Bluetooth"
     fun authSocialSoon(lang: String) = if (lang == LANG_EN)
         "Coming soon" else "Скоро"
     fun authNeedOnline(lang: String) = if (lang == LANG_EN)

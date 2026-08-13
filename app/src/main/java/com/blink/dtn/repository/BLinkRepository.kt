@@ -50,6 +50,7 @@ class BLinkRepository(
     }
 
     suspend fun createAndSavePublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL): Message {
+        check(!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) { "PUBLIC disabled in QQ Core" }
         val now = System.currentTimeMillis()
         val msg = Message(
             id = MeshIdGenerator.next(myNodeId),

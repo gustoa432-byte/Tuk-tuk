@@ -319,8 +319,7 @@ class BLinkViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             com.blink.dtn.net.VpsConfig.init(app)
             val looksLikeUuid = id.length >= 32 && id.count { it == '-' } >= 4
-            val canOnline = !com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
-                looksLikeUuid &&
+            val canOnline = looksLikeUuid &&
                 com.blink.dtn.auth.AuthSessionStore.hasVpsSession(app) &&
                 com.blink.dtn.net.VpsConfig.isConfigured(app)
 

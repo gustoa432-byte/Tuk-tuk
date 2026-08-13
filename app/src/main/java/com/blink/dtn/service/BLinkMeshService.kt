@@ -73,19 +73,16 @@ class BLinkMeshService : Service() {
         }
 
         runCatching {
-            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-                android.util.Log.i("MeshService", "QQ_CORE_ONLY: skip VPS bridge start (BLE/DTN only)")
-            } else {
-                com.blink.dtn.net.VpsConfig.init(this)
-                val vps = com.blink.dtn.net.VpsBridge.getInstance(
-                    this,
-                    dao,
-                    bleMeshManager,
-                    myNodeId
-                )
-                bleMeshManager.vpsBridge = vps
-                vps.start()
-            }
+            // VPS internet bridge stays active (push/pull). QQ Core only gates Hub/PUBLIC UI.
+            com.blink.dtn.net.VpsConfig.init(this)
+            val vps = com.blink.dtn.net.VpsBridge.getInstance(
+                this,
+                dao,
+                bleMeshManager,
+                myNodeId
+            )
+            bleMeshManager.vpsBridge = vps
+            vps.start()
         }.onFailure {
             android.util.Log.w("MeshService", "VPS bridge init: ${it.message}")
         }
