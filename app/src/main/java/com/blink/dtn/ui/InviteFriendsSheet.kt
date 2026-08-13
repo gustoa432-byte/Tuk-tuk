@@ -101,7 +101,7 @@ fun InviteFriendsSheet(
 
 @Composable
 private fun InviteRow(label: String, onClick: () -> Unit) {
-    TukTukButton(onClick = onClick) {
+    QqButton(onClick = onClick) {
         Text(label, color = TextPrimary, style = Typography.bodyMedium)
     }
     Spacer(modifier = Modifier.height(8.dp))

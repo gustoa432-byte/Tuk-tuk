@@ -199,9 +199,9 @@ fun ContactsScreen(
                 modifier = Modifier.weight(1f)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 val id = addId.trim()
-                if (id.isBlank()) return@TukTukButton
+                if (id.isBlank()) return@QqButton
                 viewModel.addContactOnlineOrLocal(id) { ok, meshId, msg ->
                     if (ok && msg == "ok") {
                         Toast.makeText(context, S.handshakeOk(lang), Toast.LENGTH_SHORT).show()
@@ -217,7 +217,7 @@ fun ContactsScreen(
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = {
+        QqButton(onClick = {
             val options = ScanOptions()
             options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
             options.setCameraId(0)

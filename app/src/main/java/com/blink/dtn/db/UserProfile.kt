@@ -69,12 +69,12 @@ data class UserProfile(
         isBlocked -> "blocked"
         isStranger -> "stranger"
         isVerified -> "verified"
-        else -> "from network"
+        else -> "not verified"
     } else when {
         isBlocked -> "блок"
         isStranger -> "незнакомец"
         isVerified -> "проверен"
-        else -> "из сети"
+        else -> "не сверен"
     }
 
     @Deprecated("Use trustBadge(lang)", replaceWith = ReplaceWith("trustBadge()"))

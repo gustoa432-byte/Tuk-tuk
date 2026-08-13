@@ -99,11 +99,11 @@ fun rememberAvatarPicker(
                 previewBitmap = null
                 pendingUri = null
             },
-            title = { Text("Аватар для сети", color = TextPrimary) },
+            title = { Text("Фото профиля", color = TextPrimary) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "Квадрат ${AvatarCompressor.EDGE_PX}×${AvatarCompressor.EDGE_PX}, сжатый JPEG — удобно для QR и mesh.",
+                        "Маленький квадрат ${AvatarCompressor.EDGE_PX}×${AvatarCompressor.EDGE_PX} — чтобы помещалось в QR и быстро доходило до людей рядом.",
                         color = TextSecondary,
                         style = Typography.bodySmall
                     )

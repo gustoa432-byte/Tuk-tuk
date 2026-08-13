@@ -119,7 +119,7 @@ object S {
     fun enterName(lang: String) = if (lang == LANG_EN) "Your nickname..." else "Ваш никнейм..."
     fun enterNameHint(lang: String) = if (lang == LANG_EN) "Enter nickname..." else "Введите никнейм..."
     fun enterPeerId(lang: String) = if (lang == LANG_EN)
-        "Server user ID or mesh ID..." else "ID на сервере или mesh ID..."
+        "Their Qq ID..." else "Qq ID собеседника..."
     fun findOrStartDialog(lang: String) = if (lang == LANG_EN) "Find or start a dialog..." else "Найти или начать диалог..."
     fun renameHint(lang: String) = if (lang == LANG_EN) "E.g. Vasya from work" else "Например, Вася с работы"
 
@@ -150,8 +150,14 @@ object S {
     fun vpsSignIn(lang: String) = if (lang == LANG_EN) "Sign in to delivery server" else "Вход на сервер доставки"
     fun vpsSignInOk(lang: String) = if (lang == LANG_EN) "Delivery server session saved" else "Сессия сервера доставки сохранена"
     fun vpsSessionLabel(lang: String) = if (lang == LANG_EN) "Delivery server session" else "Сессия сервера доставки"
-    fun vpsSessionOn(lang: String) = if (lang == LANG_EN) "Signed in — messages can go via VPS" else "Вход выполнен — сообщения могут идти через VPS"
-    fun vpsSessionOff(lang: String) = if (lang == LANG_EN) "Not signed in — BLE only until you sign in" else "Нет входа — пока только Bluetooth"
+    fun vpsSessionOn(lang: String) = if (lang == LANG_EN)
+        "Signed in — messages can also go over the internet when there is any"
+    else
+        "Вход выполнен — сообщения могут идти ещё и через интернет, когда он есть"
+    fun vpsSessionOff(lang: String) = if (lang == LANG_EN)
+        "Not signed in — messages go only through people nearby"
+    else
+        "Входа нет — сообщения идут только через людей рядом"
     fun authSocialSoon(lang: String) = if (lang == LANG_EN)
         "Coming soon" else "Скоро"
     fun authNeedOnline(lang: String) = if (lang == LANG_EN)
@@ -161,7 +167,7 @@ object S {
     fun hubChronicleEmpty(lang: String) = if (lang == LANG_EN)
         "No completed routes yet" else "Пока нет завершённых маршрутов"
     fun handshakeOk(lang: String) = if (lang == LANG_EN)
-        "Contact key saved for offline mesh" else "Ключ контакта сохранён для офлайн-сети"
+        "Contact saved — you can write without the internet" else "Контакт сохранён — можно писать без интернета"
     fun handshakeFail(lang: String) = if (lang == LANG_EN)
         "Could not add contact online" else "Не удалось добавить контакт онлайн"
     fun authProfileTitle(lang: String) = if (lang == LANG_EN) "Your profile" else "Твой профиль"
@@ -175,21 +181,50 @@ object S {
     fun authNicknameHint(lang: String) = if (lang == LANG_EN) "Optional @handle" else "Необязательный @ник"
     fun authContinue(lang: String) = if (lang == LANG_EN) "Continue" else "Продолжить"
 
-    // Permission rationale (only what the app actually needs)
+    // Permission rationale — product terms, not Android terms.
     fun permTitle(lang: String) = if (lang == LANG_EN)
-        "Qq needs Bluetooth and location"
+        "Let Qq see phones nearby"
     else
-        "Qq нужны Bluetooth и геолокация"
+        "Разрешите Qq видеть телефоны рядом"
     fun permBody(lang: String) = if (lang == LANG_EN)
-        "Bluetooth finds people nearby and carries messages without the internet. " +
-            "Android requires the location permission for any Bluetooth scan — Qq does not " +
-            "collect or send your coordinates. The camera is asked for only when you scan a QR code."
+        "Qq delivers your messages through the phones of people around you, so it has to " +
+            "notice when someone is close. That is what Bluetooth is for here.\n\n" +
+            "Your phone will also ask for location access: on this version of Android, " +
+            "looking for phones nearby is only allowed together with it. Qq never reads, " +
+            "stores or sends where you are.\n\n" +
+            "The camera is asked for separately, only at the moment you scan someone's QR code."
     else
-        "Bluetooth находит людей рядом и передаёт сообщения без интернета. " +
-            "Android требует разрешение на геолокацию для любого поиска по Bluetooth — " +
-            "Qq не собирает и не отправляет ваши координаты. " +
-            "Камера запрашивается только когда вы сканируете QR-код."
+        "Qq доставляет ваши сообщения через телефоны людей вокруг, поэтому ему нужно " +
+            "замечать, когда кто-то оказался рядом. Именно для этого здесь Bluetooth.\n\n" +
+            "Телефон попросит ещё и доступ к местоположению: на этой версии Android искать " +
+            "телефоны рядом разрешено только вместе с ним. Qq никогда не читает, не хранит " +
+            "и не отправляет, где вы находитесь.\n\n" +
+            "Камера запрашивается отдельно — только в момент, когда вы сканируете чужой QR-код."
     fun permGrant(lang: String) = if (lang == LANG_EN) "Allow" else "Разрешить"
+
+    // First run — the whole product in three lines.
+    fun welcomeTitle(lang: String) = if (lang == LANG_EN) "Qq" else "Qq"
+    fun welcomeTagline(lang: String) = if (lang == LANG_EN)
+        "Messages without the internet."
+    else
+        "Сообщения без интернета."
+    fun welcomeWhat(lang: String) = if (lang == LANG_EN)
+        "When there is no internet and no mobile network, your message travels through the " +
+            "phones of people around you until it reaches the person you wrote to."
+    else
+        "Когда нет интернета и не ловит сеть, ваше сообщение идёт через телефоны людей " +
+            "вокруг, пока не дойдёт до того, кому вы написали."
+    fun welcomeHow(lang: String) = if (lang == LANG_EN)
+        "To add someone, tap + and scan their QR code. Both of you need Qq — nothing else."
+    else
+        "Чтобы добавить человека, нажмите + и отсканируйте его QR-код. Qq нужен обоим — больше ничего."
+    fun welcomeTime(lang: String) = if (lang == LANG_EN)
+        "Delivery can take minutes or hours: the message waits until someone walks close " +
+            "enough to carry it further. You can close the app — it keeps working."
+    else
+        "Доставка может занять минуты или часы: сообщение ждёт, пока кто-нибудь подойдёт " +
+            "достаточно близко, чтобы понести его дальше. Приложение можно закрыть — оно продолжит работать."
+    fun welcomeStart(lang: String) = if (lang == LANG_EN) "Got it" else "Понятно"
 
     // Notifications / toasts
     fun idCopied(lang: String) = if (lang == LANG_EN) "ID copied" else "ID скопирован"
@@ -197,8 +232,14 @@ object S {
     fun nameSaved(lang: String) = if (lang == LANG_EN) "Name saved" else "Имя сохранено"
     fun modeSet(lang: String, label: String) = if (lang == LANG_EN) "Mode: $label" else "Режим: $label"
     fun qrVerified(lang: String) = if (lang == LANG_EN) "Contact verified via QR" else "Контакт проверен по QR"
-    fun qrKeyMismatch(lang: String) = if (lang == LANG_EN) "Invalid QR: key does not match ID" else "Неверный QR: ключ не совпадает с id"
-    fun qrNotContact(lang: String) = if (lang == LANG_EN) "Need a Qq contact QR (with key)" else "Нужен QR контакта Qq (с ключом)"
+    fun qrKeyMismatch(lang: String) = if (lang == LANG_EN)
+        "This QR does not match that person — ask them to show it again"
+    else
+        "Этот QR не совпадает с человеком — попросите показать код ещё раз"
+    fun qrNotContact(lang: String) = if (lang == LANG_EN)
+        "That is not a Qq contact code — ask them to open Qq and show their QR"
+    else
+        "Это не код контакта Qq — попросите открыть Qq и показать свой QR"
     fun qrSelf(lang: String) = if (lang == LANG_EN) "That is your own QR" else "Это ваш собственный QR"
     fun telegramError(lang: String) = if (lang == LANG_EN) "Could not open Telegram" else "Не удалось открыть Telegram"
     fun avatarSaved(lang: String) = if (lang == LANG_EN) "Avatar saved" else "Аватар сохранён"
@@ -211,27 +252,34 @@ object S {
         "No dialogs yet.\nTap + to add a contact."
     else
         "У вас пока нет диалогов.\nНажмите +, чтобы добавить контакт."
-    fun noMessages(lang: String) = if (lang == LANG_EN) "No messages yet." else "Здесь пока нет сообщений."
+    fun noMessages(lang: String) = if (lang == LANG_EN)
+        "Send the first message — Qq will deliver it when it finds a way."
+    else
+        "Напишите первым — Qq доставит, когда найдёт путь."
     fun publicChatEmpty(lang: String) = if (lang == LANG_EN) "Public chat is quiet.\nSay something!" else "В общем чате пока тихо.\nНапишите что-нибудь!"
     fun anonymous(lang: String) = if (lang == LANG_EN) "Anonymous" else "Аноним"
     fun unknownContact(lang: String) = if (lang == LANG_EN) "Unknown contact" else "Неизвестный контакт"
     fun stranger(lang: String) = if (lang == LANG_EN) "Stranger" else "Незнакомец"
-    fun fromNetwork(lang: String) = if (lang == LANG_EN) "from network" else "из сети"
+    fun fromNetwork(lang: String) = if (lang == LANG_EN) "not verified" else "не сверен"
     fun qrAlreadyVerified(lang: String) = if (lang == LANG_EN) "QR already verified" else "QR уже проверен"
 
     // Banners / hints
     fun strangerBanner(lang: String) = if (lang == LANG_EN)
-        "Message request from a stranger. Nickname is just a label — check the ID. Accept, ignore or verify QR."
+        "Someone you have not added is writing to you. Anyone can pick any name, so trust the " +
+            "ID, not the name. Accept, ignore, or scan their QR to be sure."
     else
-        "Запрос сообщения от незнакомца. Ник — просто метка; смотрите id. Примите, игнорируйте или сверьте QR."
+        "Вам пишет человек, которого вы не добавляли. Имя может выбрать кто угодно — верьте " +
+            "не имени, а ID. Примите, игнорируйте или отсканируйте QR, чтобы убедиться."
     fun verifyQrHint(lang: String) = if (lang == LANG_EN)
-        "Contact from network. For family and close ones verify QR — this locks the key (\"verified\")."
+        "You have not checked in person that this is really them. Scan their QR once when you " +
+            "meet — after that Qq will warn you if anyone tries to take their place."
     else
-        "Контакт из сети. Для семьи и близких сверьте QR — так вы закрепите ключ («проверен»)."
+        "Вы ещё не убедились лично, что это действительно он. Отсканируйте его QR при встрече — " +
+            "после этого Qq предупредит, если кто-то попробует занять его место."
     fun publicChatHint(lang: String) = if (lang == LANG_EN)
-        "Public chat — open megaphone: nearby nodes see the text. No group encryption."
+        "Public chat is an open megaphone: every phone nearby can read it. Not private."
     else
-        "Общий чат — открытый мегафон: соседние узлы видят текст. Без группового шифрования."
+        "Общий чат — открытый мегафон: его читает любой телефон рядом. Это не личная переписка."
     fun renameTip(lang: String) = if (lang == LANG_EN)
         "Local label on this device only. The contact's network nick does not change."
     else
@@ -263,23 +311,27 @@ object S {
         "У $nick · быстрая передача рядом (экспериментально)"
 
     // Network mode (battery)
-    fun networkMode(lang: String) = if (lang == LANG_EN) "Battery / nearby activity" else "Батарея / активность рядом"
+    fun networkMode(lang: String) = if (lang == LANG_EN) "Battery" else "Батарея"
+    fun networkModeHint(lang: String) = if (lang == LANG_EN)
+        "How often Qq looks for people around you."
+    else
+        "Как часто Qq ищет людей вокруг."
     fun modeEconomy(lang: String) = if (lang == LANG_EN)
-        "Rare scan — network stays up, battery lasts."
+        "Looks around rarely. Delivery is slower, the battery lasts much longer."
     else
-        "Редкий скан — сеть живёт, телефон не садится за час."
+        "Смотрит вокруг редко. Доставка медленнее, зато телефон живёт дольше."
     fun modeMax(lang: String) = if (lang == LANG_EN)
-        "Dense scan — faster neighbors, higher drain."
+        "Looks around constantly. People are found fastest, the battery drains fastest."
     else
-        "Плотный скан — быстрее соседи, выше расход."
+        "Смотрит вокруг постоянно. Людей находит быстрее всего, батарея садится быстрее всего."
     fun modeBalance(lang: String) = if (lang == LANG_EN)
-        "Balance between discovery and battery."
+        "The usual choice — decent speed without eating the battery."
     else
-        "Баланс обнаружения и батареи."
+        "Обычный выбор — нормальная скорость и батарея не тает."
     fun modeCrowd(lang: String) = if (lang == LANG_EN)
-        "Stadium mode — short frames, ruthless peer TTL, tiny GATT."
+        "For a crowd — a stadium, a square, a queue. Many people at once, short messages."
     else
-        "Режим стадиона — короткие кадры, жёсткий TTL соседей, мало GATT."
+        "Для толпы — стадион, площадь, очередь. Много людей сразу, короткие сообщения."
 
     fun crowdTitle(lang: String) = if (lang == LANG_EN) "Nearby / Crowd" else "Рядом / Толпа"
     fun crowdSubtitle(lang: String) = if (lang == LANG_EN)
@@ -339,7 +391,7 @@ object S {
     fun infoTitle(lang: String) = if (lang == LANG_EN) "About Qq" else "О Qq"
     fun infoTagline(lang: String) = if (lang == LANG_EN) "Connection where there are people." else "Связь там где есть люди."
     fun infoBody(lang: String) = if (lang == LANG_EN)
-        "Qq works even when the internet is down and cell towers are silent. Your phones become the network, relaying messages from person to person."
+        "Qq works even when the internet is down and cell towers are silent. Your phones become the network, passing messages from person to person."
     else
         "Qq работает, даже когда падает интернет и молчат вышки сотовой связи. Ваши телефоны сами становятся сетью, передавая сообщения от человека к человеку."
     fun infoContacts(lang: String) = if (lang == LANG_EN) "Contacts" else "Контакты"
@@ -547,5 +599,128 @@ object S {
     fun emoji(lang: String) = if (lang == LANG_EN) "Emoji" else "Эмодзи"
     fun attach(lang: String) = if (lang == LANG_EN) "Attach" else "Вложение"
     fun voiceSoon(lang: String) = if (lang == LANG_EN) "Voice messages soon" else "Голосовые — скоро"
+
+    // "Why is it taking so long" — plain language, reachable from delivery status and About.
+    fun deliveryWhyLink(lang: String) = if (lang == LANG_EN)
+        "Why is it taking so long?" else "Почему так долго?"
+    fun deliveryHelpTitle(lang: String) = if (lang == LANG_EN)
+        "How delivery works" else "Как идёт доставка"
+    fun deliveryHelpWaiting(lang: String) = if (lang == LANG_EN)
+        "Why isn't it delivered yet?\n" +
+            "Because nobody suitable has been close enough yet. The message is saved on your " +
+            "phone and leaves on its own the moment someone appears."
+    else
+        "Почему ещё не доставлено?\n" +
+            "Потому что рядом пока не было подходящего человека. Сообщение лежит в вашем " +
+            "телефоне и уйдёт само, как только кто-то появится."
+    fun deliveryHelpHandedOn(lang: String) = if (lang == LANG_EN)
+        "What does \"at another Qq\" mean?\n" +
+            "Someone nearby took your message and is carrying it further. They cannot read it. " +
+            "It is not delivered yet — that word is only used when the recipient's phone confirms."
+    else
+        "Что значит «у другого Qq»?\n" +
+            "Кто-то рядом взял ваше сообщение и несёт его дальше. Прочитать он его не может. " +
+            "Это ещё не доставка — «доставлено» появится, только когда подтвердит телефон получателя."
+    fun deliveryHelpNearby(lang: String) = if (lang == LANG_EN)
+        "What happens when another Qq comes near?\n" +
+            "The phones notice each other by themselves and swap the messages they are carrying. " +
+            "You do not need to press anything, and the app may be closed."
+    else
+        "Что происходит, когда рядом появляется другой Qq?\n" +
+            "Телефоны сами замечают друг друга и обмениваются сообщениями, которые несут. " +
+            "Нажимать ничего не нужно, приложение может быть закрыто."
+    fun deliveryHelpSlow(lang: String) = if (lang == LANG_EN)
+        "Why can it take long?\n" +
+            "A message moves only as fast as people walk. In an empty place it waits; in a busy " +
+            "one it can arrive in seconds. Nothing is lost while it waits."
+    else
+        "Почему это может быть долго?\n" +
+            "Сообщение движется со скоростью людей. В пустом месте оно ждёт, в людном может " +
+            "дойти за секунды. Пока оно ждёт, ничего не теряется."
+
+    // Sound & vibration
+    fun settingsSound(lang: String) = if (lang == LANG_EN) "Sound and vibration" else "Звук и вибрация"
+    fun settingsSoundHint(lang: String) = if (lang == LANG_EN)
+        "Qq gives three quiet signals: a new message for you, your phone passing someone " +
+            "else's message on, and your own message reaching its recipient."
+    else
+        "Qq подаёт три тихих сигнала: новое сообщение вам, ваш телефон передал чужое " +
+            "сообщение дальше и ваше сообщение дошло до получателя."
+    fun soundToggle(lang: String) = if (lang == LANG_EN) "Sound" else "Звук"
+    fun vibrationToggle(lang: String) = if (lang == LANG_EN) "Vibration" else "Вибрация"
+    fun toggleOn(lang: String) = if (lang == LANG_EN) "On" else "Вкл"
+    fun toggleOff(lang: String) = if (lang == LANG_EN) "Off" else "Выкл"
+
+    // Advanced (gateway account lives one level down)
+    fun settingsAdvanced(lang: String) = if (lang == LANG_EN) "Advanced" else "Дополнительно"
+    fun deliveryServerBody(lang: String) = if (lang == LANG_EN)
+        "If you have an address of a Qq delivery server, messages can also travel over the " +
+            "internet when there is any. Leave it empty and Qq works exactly the same through people."
+    else
+        "Если у вас есть адрес сервера доставки Qq, сообщения смогут идти ещё и через " +
+            "интернет, когда он есть. Оставьте пусто — Qq так же работает через людей."
+    /*
+     * Toast copy for BLinkViewModel (owned by another agent — see report).
+     * Kept here so both languages live in one table.
+     */
+    fun sendFailedToast(lang: String) = if (lang == LANG_EN)
+        "Could not send — the message stays in the chat, tap it to try again"
+    else
+        "Не удалось отправить — сообщение осталось в чате, нажмите на него, чтобы повторить"
+    fun recipientBlockedToast(lang: String) = if (lang == LANG_EN)
+        "This person cannot receive messages" else "Этот человек не может получать сообщения"
+    fun needTheirQrToast(lang: String) = if (lang == LANG_EN)
+        "Qq does not know this person yet — the message will go as soon as you scan their QR"
+    else
+        "Qq пока не знает этого человека — сообщение уйдёт, как только вы отсканируете его QR"
+    fun sendCancelledToast(lang: String) = if (lang == LANG_EN)
+        "Sending cancelled" else "Отправка отменена"
+    fun alreadySentToast(lang: String) = if (lang == LANG_EN)
+        "Already on its way — you can only delete it here" else "Уже в пути — можно только удалить у себя"
+    fun retryingToast(lang: String) = if (lang == LANG_EN) "Sending again…" else "Отправляем ещё раз…"
+    fun photoNeedsInternetToast(lang: String) = if (lang == LANG_EN)
+        "Photos are not sent yet — no end-to-end encryption for media. Saved on this phone only."
+    else
+        "Фото пока не отправляются — для медиа нет сквозного шифрования. Сохранено только на этом телефоне."
+    fun photoFailedToast(lang: String) = if (lang == LANG_EN)
+        "Could not save the photo" else "Не удалось сохранить фото"
+    fun photoCompressFailedToast(lang: String) = if (lang == LANG_EN)
+        "Could not prepare the photo" else "Не удалось подготовить фото"
+    fun authGatewayHint(lang: String) = if (lang == LANG_EN)
+        "Delivery server address (optional)"
+    else
+        "Адрес сервера доставки (необязательно)"
+    fun authGatewayBody(lang: String) = if (lang == LANG_EN)
+        "Needed only for email or Telegram sign-in. Leave empty — Qq still works through people nearby."
+    else
+        "Нужен только для входа по почте или Telegram. Оставьте пусто — Qq работает через людей рядом."
+    fun authRebindPrimary(lang: String) = if (lang == LANG_EN)
+        "This is my new phone — make it primary"
+    else
+        "Это мой новый телефон — сделать его основным"
+    fun authRebindPrimaryHint(lang: String) = if (lang == LANG_EN)
+        "After a reinstall, contacts added by ID may otherwise keep an old key."
+    else
+        "После переустановки контакты, добавленные по ID, иначе могут получить старый ключ."
+    fun carryExplainTitle(lang: String) = if (lang == LANG_EN) "Carrying" else "Вы несёте"
+    fun carryExplainBody(count: Int, lang: String) = if (lang == LANG_EN) {
+        if (count <= 0)
+            "Your phone is not carrying anyone else's messages right now. When people nearby use Qq, encrypted messages may rest here until the next phone can take them."
+        else
+            "Your phone is carrying $count encrypted messages that belong to other people. They will move on when another Qq is close enough. Qq never shows whose they are."
+    } else {
+        if (count <= 0)
+            "Сейчас ваш телефон не несёт чужих сообщений. Когда рядом окажутся люди с Qq, чужие зашифрованные сообщения могут полежать здесь, пока следующий телефон не заберёт их дальше."
+        else
+            "Ваш телефон несёт $count чужих зашифрованных сообщений. Они уйдут дальше, когда рядом окажется другой Qq. Чьи они — Qq не показывает."
+    }
+    fun keyChangedTitle(lang: String) = if (lang == LANG_EN)
+        "This person's code changed"
+    else
+        "Код этого человека изменился"
+    fun keyChangedBody(lang: String) = if (lang == LANG_EN)
+        "Qq will keep writing with the key you already have. Scan their QR to confirm the new one — otherwise someone else could be pretending to be them."
+    else
+        "Qq продолжит писать со старым ключом. Отсканируйте их QR, чтобы подтвердить новый — иначе это может быть кто-то другой."
 }
 

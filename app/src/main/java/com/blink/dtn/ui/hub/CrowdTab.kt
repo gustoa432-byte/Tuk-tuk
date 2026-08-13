@@ -33,7 +33,7 @@ import com.blink.dtn.crowd.EventRoomStore
 import com.blink.dtn.ui.AppLang
 import com.blink.dtn.ui.BLinkViewModel
 import com.blink.dtn.ui.S
-import com.blink.dtn.ui.TukTukButton
+import com.blink.dtn.ui.QqButton
 import com.blink.dtn.ui.theme.AccentLime
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
@@ -81,7 +81,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TukTukButton(
+            QqButton(
                 enabled = duty != MeshDutyPreset.CROWD,
                 onClick = {
                     viewModel.setDutyPreset(MeshDutyPreset.CROWD)
@@ -90,7 +90,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
             ) {
                 Text(S.crowdEnable(lang), color = TextPrimary)
             }
-            TukTukButton(
+            QqButton(
                 enabled = duty == MeshDutyPreset.CROWD,
                 onClick = {
                     viewModel.setDutyPreset(MeshDutyPreset.NORMAL)
@@ -124,7 +124,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 EventRoomStore.create(context, titleDraft)
                 Toast.makeText(context, S.crowdRoomCreated(lang), Toast.LENGTH_SHORT).show()
             }) {
@@ -137,7 +137,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
                 style = Typography.bodyMedium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 EventRoomStore.leave(context)
             }) {
                 Text(S.crowdLeaveRoom(lang), color = TextPrimary)
@@ -146,7 +146,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
 
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 viewModel.startEmergencyBeacon()
                 viewModel.sendCrowd(CrowdFrame.KIND_SOS, draft.ifBlank { "SOS" })
                 draft = ""
@@ -154,7 +154,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
             }) {
                 Text("SOS", color = TextPrimary)
             }
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 viewModel.sendCrowd(CrowdFrame.KIND_PRESENCE, "ping")
             }) {
                 Text(S.crowdPresence(lang), color = TextPrimary)
@@ -181,7 +181,7 @@ fun CrowdTab(viewModel: BLinkViewModel) {
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(
+        QqButton(
             enabled = draft.isNotBlank(),
             onClick = {
                 viewModel.sendCrowd(CrowdFrame.KIND_PUBLIC, draft)

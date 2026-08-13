@@ -106,13 +106,13 @@ class BLinkViewModel(
     val meshCarryCount = dao.getBackpackMessagesFlow()
         .map { rows ->
             rows.count { m ->
-                !m.isAck &&
+                m.conversationId == com.blink.dtn.db.BLinkDao.RELAY_CONVERSATION_ID &&
+                    !m.isMine &&
+                    !m.isAck &&
                     m.status in listOf(
                         Message.STATUS_PENDING,
-                        Message.STATUS_IN_FLIGHT,
-                        Message.STATUS_PENDING_KEY
-                    ) &&
-                    m.type in listOf(Message.TYPE_PRIVATE, Message.TYPE_PRIVATE_IMAGE, Message.TYPE_PUBLIC)
+                        Message.STATUS_IN_FLIGHT
+                    )
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
@@ -343,6 +343,16 @@ class BLinkViewModel(
                 result.fold(
                     onSuccess = { resp ->
                         val bleKey = resp.publicBleKey
+                        if (bleKey.isBlank()) {
+                            // Consent-gated gateway: the request is recorded, the key
+                            // arrives only once the other side adds us back. Nothing
+                            // was verified, so do not mark the row out-of-band trusted.
+                            upsertPeerAsContact(id)
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                onDone?.invoke(false, id, "pending")
+                            }
+                            return@fold
+                        }
                         val meshId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(bleKey)
                             .ifBlank { id }
                         upsertPeerAsContact(
@@ -562,7 +572,7 @@ class BLinkViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         getApplication(),
-                        "Send failed: ${t.message ?: t.javaClass.simpleName}",
+                        com.blink.dtn.ui.S.sendFailedToast(com.blink.dtn.ui.AppLang.lang.value),
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -576,7 +586,7 @@ class BLinkViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         getApplication(),
-                        "Получатель в глобальном бан-листе",
+                        com.blink.dtn.ui.S.recipientBlockedToast(com.blink.dtn.ui.AppLang.lang.value),
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -660,7 +670,7 @@ class BLinkViewModel(
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                         android.widget.Toast.makeText(
                             getApplication(),
-                            "Нет ключа собеседника — запросили по сети. Лучше сверить QR.",
+                            com.blink.dtn.ui.S.needTheirQrToast(com.blink.dtn.ui.AppLang.lang.value),
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                     }
@@ -702,7 +712,7 @@ class BLinkViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         getApplication(),
-                        "Send failed: ${t.message ?: t.javaClass.simpleName}",
+                        com.blink.dtn.ui.S.sendFailedToast(com.blink.dtn.ui.AppLang.lang.value),
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -724,39 +734,30 @@ class BLinkViewModel(
     }
 
     /**
-     * Send a photo in a 1:1 chat via internet/VPS only. Never meshes.
-     * Without internet or VPS URL → toast + FAILED local row.
+     * Save a photo into a 1:1 chat locally.
+     *
+     * Sending is currently **disabled**: the only wire that ever carried photos
+     * was the gateway, and it carried them as plaintext base64 JPEG that the
+     * server stored verbatim. Until media gets real end-to-end encryption the
+     * photo stays on this device and the row is marked as not sent, instead of
+     * quietly leaking the picture. Receiving and viewing older photos is
+     * unaffected.
      */
     fun sendPrivatePhoto(uri: android.net.Uri, targetId: String, caption: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             try {
-                val online = com.blink.dtn.net.VpsConfig.isOnline(app)
-                val vpsConfigured = com.blink.dtn.net.VpsConfig.isConfigured(app)
-                if (!online || !vpsConfigured) {
-                    kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(
-                            app,
-                            if (!vpsConfigured)
-                                "Фото только через интернет — укажите VPS в профиле"
-                            else
-                                "Фото только через интернет — нет сети",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    return@launch
-                }
                 val jpeg = ChatPhotoCompressor.compressToBytes(app, uri)
                 if (jpeg == null) {
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(app, "Не удалось сжать фото", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(app, com.blink.dtn.ui.S.photoCompressFailedToast(com.blink.dtn.ui.AppLang.lang.value), android.widget.Toast.LENGTH_LONG).show()
                     }
                     return@launch
                 }
                 val draftId = MeshIdGenerator.next(myNodeId)
                 val file = ChatPhotoCompressor.writeBytes(app, draftId, jpeg) ?: run {
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(app, "Не удалось сохранить фото", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(app, com.blink.dtn.ui.S.photoFailedToast(com.blink.dtn.ui.AppLang.lang.value), android.widget.Toast.LENGTH_LONG).show()
                     }
                     return@launch
                 }
@@ -771,27 +772,19 @@ class BLinkViewModel(
                     timestamp = System.currentTimeMillis(),
                     ttl = 1,
                     isMine = true,
-                    status = Message.STATUS_PENDING,
+                    // Honest from the first frame: nothing carries this photo yet.
+                    status = Message.STATUS_FAILED,
                     receivedAt = System.currentTimeMillis(),
                     mediaPath = file.absolutePath
                 )
                 dao.insertMessageWithConversation(msg)
 
-                val vps = com.blink.dtn.net.VpsBridge.getInstance(app, dao, bleMeshManager, myNodeId)
-                val ok = com.blink.dtn.router.MessageRouter.sendPhotoInternetOnly(
-                    messageId = msg.id,
-                    internetOnline = online,
-                    vpsConfigured = true
-                ) {
-                    vps.pushPrivateImage(msg, jpeg)
-                }
-                if (!ok) {
-                    dao.updateMessageStatus(msg.id, Message.STATUS_FAILED)
-                    kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(app, "Не удалось отправить фото", android.widget.Toast.LENGTH_LONG).show()
-                    }
-                } else {
-                    com.blink.dtn.ui.BLinkViewModel.fastSyncTrigger.tryEmit(Unit)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        app,
+                        com.blink.dtn.ui.S.photoNeedsInternetToast(com.blink.dtn.ui.AppLang.lang.value),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             } catch (t: Throwable) {
                 android.util.Log.e("SEND", "Photo send crash", t)
@@ -799,7 +792,7 @@ class BLinkViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         app,
-                        "Photo failed: ${t.message ?: t.javaClass.simpleName}",
+                        com.blink.dtn.ui.S.photoFailedToast(com.blink.dtn.ui.AppLang.lang.value),
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -912,7 +905,8 @@ class BLinkViewModel(
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 android.widget.Toast.makeText(
                     getApplication(),
-                    if (ok) "Отправка отменена" else "Уже отправлено — можно только удалить у себя",
+                    if (ok) com.blink.dtn.ui.S.sendCancelledToast(com.blink.dtn.ui.AppLang.lang.value)
+                    else com.blink.dtn.ui.S.alreadySentToast(com.blink.dtn.ui.AppLang.lang.value),
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
@@ -931,7 +925,7 @@ class BLinkViewModel(
             dao.updateMessageStatusAndRetryCount(messageId, Message.STATUS_PENDING, 0)
             bleMeshManager.triggerRelay()
             kotlinx.coroutines.withContext(Dispatchers.Main) {
-                android.widget.Toast.makeText(getApplication(), "Повторная отправка…", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(getApplication(), com.blink.dtn.ui.S.retryingToast(com.blink.dtn.ui.AppLang.lang.value), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }

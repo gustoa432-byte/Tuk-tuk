@@ -216,10 +216,13 @@ fun MainScreen(viewModel: BLinkViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showAddContact by remember { mutableStateOf(false) }
+    var showCarrySheet by remember { mutableStateOf(false) }
+    var keyChangePeerState by remember { mutableStateOf<String?>(null) }
     var showDevPanel by remember { mutableStateOf(false) }
     var clickCount by remember { mutableStateOf(0) }
     var lastClickTime by remember { mutableStateOf(0L) }
     val context = LocalContext.current
+    var showIntro by remember { mutableStateOf(!QqFirstRun.seen(context)) }
     val lang by AppLang.lang.collectAsState()
     val carryCount by viewModel.meshCarryCount.collectAsState()
     val load = remember(carryCount) { DeliveryLoad.fromQueuedCount(carryCount) }
@@ -229,16 +232,31 @@ fun MainScreen(viewModel: BLinkViewModel) {
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
+        QqFeedbackPrefs.init(context)
         // Legacy gamification / reactions stay out of Core: old prefs must not
         // resurface as cosmetics or emoji on a plain text messenger.
         if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
             GamificationStore.init(context)
             ReactionStore.init(context)
         }
+        com.blink.dtn.ble.KeyChangeAlerts.events.collect { id ->
+            keyChangePeerState = id
+        }
     }
 
     if (showDevPanel && com.blink.dtn.BuildConfig.DEBUG) {
         DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
+        return
+    }
+
+    // Once, before anything else: what Qq is, how to add someone, how long it takes.
+    if (showIntro) {
+        QqIntroScreen(
+            onDone = {
+                QqFirstRun.markSeen(context)
+                showIntro = false
+            }
+        )
         return
     }
 
@@ -274,7 +292,7 @@ fun MainScreen(viewModel: BLinkViewModel) {
                     .statusBarsPadding()
                     .navigationBarsPadding()
             ) {
-                AboutTukTukScreen(onBack = { showAbout = false })
+                AboutQqScreen(onBack = { showAbout = false })
             }
         }
         return
@@ -291,10 +309,6 @@ fun MainScreen(viewModel: BLinkViewModel) {
             onOpenAbout = {
                 showProfile = false
                 showAbout = true
-            },
-            onScanSuccess = {
-                // After successful QR add, leave profile so PrivateTab can open the chat.
-                showProfile = false
             }
         )
         return
@@ -344,8 +358,12 @@ fun MainScreen(viewModel: BLinkViewModel) {
                                 )
                                 if (load != DeliveryLoad.Calm) {
                                     Spacer(modifier = Modifier.width(10.dp))
-                                    DeliveryLoadDot(load = load, count = carryCount)
                                 }
+                                DeliveryLoadDot(
+                                    load = load,
+                                    count = carryCount,
+                                    onOpen = { showCarrySheet = true }
+                                )
                             }
                         },
                         actions = {
@@ -409,30 +427,107 @@ fun MainScreen(viewModel: BLinkViewModel) {
             onOpenedChat = { showAddContact = false }
         )
     }
+    if (showCarrySheet) {
+        CarryExplainSheet(
+            count = carryCount,
+            onDismiss = { showCarrySheet = false }
+        )
+    }
+    val keyChangePeer = keyChangePeerState
+    if (keyChangePeer != null) {
+        AlertDialog(
+            onDismissRequest = { keyChangePeerState = null },
+            title = { Text(S.keyChangedTitle(lang), color = TextPrimary) },
+            text = { Text(S.keyChangedBody(lang), color = TextSecondary) },
+            confirmButton = {
+                Text(
+                    S.welcomeStart(lang),
+                    color = AccentLime,
+                    modifier = Modifier
+                        .bounceClick {
+                            showAddContact = true
+                            keyChangePeerState = null
+                        }
+                        .padding(12.dp)
+                )
+            },
+            dismissButton = {
+                Text(
+                    if (lang == "en") "Later" else "Позже",
+                    color = TextSecondary,
+                    modifier = Modifier
+                        .bounceClick { keyChangePeerState = null }
+                        .padding(12.dp)
+                )
+            },
+            containerColor = GlassDialogContainer
+        )
+    }
 }
 
 @Composable
-private fun DeliveryLoadDot(load: DeliveryLoad, count: Int) {
-    // 0 = calm (no dot at all), 1–3 yellow, 4–9 orange, 10+ red.
-    if (load == DeliveryLoad.Calm) return
-    val lang by AppLang.lang.collectAsState()
-    val color = when (load) {
-        DeliveryLoad.Light -> Color(0xFFE6C84A)
-        DeliveryLoad.Medium -> Color(0xFFE67E22)
-        DeliveryLoad.Heavy -> Color(0xFFE74C3C)
-        else -> Color.Transparent
+private fun DeliveryLoadDot(load: DeliveryLoad, count: Int, onOpen: () -> Unit) {
+    // Intensity is size + opacity of one neutral color. Red is reserved for send-failed.
+    // Calm still has a hit target so the explanation is reachable when carrying nothing.
+    val sizeDp = when (load) {
+        DeliveryLoad.Calm -> 6.dp
+        DeliveryLoad.Light -> 6.dp
+        DeliveryLoad.Medium -> 7.dp
+        DeliveryLoad.Heavy -> 8.dp
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    val alpha = when (load) {
+        DeliveryLoad.Calm -> 0.12f
+        DeliveryLoad.Light -> 0.35f
+        DeliveryLoad.Medium -> 0.65f
+        DeliveryLoad.Heavy -> 1f
+    }
+    val visible = load != DeliveryLoad.Calm
+    val appear = animateFloatAsState(
+        targetValue = if (visible) 1f else 0.35f,
+        animationSpec = tween(durationMillis = if (visible) 0 else 400),
+        label = "carryDot"
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .bounceClick(onOpen)
+            .padding(vertical = 8.dp)
+    ) {
         Box(
             modifier = Modifier
-                .size(8.dp)
-                .background(color, CircleShape)
+                .size(sizeDp)
+                .graphicsLayer { this.alpha = appear.value * if (visible) 1f else 1f }
+                .background(TextSecondary.copy(alpha = alpha), CircleShape)
         )
-        if (count > 0) {
-            Spacer(modifier = Modifier.width(4.dp))
+        if (load == DeliveryLoad.Heavy && count > 0) {
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
-                load.label(count, lang),
+                count.toString(),
                 style = Typography.labelSmall,
+                color = TextSecondary
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CarryExplainSheet(count: Int, onDismiss: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = com.blink.dtn.ui.theme.GlassDialogContainer
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).padding(bottom = 32.dp)) {
+            Text(
+                S.carryExplainTitle(lang),
+                style = Typography.titleMedium,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                S.carryExplainBody(count, lang),
+                style = Typography.bodyMedium,
                 color = TextSecondary
             )
         }
@@ -553,7 +648,7 @@ fun BottomBarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 }
 
 @Composable
-fun TukTukButton(
+fun QqButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit
@@ -613,88 +708,16 @@ fun PrivateTab(
 fun ChatListScreen(viewModel: BLinkViewModel, onOpenContacts: () -> Unit = {}) {
     val lang by AppLang.lang.collectAsState()
     val dialogs by viewModel.dialogs.collectAsState()
+    // No search header: the list is short by nature, and a raw-ID field disguised
+    // as search is not how you add a person. ＋ is the single primary action.
     val privateDialogs = dialogs.filter {
         it.conversationId != "general" && !it.isArchived
     }
-    var searchQuery by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
     val listState = rememberLazyListState()
-    val query = searchQuery.trim().lowercase()
-
-    val filtered = remember(privateDialogs, query) {
-        privateDialogs.filter { dialog ->
-            query.isEmpty() ||
-                dialog.displayName.orEmpty().lowercase().contains(query) ||
-                dialog.lastMessage.orEmpty().lowercase().contains(query) ||
-                dialog.conversationId.lowercase().contains(query)
-        }
-    }
-
-    fun startFromQuery() {
-        val id = searchQuery.trim()
-        if (id.isBlank()) return
-        viewModel.ensureContact(id)
-        viewModel.setCurrentDialog(id)
-        searchQuery = ""
-        focusManager.clearFocus()
-    }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(DividerColor.copy(alpha = 0.28f))
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                BasicTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    singleLine = true,
-                    textStyle = Typography.bodyMedium.copy(color = TextPrimary),
-                    cursorBrush = SolidColor(TextPrimary),
-                    decorationBox = { inner ->
-                        if (searchQuery.isEmpty()) {
-                            Text(
-                                text = S.searchDialogs(lang),
-                                color = TextSecondary,
-                                style = Typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        inner()
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            if (searchQuery.isNotBlank()) {
-                Text(
-                    S.get(lang),
-                    color = AccentLime,
-                    style = Typography.labelMedium,
-                    modifier = Modifier.bounceClick { startFromQuery() }
-                )
-            }
-        }
-
-        if (filtered.isEmpty()) {
+        if (privateDialogs.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
@@ -719,7 +742,7 @@ fun ChatListScreen(viewModel: BLinkViewModel, onOpenContacts: () -> Unit = {}) {
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
-                items(filtered, key = { it.conversationId }) { dialog ->
+                items(privateDialogs, key = { it.conversationId }) { dialog ->
                     DialogListRow(
                         dialog = dialog,
                         viewModel = viewModel,
@@ -964,6 +987,9 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val messageById = remember(messages) { messages.associateBy { it.id } }
+    // Core chat = SMS chrome: no forward, no edit, no multi-select. The code below
+    // stays in place (and still runs in non-core builds) but is unreachable here.
+    val extendedChat = !com.blink.dtn.BuildConfig.QQ_CORE_ONLY
 
     BackHandler(enabled = selecting || editing != null || replyTo != null || forwardQueue != null) {
         when {
@@ -1034,7 +1060,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
             },
             onCopyId = {
                 clipboardManager.setText(AnnotatedString(contactId))
-                Toast.makeText(context, "ID скопирован", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, S.idCopied(lang), Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -1173,7 +1199,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 Box {
                     Icon(
                         Icons.Default.MoreVert,
-                        contentDescription = "Меню",
+                        contentDescription = if (lang == "en") "Menu" else "Меню",
                         tint = TextPrimary,
                         modifier = Modifier
                             .clip(CircleShape)
@@ -1238,10 +1264,10 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TukTukButton(onClick = { viewModel.acceptContact(contactId) }) {
+                    QqButton(onClick = { viewModel.acceptContact(contactId) }) {
                         Text(S.accept(lang), color = TextPrimary, style = Typography.labelMedium)
                     }
-                    TukTukButton(onClick = {
+                    QqButton(onClick = {
                         viewModel.ignorePeer(contactId, profile?.nickname.orEmpty())
                     }) {
                         Text(S.ignore(lang), color = DangerColor, style = Typography.labelMedium)
@@ -1262,7 +1288,7 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                     style = Typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                TukTukButton(onClick = {
+                QqButton(onClick = {
                     val options = ScanOptions()
                     options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                     options.setCameraId(0)
@@ -1330,24 +1356,30 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
                             selectedIds = if (msg.id in selectedIds) selectedIds - msg.id else selectedIds + msg.id
                             if (selectedIds.isEmpty()) selecting = false
                         },
-                        onLongPressSelect = {
-                            selecting = true
-                            selectedIds = selectedIds + msg.id
-                        },
+                        onLongPressSelect = if (extendedChat) {
+                            {
+                                selecting = true
+                                selectedIds = selectedIds + msg.id
+                            }
+                        } else null,
                         onReply = {
                             editing = null
                             replyTo = msg
                         },
-                        onForward = { forwardQueue = listOf(msg) },
+                        onForward = if (extendedChat) {
+                            { forwardQueue = listOf(msg) }
+                        } else null,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(msg.text))
                             Toast.makeText(context, S.copied(lang), Toast.LENGTH_SHORT).show()
                         },
-                        onEdit = {
-                            replyTo = null
-                            editing = msg
-                            messageText = msg.text
-                        },
+                        onEdit = if (extendedChat) {
+                            {
+                                replyTo = null
+                                editing = msg
+                                messageText = msg.text
+                            }
+                        } else null,
                         onDeleteLocal = { viewModel.deleteMessageLocally(msg.id) },
                         onCancelSend = { viewModel.cancelOutgoingMessage(msg.id) },
                         onRetrySend = { viewModel.retryOutgoingMessage(msg.id) },
@@ -1553,7 +1585,13 @@ fun PublicTab(viewModel: BLinkViewModel, onPrivateChatRequested: (String) -> Uni
     }
 }
 
-// Modern messenger composer — emoji · field · attach · mic↔send
+/**
+ * Composer: field · attach · send.
+ *
+ * No microphone — Qq has no voice messages and the button promised one.
+ * The emoji sheet and its stickers are kept for non-core builds only; in Qq Core
+ * the keyboard's own emoji are enough.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatInputArea(
@@ -1622,16 +1660,18 @@ fun ChatInputArea(
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Bottom
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .bounceClick {
-                    if (onEmoji != null) onEmoji()
-                    else showEmojiSheet = true
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text("😊", style = Typography.titleMedium)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .bounceClick {
+                        if (onEmoji != null) onEmoji()
+                        else showEmojiSheet = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("😊", style = Typography.titleMedium)
+            }
         }
         BasicTextField(
             value = text,
@@ -1687,21 +1727,16 @@ fun ChatInputArea(
                 },
             contentAlignment = Alignment.Center
         ) {
-            androidx.compose.animation.AnimatedContent(
-                targetState = canSend,
-                label = "micSend"
-            ) { sendMode ->
-                if (sendMode) {
-                    Icon(
-                        if (editing) Icons.Filled.Check else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = sendLabel ?: S.send(lang),
-                        tint = if (editing) AccentLime else BackgroundDark,
-                        modifier = Modifier.size(20.dp)
-                    )
-                } else {
-                    Text("🎤", style = Typography.titleMedium)
-                }
-            }
+            Icon(
+                if (editing) Icons.Filled.Check else Icons.AutoMirrored.Filled.Send,
+                contentDescription = sendLabel ?: S.send(lang),
+                tint = when {
+                    editing -> AccentLime
+                    canSend -> BackgroundDark
+                    else -> TextSecondary
+                },
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }
@@ -2144,10 +2179,10 @@ fun ProfileTab(
                 }
         )
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(
+        QqButton(
             enabled = profileDirty || showSavedFlash,
             onClick = {
-                if (!profileDirty) return@TukTukButton
+                if (!profileDirty) return@QqButton
                 keyboardController?.hide()
                 viewModel.updateMyNameAndNick(nameFieldValue.text, nickFieldValue.text)
                 val resolvedName = viewModel.displayName()
@@ -2472,7 +2507,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = {
+        QqButton(onClick = {
             com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft)
             Toast.makeText(context, S.vpsSaved(lang), Toast.LENGTH_SHORT).show()
         }) {
@@ -2535,7 +2570,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        TukTukButton(onClick = { if (!loading) openGallery() }) {
+        QqButton(onClick = { if (!loading) openGallery() }) {
             Text(
                 if (loading) "…" else S.chooseWallpaper(lang),
                 color = TextPrimary,
@@ -2544,7 +2579,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
         }
         if (savedPreview != null || draftBitmap != null) {
             Spacer(modifier = Modifier.height(12.dp))
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 AppWallpaper.clear(context)
                 Toast.makeText(context, S.wallpaperReset(lang), Toast.LENGTH_SHORT).show()
             }) {
@@ -2698,7 +2733,7 @@ private fun PeerProfileSheet(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 if (profile?.isStranger == true) {
-                    TukTukButton(onClick = {
+                    QqButton(onClick = {
                         onAccept()
                         onDismiss()
                     }) {
@@ -2706,7 +2741,7 @@ private fun PeerProfileSheet(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                TukTukButton(onClick = onRename) {
+                QqButton(onClick = onRename) {
                     Text(S.rename(lang), color = TextPrimary, style = Typography.labelMedium)
                 }
             }
@@ -2783,7 +2818,7 @@ fun InfoContent(compact: Boolean = false) {
 
         Spacer(modifier = Modifier.height(16.dp))
         var showErrorReport by remember { mutableStateOf(false) }
-        TukTukButton(onClick = { showErrorReport = true }) {
+        QqButton(onClick = { showErrorReport = true }) {
             Text(S.errorReportButton(lang), color = TextPrimary)
         }
         if (showErrorReport) {

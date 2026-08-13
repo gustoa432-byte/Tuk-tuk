@@ -14,7 +14,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -49,7 +51,7 @@ object DeliveryVoyageLabels {
         lang: String = AppLang.lang.value
     ): String = when (status) {
         Message.STATUS_PENDING -> if (lang == "en") "queued" else "в очереди"
-        Message.STATUS_PENDING_KEY -> if (lang == "en") "needs key" else "нужен ключ"
+        Message.STATUS_PENDING_KEY -> if (lang == "en") "scan their QR" else "нужен QR контакта"
         Message.STATUS_IN_FLIGHT -> if (lang == "en") "sending" else "отправляется"
         Message.STATUS_STORED_IN_NEIGHBOR -> if (isPublic) {
             if (lang == "en") "passed on" else "передано"
@@ -81,8 +83,8 @@ object DeliveryVoyageLabels {
             Message.STATUS_PENDING ->
                 if (lang == "en") "Waiting for a way to send$via" else "Ждёт отправки$via"
             Message.STATUS_PENDING_KEY ->
-                if (lang == "en") "Scan their QR once to lock the encryption key"
-                else "Один раз отсканируйте их QR — нужен ключ шифрования"
+                if (lang == "en") "Scan their QR once — after that Qq can send to them privately"
+                else "Отсканируйте их QR один раз — после этого Qq сможет писать им приватно"
             Message.STATUS_IN_FLIGHT ->
                 if (lang == "en") "Sending$via" else "Отправляется$via"
             Message.STATUS_STORED_IN_NEIGHBOR ->
@@ -146,6 +148,7 @@ fun MessageVoyageDialog(
     onRetry: (() -> Unit)? = null
 ) {
     val lang by AppLang.lang.collectAsState()
+    var showHelp by remember { mutableStateOf(false) }
     val report = remember(msg.id, msg.status) {
         TraceStore.getByMessageId(msg.id)?.let { TraceAnalyzer.analyze(it) }
     }
@@ -176,6 +179,10 @@ fun MessageVoyageDialog(
         }
     }
 
+    if (showHelp) {
+        DeliveryHelpDialog(onDismiss = { showHelp = false })
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(S.messageTracker(lang), color = TextPrimary) },
@@ -194,6 +201,13 @@ fun MessageVoyageDialog(
                     DeliveryVoyageLabels.subtitle(msg, lang),
                     style = Typography.bodySmall,
                     color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    S.deliveryWhyLink(lang),
+                    style = Typography.labelMedium,
+                    color = AccentLime,
+                    modifier = Modifier.bounceClick { showHelp = true }
                 )
                 // Core = plain SMS feel: status + honest explanation, no hop / route chatter.
                 if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
@@ -267,6 +281,44 @@ fun MessageVoyageDialog(
                 TextButton(onClick = onDismiss) {
                     Text(S.close(lang), color = TextPrimary)
                 }
+            }
+        },
+        containerColor = GlassDialogContainer
+    )
+}
+
+/**
+ * Plain-language answers to the four questions the UI must not leave open:
+ * why it is not delivered, what "handed on" means, what happens when another Qq
+ * comes near, and why it can take long. Reachable from any delivery status and
+ * from About — never in the way.
+ */
+@Composable
+fun DeliveryHelpDialog(onDismiss: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(S.deliveryHelpTitle(lang), color = TextPrimary) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                listOf(
+                    S.deliveryHelpWaiting(lang),
+                    S.deliveryHelpHandedOn(lang),
+                    S.deliveryHelpNearby(lang),
+                    S.deliveryHelpSlow(lang)
+                ).forEach { block ->
+                    Text(block, color = TextSecondary, style = Typography.bodySmall)
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(S.close(lang), color = TextPrimary)
             }
         },
         containerColor = GlassDialogContainer

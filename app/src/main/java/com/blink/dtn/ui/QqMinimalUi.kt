@@ -54,6 +54,79 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** One-time flag for the first-run explanation. */
+object QqFirstRun {
+    private const val PREFS = "blink_prefs"
+    private const val KEY = "qq_intro_seen"
+
+    fun seen(context: android.content.Context): Boolean =
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY, false)
+
+    fun markSeen(context: android.content.Context) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY, true).apply()
+    }
+}
+
+/**
+ * The only explanation Qq ever shows on its own: what it is, how to add someone,
+ * and that delivery takes time. Shown once, before the empty dialog list.
+ */
+@Composable
+fun QqIntroScreen(onDone: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    BackHandler(onBack = onDone)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AppRootBackdrop()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 32.dp)
+                .padding(top = 72.dp, bottom = 40.dp)
+        ) {
+            Text(
+                "Qq",
+                style = Typography.titleLarge.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 34.sp,
+                    letterSpacing = 2.sp
+                ),
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                S.welcomeTagline(lang),
+                style = Typography.titleMedium,
+                color = TextSecondary
+            )
+
+            Spacer(modifier = Modifier.height(40.dp))
+            Text(S.welcomeWhat(lang), style = Typography.bodyLarge, color = TextPrimary)
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(S.welcomeHow(lang), style = Typography.bodyLarge, color = TextPrimary)
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(S.welcomeTime(lang), style = Typography.bodyMedium, color = TextSecondary)
+
+            Spacer(modifier = Modifier.height(48.dp))
+            Text(
+                S.welcomeStart(lang),
+                style = Typography.titleMedium,
+                color = TextPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bounceClick(onDone)
+                    .padding(vertical = 14.dp)
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddContactSheet(
@@ -67,6 +140,7 @@ fun AddContactSheet(
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
     var manualId by remember { mutableStateOf("") }
     var showMyQr by remember { mutableStateOf(false) }
+    var showManualId by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         contactQr = withContext(Dispatchers.IO) { viewModel.buildContactQr() }
@@ -142,47 +216,55 @@ fun AddContactSheet(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+            // Raw ID entry is the only advanced path — collapsed so scanning stays the answer.
             Text(
-                if (lang == "en") "Or enter ID" else "Или введите ID",
-                color = TextSecondary,
-                style = Typography.labelSmall
+                if (lang == "en") "Enter ID manually" else "Ввести ID вручную",
+                color = TextSecondary.copy(alpha = 0.7f),
+                style = Typography.labelSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bounceClick { showManualId = !showManualId }
+                    .padding(vertical = 10.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            BasicTextField(
-                value = manualId,
-                onValueChange = { manualId = it },
-                singleLine = true,
-                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
-                cursorBrush = SolidColor(TextPrimary),
-                decorationBox = { inner ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
-                            .padding(horizontal = 14.dp, vertical = 14.dp)
-                    ) {
-                        if (manualId.isEmpty()) {
-                            Text("Qq ID", color = TextSecondary, style = Typography.bodyMedium)
+            if (showManualId) {
+                Spacer(modifier = Modifier.height(8.dp))
+                BasicTextField(
+                    value = manualId,
+                    onValueChange = { manualId = it },
+                    singleLine = true,
+                    textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                    cursorBrush = SolidColor(TextPrimary),
+                    decorationBox = { inner ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 14.dp, vertical = 14.dp)
+                        ) {
+                            if (manualId.isEmpty()) {
+                                Text("Qq ID", color = TextSecondary, style = Typography.bodyMedium)
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            TukTukButton(
-                onClick = {
-                    val id = manualId.trim()
-                    if (id.isBlank()) return@TukTukButton
-                    viewModel.addContactOnlineOrLocal(id) { ok, meshId, _ ->
-                        if (ok || meshId.isNotBlank()) {
-                            viewModel.setCurrentDialog(meshId.ifBlank { id })
-                            onOpenedChat()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                QqButton(
+                    onClick = {
+                        val id = manualId.trim()
+                        if (id.isBlank()) return@QqButton
+                        viewModel.addContactOnlineOrLocal(id) { ok, meshId, _ ->
+                            if (ok || meshId.isNotBlank()) {
+                                viewModel.setCurrentDialog(meshId.ifBlank { id })
+                                onOpenedChat()
+                            }
                         }
                     }
+                ) {
+                    Text(if (lang == "en") "Add" else "Добавить", color = TextPrimary)
                 }
-            ) {
-                Text(if (lang == "en") "Add" else "Добавить", color = TextPrimary)
             }
         }
     }
@@ -198,8 +280,7 @@ fun QqMinimalProfile(
     viewModel: BLinkViewModel,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onScanSuccess: () -> Unit
+    onOpenAbout: () -> Unit
 ) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
@@ -213,32 +294,6 @@ fun QqMinimalProfile(
 
     LaunchedEffect(Unit) {
         contactQr = withContext(Dispatchers.IO) { viewModel.buildContactQr() }
-    }
-
-    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val scanned = result.contents
-        if (scanned.isNullOrBlank()) return@rememberLauncherForActivityResult
-        when (val parsed = com.blink.dtn.crypto.ContactQr.parse(scanned, viewModel.myNodeId)) {
-            is com.blink.dtn.crypto.ContactQr.Result.Ok -> {
-                val p = parsed.parsed
-                val avatar = p.avatarAvBase64?.let { av ->
-                    decodeContactQrAvatar(org.json.JSONObject().put("av", av))
-                }
-                if (p.hasPinnedKey) {
-                    viewModel.addScannedContact(p.nodeId, p.nick, p.publicKeyBase64, avatar)
-                } else {
-                    viewModel.ensureContact(p.nodeId, p.nick)
-                    viewModel.setCurrentDialog(p.nodeId)
-                }
-                onScanSuccess()
-            }
-            com.blink.dtn.crypto.ContactQr.Result.KeyMismatch ->
-                Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
-            com.blink.dtn.crypto.ContactQr.Result.Self ->
-                Toast.makeText(context, S.qrSelf(lang), Toast.LENGTH_SHORT).show()
-            com.blink.dtn.crypto.ContactQr.Result.NotContact ->
-                Toast.makeText(context, S.qrNotContact(lang), Toast.LENGTH_LONG).show()
-        }
     }
 
     BackHandler(onBack = onBack)
@@ -403,17 +458,9 @@ fun QqMinimalProfile(
 
             Spacer(modifier = Modifier.height(48.dp))
 
+            // Scanning lives behind ＋ only — one entry point for adding people.
             QuietActionRow(S.settings(lang), onOpenSettings)
             QuietActionRow(S.aboutProject(lang), onOpenAbout)
-            QuietActionRow(S.scanQr(lang)) {
-                val options = ScanOptions()
-                options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                options.setCameraId(0)
-                options.setBeepEnabled(false)
-                options.setBarcodeImageEnabled(true)
-                options.setCaptureActivity(CustomScannerActivity::class.java)
-                scanLauncher.launch(options)
-            }
         }
     }
 }

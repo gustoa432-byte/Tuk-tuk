@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -74,6 +77,14 @@ fun AuthOnboardingScreen(
     var showTgField by remember { mutableStateOf(false) }
     var otpSent by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var rebindPrimary by remember { mutableStateOf(false) }
+    val savedGateway by VpsConfig.baseUrl.collectAsState()
+    var gatewayDraft by remember { mutableStateOf(savedGateway) }
+
+    fun persistGateway() {
+        VpsConfig.init(context)
+        VpsConfig.setBaseUrl(context, gatewayDraft.trim())
+    }
 
     fun goProfile(p: AuthProvider) {
         provider = p
@@ -101,9 +112,13 @@ fun AuthOnboardingScreen(
                 onTgInit = { tgInitField = it },
                 showTgField = showTgField,
                 busy = busy,
+                gatewayDraft = gatewayDraft,
+                onGateway = { gatewayDraft = it },
+                rebindPrimary = rebindPrimary,
+                onRebindPrimary = { rebindPrimary = it },
                 onGetCode = {
                     if (busy) return@SignInStep
-                    VpsConfig.init(context)
+                    persistGateway()
                     scope.launch {
                         busy = true
                         when (val r = EmailOtpAuth(context, emailField.text).beginSignIn()) {
@@ -120,11 +135,16 @@ fun AuthOnboardingScreen(
                 },
                 onVerifyEmail = {
                     if (busy) return@SignInStep
-                    VpsConfig.init(context)
+                    persistGateway()
                     scope.launch {
                         busy = true
                         when (
-                            val r = EmailOtpAuth(context, emailField.text, otpField.text).beginSignIn()
+                            val r = EmailOtpAuth(
+                                context,
+                                emailField.text,
+                                otpField.text,
+                                rebindPrimary = rebindPrimary
+                            ).beginSignIn()
                         ) {
                             is AuthResult.Success -> {
                                 Toast.makeText(context, S.authEmailOk(lang), Toast.LENGTH_SHORT).show()
@@ -145,10 +165,14 @@ fun AuthOnboardingScreen(
                         Toast.makeText(context, S.authTgHint(lang), Toast.LENGTH_SHORT).show()
                         return@SignInStep
                     }
-                    VpsConfig.init(context)
+                    persistGateway()
                     scope.launch {
                         busy = true
-                        when (val r = TelegramAuth(context, tgInitField.text).beginSignIn()) {
+                        when (val r = TelegramAuth(
+                            context,
+                            tgInitField.text,
+                            rebindPrimary = rebindPrimary
+                        ).beginSignIn()) {
                             is AuthResult.Success -> goProfile(AuthProvider.TELEGRAM)
                             is AuthResult.Failed ->
                                 Toast.makeText(context, r.reason, Toast.LENGTH_LONG).show()
@@ -214,6 +238,10 @@ private fun SignInStep(
     onTgInit: (TextFieldValue) -> Unit,
     showTgField: Boolean,
     busy: Boolean,
+    gatewayDraft: String,
+    onGateway: (String) -> Unit,
+    rebindPrimary: Boolean,
+    onRebindPrimary: (Boolean) -> Unit,
     onGetCode: () -> Unit,
     onVerifyEmail: () -> Unit,
     onToggleTelegram: () -> Unit,
@@ -233,8 +261,22 @@ private fun SignInStep(
             style = Typography.bodySmall,
             color = TextSecondary,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp, bottom = 28.dp)
+            modifier = Modifier.padding(top = 8.dp, bottom = 20.dp)
         )
+
+        Text(
+            S.authGatewayBody(lang),
+            style = Typography.labelSmall,
+            color = TextSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 10.dp)
+        )
+        AuthMinimalStringField(
+            placeholder = S.authGatewayHint(lang),
+            value = gatewayDraft,
+            onValueChange = onGateway
+        )
+        Spacer(modifier = Modifier.height(16.dp))
 
         AuthMinimalField(
             placeholder = S.authEmailHint(lang),
@@ -284,6 +326,25 @@ private fun SignInStep(
                 onClick = onTelegramSignIn,
                 enabled = !busy
             )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = rebindPrimary,
+                onCheckedChange = onRebindPrimary,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = AccentLime,
+                    uncheckedColor = TextSecondary
+                )
+            )
+            Column(modifier = Modifier.padding(start = 4.dp)) {
+                Text(S.authRebindPrimary(lang), color = TextPrimary, style = Typography.bodySmall)
+                Text(S.authRebindPrimaryHint(lang), color = TextSecondary, style = Typography.labelSmall)
+            }
         }
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -359,6 +420,35 @@ fun AuthDinoOutline(modifier: Modifier = Modifier) {
         drawPath(path, color = OutlineDino, style = Stroke(width = 2.5f))
         drawCircle(color = OutlineDino, radius = 3.5f, center = Offset(w * 0.68f, h * 0.3f))
     }
+}
+
+@Composable
+private fun AuthMinimalStringField(
+    placeholder: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = Typography.bodyLarge.copy(color = TextPrimary),
+        cursorBrush = SolidColor(TextPrimary),
+        decorationBox = { inner ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(FieldFill, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                if (value.isEmpty()) {
+                    Text(placeholder, color = TextSecondary.copy(alpha = 0.55f), style = Typography.bodyLarge)
+                }
+                inner()
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable

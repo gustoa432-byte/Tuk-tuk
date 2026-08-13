@@ -191,11 +191,11 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
 
             Spacer(modifier = Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TukTukButton(onClick = {
+                QqButton(onClick = {
                     replaying = true
                     tab = "Journey"
                 }) { Text("Replay Trace", color = TextPrimary, style = Typography.labelMedium) }
-                TukTukButton(onClick = {
+                QqButton(onClick = {
                     TraceStore.shareExport(context, peerCount, peers)
                     if (autoSend) TraceAutoSend.maybeQueueUpload(context, peerCount, peers)
                     Toast.makeText(context, "Отчёт → tuktukfb@internet.ru", Toast.LENGTH_SHORT).show()
@@ -213,7 +213,7 @@ fun DeliveryObservatoryPanel(viewModel: BLinkViewModel, onClose: () -> Unit) {
                 DutyBlock(viewModel)
             }
             Spacer(modifier = Modifier.height(12.dp))
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 TraceStore.shareExport(context, peerCount, peers)
                 Toast.makeText(context, "Отчёт → tuktukfb@internet.ru", Toast.LENGTH_SHORT).show()
             }) { Text("Export ZIP", color = TextPrimary, style = Typography.labelMedium) }

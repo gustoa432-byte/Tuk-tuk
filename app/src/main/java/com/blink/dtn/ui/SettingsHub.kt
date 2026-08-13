@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -47,7 +46,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.ui.theme.AccentLime
-import com.blink.dtn.ui.theme.DividerColor
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
@@ -57,14 +55,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Settings read like a plain messenger: language, sound, battery, look, and an
+ * optional delivery server. Everything about the gateway account sits one level
+ * below the server field, so a core user never meets it — but it still works.
+ */
 enum class SettingsSection {
     Hub,
-    Account,
-    VpsSignIn,
-    Privacy,
-    Notifications,
+    Sound,
+    Battery,
     Appearance,
-    NetworkConfig,
+    DeliveryServer,
+    GatewayAccount,
+    VpsSignIn,
     About
 }
 
@@ -79,43 +82,40 @@ fun SettingsHub(
             onBack = onBack,
             onOpen = { section = it }
         )
-        SettingsSection.Account -> SettingsAccountSection(
+        SettingsSection.Sound -> SettingsSoundSection(
+            onBack = { section = SettingsSection.Hub }
+        )
+        SettingsSection.Battery -> SettingsBatterySection(
             viewModel = viewModel,
+            onBack = { section = SettingsSection.Hub }
+        )
+        SettingsSection.Appearance -> SettingsAppearanceSection(
+            onBack = { section = SettingsSection.Hub }
+        )
+        SettingsSection.DeliveryServer -> SettingsDeliveryServerSection(
             onBack = { section = SettingsSection.Hub },
+            onOpenAccount = { section = SettingsSection.GatewayAccount }
+        )
+        SettingsSection.GatewayAccount -> SettingsGatewayAccountSection(
+            viewModel = viewModel,
+            onBack = { section = SettingsSection.DeliveryServer },
             onOpenVpsSignIn = { section = SettingsSection.VpsSignIn }
         )
         SettingsSection.VpsSignIn -> {
             val context = LocalContext.current
             val lang by AppLang.lang.collectAsState()
             Column(modifier = Modifier.fillMaxSize()) {
-                SettingsBackRow(S.vpsSignIn(lang)) { section = SettingsSection.Account }
+                SettingsBackRow(S.vpsSignIn(lang)) { section = SettingsSection.GatewayAccount }
                 Box(modifier = Modifier.weight(1f)) {
                     AuthOnboardingScreen { displayName, nick, provider ->
                         viewModel.completeOnboarding(displayName, nick, provider)
                         Toast.makeText(context, S.vpsSignInOk(lang), Toast.LENGTH_SHORT).show()
-                        section = SettingsSection.Account
+                        section = SettingsSection.GatewayAccount
                     }
                 }
             }
         }
-        SettingsSection.Privacy -> SettingsSimpleSection(
-            title = { S.settingsPrivacy(it) },
-            body = { S.settingsPrivacyBody(it) },
-            onBack = { section = SettingsSection.Hub }
-        )
-        SettingsSection.Notifications -> SettingsSimpleSection(
-            title = { S.settingsNotifications(it) },
-            body = { S.settingsNotificationsBody(it) },
-            onBack = { section = SettingsSection.Hub }
-        )
-        SettingsSection.Appearance -> SettingsAppearanceSection(
-            onBack = { section = SettingsSection.Hub }
-        )
-        SettingsSection.NetworkConfig -> SettingsNetworkConfigSection(
-            viewModel = viewModel,
-            onBack = { section = SettingsSection.Hub }
-        )
-        SettingsSection.About -> AboutTukTukScreen(
+        SettingsSection.About -> AboutQqScreen(
             onBack = { section = SettingsSection.Hub }
         )
     }
@@ -127,6 +127,7 @@ private fun SettingsHubList(
     onOpen: (SettingsSection) -> Unit
 ) {
     val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -134,73 +135,8 @@ private fun SettingsHubList(
             .padding(16.dp)
     ) {
         SettingsBackRow(S.settings(lang), onBack)
-        Spacer(modifier = Modifier.height(12.dp))
-        SettingsNavRow(S.settingsAccount(lang)) { onOpen(SettingsSection.Account) }
-        SettingsNavRow(S.settingsPrivacy(lang)) { onOpen(SettingsSection.Privacy) }
-        SettingsNavRow(S.settingsNotifications(lang)) { onOpen(SettingsSection.Notifications) }
-        SettingsNavRow(S.settingsAppearance(lang)) { onOpen(SettingsSection.Appearance) }
-        SettingsNavRow(S.settingsNetwork(lang)) { onOpen(SettingsSection.NetworkConfig) }
-        SettingsNavRow(S.settingsAbout(lang)) { onOpen(SettingsSection.About) }
-    }
-}
-
-@Composable
-fun AboutTukTukScreen(onBack: () -> Unit) {
-    val lang by AppLang.lang.collectAsState()
-    val context = LocalContext.current
-    val version = remember {
-        runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-        }.getOrDefault("?")
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        SettingsBackRow(S.aboutProject(lang), onBack)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Qq", style = Typography.titleLarge, color = TextPrimary)
-        Text(S.slogan(lang), style = Typography.bodyMedium, color = TextSecondary)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("${S.versionLabel(lang)}: $version", color = TextSecondary, style = Typography.bodySmall)
-        Spacer(modifier = Modifier.height(16.dp))
-        // compact=true → no nested verticalScroll (was collapsing About)
-        InfoContent(compact = true)
-        Spacer(modifier = Modifier.height(12.dp))
-        SettingsNavRow(S.openGithub(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }
-        SettingsNavRow(S.openSource(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }
-        SettingsNavRow(S.supportProject(lang)) { openUrl(context, "https://t.me/tuk_tuk_official") }
-        SettingsNavRow(S.projectHistory(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }
-        Text(
-            S.licenseHint(lang),
-            color = TextSecondary,
-            style = Typography.labelSmall,
-            modifier = Modifier.padding(top = 12.dp)
-        )
-    }
-}
-
-@Composable
-private fun SettingsAccountSection(
-    viewModel: BLinkViewModel,
-    onBack: () -> Unit,
-    onOpenVpsSignIn: () -> Unit
-) {
-    val lang by AppLang.lang.collectAsState()
-    val context = LocalContext.current
-    val signedIn = com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        SettingsBackRow(S.settingsAccount(lang), onBack)
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(S.settingsAccountBody(lang), color = TextSecondary, style = Typography.bodySmall)
-        Spacer(modifier = Modifier.height(16.dp))
+        // Language is one tap — a whole sub-screen for it would be theatre.
         Text(S.langLabel(lang), color = TextSecondary, style = Typography.labelSmall)
         Spacer(modifier = Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -218,6 +154,132 @@ private fun SettingsAccountSection(
             }
         }
         Spacer(modifier = Modifier.height(20.dp))
+        SettingsNavRow(S.settingsSound(lang)) { onOpen(SettingsSection.Sound) }
+        SettingsNavRow(S.networkMode(lang)) { onOpen(SettingsSection.Battery) }
+        SettingsNavRow(S.settingsAppearance(lang)) { onOpen(SettingsSection.Appearance) }
+        SettingsNavRow(S.deliveryServer(lang)) { onOpen(SettingsSection.DeliveryServer) }
+        SettingsNavRow(S.settingsAbout(lang)) { onOpen(SettingsSection.About) }
+    }
+}
+
+@Composable
+private fun SettingsSoundSection(onBack: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { QqFeedbackPrefs.init(context) }
+    val soundOn by QqFeedbackPrefs.sound.collectAsState()
+    val vibrationOn by QqFeedbackPrefs.vibration.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        SettingsBackRow(S.settingsSound(lang), onBack)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(S.settingsSoundHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsToggleRow(S.soundToggle(lang), soundOn, lang) {
+            QqFeedbackPrefs.setSound(context, it)
+        }
+        SettingsToggleRow(S.vibrationToggle(lang), vibrationOn, lang) {
+            QqFeedbackPrefs.setVibration(context, it)
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    label: String,
+    checked: Boolean,
+    lang: String,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .glassPanel(corner = 14.dp)
+            .bounceClick { onChange(!checked) }
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextPrimary, style = Typography.bodyLarge, modifier = Modifier.weight(1f))
+        Text(
+            if (checked) S.toggleOn(lang) else S.toggleOff(lang),
+            color = if (checked) AccentLime else TextSecondary,
+            style = Typography.labelLarge
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+}
+
+@Composable
+fun AboutQqScreen(onBack: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    var showDeliveryHelp by remember { mutableStateOf(false) }
+    val version = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        }.getOrDefault("?")
+    }
+
+    if (showDeliveryHelp) {
+        DeliveryHelpDialog(onDismiss = { showDeliveryHelp = false })
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        SettingsBackRow(S.aboutProject(lang), onBack)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Qq", style = Typography.titleLarge, color = TextPrimary)
+        Text(S.slogan(lang), style = Typography.bodyMedium, color = TextSecondary)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("${S.versionLabel(lang)}: $version", color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(16.dp))
+        // compact=true → no nested verticalScroll (was collapsing About)
+        InfoContent(compact = true)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(S.settingsPrivacy(lang), style = Typography.titleMedium, color = TextPrimary)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.settingsPrivacyBody(lang), style = Typography.bodySmall, color = TextSecondary)
+        Spacer(modifier = Modifier.height(16.dp))
+        SettingsNavRow(S.deliveryHelpTitle(lang)) { showDeliveryHelp = true }
+        SettingsNavRow(S.openGithub(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }
+        SettingsNavRow(S.supportProject(lang)) { openUrl(context, "https://t.me/tuk_tuk_official") }
+        Text(
+            S.licenseHint(lang),
+            color = TextSecondary,
+            style = Typography.labelSmall,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+    }
+}
+
+/** Gateway account — one level below the server field, never on the main list. */
+@Composable
+private fun SettingsGatewayAccountSection(
+    viewModel: BLinkViewModel,
+    onBack: () -> Unit,
+    onOpenVpsSignIn: () -> Unit
+) {
+    val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    val signedIn = com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        SettingsBackRow(S.settingsAdvanced(lang), onBack)
+        Spacer(modifier = Modifier.height(12.dp))
         Text(S.yourId(lang), color = TextSecondary, style = Typography.labelSmall)
         Text(
             viewModel.myNodeId,
@@ -226,12 +288,10 @@ private fun SettingsAccountSection(
             modifier = Modifier.padding(top = 4.dp)
         )
         Spacer(modifier = Modifier.height(20.dp))
-        Text(S.vpsSessionLabel(lang), color = TextSecondary, style = Typography.labelSmall)
         Text(
             if (signedIn) S.vpsSessionOn(lang) else S.vpsSessionOff(lang),
             color = if (signedIn) AccentLime else TextSecondary,
-            style = Typography.bodySmall,
-            modifier = Modifier.padding(top = 4.dp)
+            style = Typography.bodySmall
         )
         Spacer(modifier = Modifier.height(12.dp))
         SettingsNavRow(S.vpsSignIn(lang), onOpenVpsSignIn)
@@ -239,25 +299,10 @@ private fun SettingsAccountSection(
 }
 
 @Composable
-private fun SettingsSimpleSection(
-    title: (String) -> String,
-    body: (String) -> String,
-    onBack: () -> Unit
+private fun SettingsDeliveryServerSection(
+    onBack: () -> Unit,
+    onOpenAccount: () -> Unit
 ) {
-    val lang by AppLang.lang.collectAsState()
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        SettingsBackRow(title(lang), onBack)
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(body(lang), color = TextSecondary, style = Typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -> Unit) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
     var vpsDraft by remember {
@@ -275,8 +320,6 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
             showSaved = false
         }
     }
-    val dutyPreset by com.blink.dtn.ble.MeshDutyPrefs.preset.collectAsState()
-    LaunchedEffect(Unit) { com.blink.dtn.ble.MeshDutyPrefs.init(context) }
 
     Column(
         modifier = Modifier
@@ -284,12 +327,10 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        SettingsBackRow(S.settingsNetwork(lang), onBack)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(S.settingsNetworkHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        SettingsBackRow(S.deliveryServer(lang), onBack)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(S.deliveryServerBody(lang), color = TextSecondary, style = Typography.bodySmall)
         Spacer(modifier = Modifier.height(16.dp))
-        Text(S.deliveryServer(lang), color = TextSecondary, style = Typography.labelSmall)
-        Spacer(modifier = Modifier.height(6.dp))
         BasicTextField(
             value = vpsDraft,
             onValueChange = { vpsDraft = it },
@@ -312,7 +353,7 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = {
+        QqButton(onClick = {
             com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft.trim())
             showSaved = true
             Toast.makeText(context, S.deliveryServerSaved(lang), Toast.LENGTH_SHORT).show()
@@ -324,8 +365,27 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
             }
         }
         Spacer(modifier = Modifier.height(24.dp))
-        Text(S.networkMode(lang), color = TextSecondary, style = Typography.labelSmall)
+        SettingsNavRow(S.settingsAdvanced(lang), onOpenAccount)
+    }
+}
+
+@Composable
+private fun SettingsBatterySection(viewModel: BLinkViewModel, onBack: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    val dutyPreset by com.blink.dtn.ble.MeshDutyPrefs.preset.collectAsState()
+    LaunchedEffect(Unit) { com.blink.dtn.ble.MeshDutyPrefs.init(context) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        SettingsBackRow(S.networkMode(lang), onBack)
         Spacer(modifier = Modifier.height(8.dp))
+        Text(S.networkModeHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(16.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             com.blink.dtn.ble.MeshDutyPreset.entries.forEach { p ->
                 val selected = dutyPreset == p
@@ -361,8 +421,8 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
                 else -> S.modeBalance(lang)
             },
             color = TextSecondary,
-            style = Typography.labelSmall,
-            modifier = Modifier.padding(top = 6.dp)
+            style = Typography.bodySmall,
+            modifier = Modifier.padding(top = 10.dp)
         )
     }
 }
@@ -444,7 +504,7 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
             )
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                     permissionLauncher.launch(mediaPermission)
                 } else picker.launch("image/*")
@@ -452,7 +512,7 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
                 Text(if (loading) "…" else S.chooseWallpaper(lang), color = TextPrimary)
             }
             if (wallpaperDirty) {
-                TukTukButton(onClick = {
+                QqButton(onClick = {
                     scope.launch {
                         withContext(Dispatchers.IO) { AppWallpaper.commitDraft(context) }
                         Toast.makeText(context, S.saved(lang), Toast.LENGTH_SHORT).show()
@@ -461,7 +521,7 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
                     Text(S.save(lang), color = AccentLime)
                 }
             }
-            TukTukButton(onClick = {
+            QqButton(onClick = {
                 AppWallpaper.discardDraft()
                 AppWallpaper.clear(context)
             }) {

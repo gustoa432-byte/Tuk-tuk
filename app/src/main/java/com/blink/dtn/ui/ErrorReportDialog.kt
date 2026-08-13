@@ -105,7 +105,7 @@ fun ErrorReportDialog(
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                    TukTukButton(
+                    QqButton(
                         onClick = {
                             phase = ReportPhase.Sending
                             errorHint = null
@@ -170,7 +170,7 @@ fun ErrorReportDialog(
                             color = TextPrimary
                         )
                     }
-                    TukTukButton(onClick = onDismiss) {
+                    QqButton(onClick = onDismiss) {
                         Text(if (en) "Cancel" else "Отмена", color = TextPrimary)
                     }
                 }
@@ -206,7 +206,7 @@ fun ErrorReportDialog(
                         color = TextSecondary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    TukTukButton(onClick = onDismiss) {
+                    QqButton(onClick = onDismiss) {
                         Text(if (en) "Close" else "Закрыть", color = TextPrimary)
                     }
                 }

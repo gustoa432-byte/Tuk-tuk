@@ -10,18 +10,18 @@ enum class DeliveryLoad {
     /** 0 — calm, no indicator */
     Calm,
 
-    /** 1–3 — yellow */
+    /** 1–3 */
     Light,
 
-    /** 4–9 — orange */
+    /** 4–9 */
     Medium,
 
-    /** 10+ — red */
+    /** 10+ */
     Heavy;
 
     fun label(count: Int, lang: String = AppLang.lang.value): String = when (this) {
-        Calm -> if (lang == "en") "Nothing to carry" else "Ничего не несёт"
-        else -> if (lang == "en") "Carrying $count" else "Несёт $count"
+        Calm -> if (lang == "en") "Nothing to carry" else "Вы ничего не несёте"
+        else -> if (lang == "en") "Carrying $count messages" else "Вы несёте $count сообщений"
     }
 
     companion object {

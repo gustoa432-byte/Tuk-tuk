@@ -34,9 +34,14 @@ class MeshNotificationAdapter(private val context: Context) {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
 
-        val soundUri = IncomingMessageSound.defaultNotificationUri(context)
-        if (soundUri != null) {
-            builder.setSound(soundUri)
+        if (com.blink.dtn.ui.QqFeedbackPrefs.soundEnabled(context)) {
+            val soundUri = IncomingMessageSound.defaultNotificationUri(context)
+            if (soundUri != null) builder.setSound(soundUri)
+        } else {
+            builder.setSilent(true)
+        }
+        if (!com.blink.dtn.ui.QqFeedbackPrefs.vibrationEnabled(context)) {
+            builder.setVibrate(longArrayOf(0L))
         }
 
         notificationManager.notify(id.hashCode(), builder.build())
