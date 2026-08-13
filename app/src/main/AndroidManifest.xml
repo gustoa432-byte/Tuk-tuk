@@ -22,6 +22,7 @@
 
     <!-- Notification permission (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Gallery avatar pick (legacy / Android 12-; Photo Picker preferred on 13+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
@@ -70,6 +71,17 @@
             android:name=".service.BLinkMeshService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|dataSync" />
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

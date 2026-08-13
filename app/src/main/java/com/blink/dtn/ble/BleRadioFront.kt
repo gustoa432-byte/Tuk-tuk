@@ -70,6 +70,8 @@ internal class BleRadioFront(
     @Volatile private var running = false
     @Volatile private var emergencyActive = false
     private var preEmergencyCadence: MeshDutyCadence? = null
+    private var scanFailJob: kotlinx.coroutines.Job? = null
+    private val scanFailAttempts = java.util.concurrent.atomic.AtomicInteger(0)
 
     fun start() {
         running = true
@@ -90,6 +92,9 @@ internal class BleRadioFront(
         preEmergencyCadence = null
         scanJob?.cancel()
         scanJob = null
+        scanFailJob?.cancel()
+        scanFailJob = null
+        scanFailAttempts.set(0)
         try {
             scanner?.stopScan(scanCallback)
         } catch (e: SecurityException) {
@@ -233,6 +238,7 @@ internal class BleRadioFront(
                     .build()
                 try {
                     scanner?.startScan(filters, settings, scanCallback)
+                    scanFailAttempts.set(0)
                 } catch (e: SecurityException) {
                     Log.e("DTN", "SecurityException in startScanning: ${e.message}")
                 }
@@ -318,6 +324,20 @@ internal class BleRadioFront(
 
         override fun onScanFailed(errorCode: Int) {
             Log.e("DTN", "Scan failed: $errorCode")
+            if (!running) return
+            val attempt = scanFailAttempts.getAndIncrement()
+            if (!BleRadioBackoff.shouldRetryScan(attempt)) {
+                Log.w("DTN", "Scan retry cap reached — waiting for next cadence")
+                scanFailAttempts.set(0)
+                return
+            }
+            val wait = BleRadioBackoff.scanDelayMs(attempt)
+            scanFailJob?.cancel()
+            scanFailJob = scopeProvider().launch {
+                delay(wait)
+                if (!running) return@launch
+                startScanningCycle()
+            }
         }
     }
 

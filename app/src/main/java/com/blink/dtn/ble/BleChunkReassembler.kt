@@ -25,6 +25,7 @@ internal class BleChunkReassembler(
     private data class Entry(
         val timestamp: Long,
         val chunks: MutableMap<Int, ByteArray>,
+        val expectedTotal: Int,
         var watchdogJob: kotlinx.coroutines.Job? = null,
         val isReassembled: AtomicBoolean = AtomicBoolean(false)
     )
@@ -64,7 +65,7 @@ internal class BleChunkReassembler(
                 }
             }
 
-            val newEntry = Entry(System.currentTimeMillis(), ConcurrentHashMap())
+            val newEntry = Entry(System.currentTimeMillis(), ConcurrentHashMap(), total)
             val existing = buffers.putIfAbsent(msgId, newEntry)
             if (existing == null) {
                 entry = newEntry
@@ -83,16 +84,20 @@ internal class BleChunkReassembler(
         }
 
         val ready = entry ?: return null
+        if (total != ready.expectedTotal) {
+            Log.w("BLE_RX", "Rejecting chunk $msgId index=$index total=$total expected=${ready.expectedTotal}")
+            return null
+        }
 
         // Immutable first-arrival: do not overwrite a clean chunk with a duplicate.
         ready.chunks.putIfAbsent(index, chunkData)
 
-        if (ready.chunks.size != total) return null
+        if (ready.chunks.size != ready.expectedTotal) return null
 
         if (!ready.isReassembled.compareAndSet(false, true)) return null
 
         val stream = ByteArrayOutputStream()
-        for (i in 0 until total) {
+        for (i in 0 until ready.expectedTotal) {
             val part = ready.chunks[i]
             if (part == null) {
                 ready.isReassembled.set(false)

@@ -10,6 +10,7 @@ import android.content.Context
 import android.util.Log
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * GATT client TX path: connect / MTU / discover / chunk enqueue.
@@ -36,6 +37,9 @@ internal class BleGattClientTx(
         /** Global GATT concurrency gate before a new connectGatt. */
         fun tryAcquireGattSlot(address: String): Boolean
     }
+
+    private val connectAttempts = ConcurrentHashMap<String, AtomicInteger>()
+    private val connectBlockedUntil = ConcurrentHashMap<String, Long>()
 
     fun send(device: BluetoothDevice, payload: ByteArray, messageId: String) {
         val chunkMsgId = BleChunkCodec.newChunkMessageId()
@@ -66,6 +70,14 @@ internal class BleGattClientTx(
             return
         }
 
+        val now = System.currentTimeMillis()
+        val blockedUntil = connectBlockedUntil[device.address] ?: 0L
+        if (now < blockedUntil) {
+            Log.w("BLE_TX", "Connect backoff ${device.address} for ${blockedUntil - now}ms")
+            deps.onWriteResult(messageId, device.address, false, softRetry = true)
+            return
+        }
+
         if (!deps.tryAcquireGattSlot(device.address)) {
             Log.w("BLE_TX", "GATT slot denied for ${device.address}")
             deps.trace(
@@ -85,10 +97,12 @@ internal class BleGattClientTx(
                 com.blink.dtn.telemetry.detailsOf("peer" to device.address)
             )
             device.connectGatt(context, false, object : BluetoothGattCallback() {
-                var currentMtu = 20
+                var currentMtu = 23
 
                 override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        connectAttempts.remove(gatt.device.address)
+                        connectBlockedUntil.remove(gatt.device.address)
                         com.blink.dtn.telemetry.MeshDutyTelemetry.noteGattConnectOk()
                         deps.trace(
                             messageId,
@@ -105,6 +119,11 @@ internal class BleGattClientTx(
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                         if (status != BluetoothGatt.GATT_SUCCESS) {
                             com.blink.dtn.telemetry.MeshDutyTelemetry.noteGattConnectFail()
+                            val n = connectAttempts.getOrPut(gatt.device.address) { AtomicInteger(0) }
+                                .getAndIncrement()
+                            val wait = BleRadioBackoff.gattDelayMs(n, status)
+                            connectBlockedUntil[gatt.device.address] = System.currentTimeMillis() + wait
+                            Log.w("BLE_TX", "GATT disconnect status=$status backoff=${wait}ms peer=${gatt.device.address}")
                         }
                         val address = gatt.device.address
                         deps.activeGatt().remove(address)
@@ -112,14 +131,15 @@ internal class BleGattClientTx(
                         deps.connectionLastUsed().remove(address)
                         deps.onPeerDisconnected(address)
                         deps.clearPendingOps(address)
-                        deps.disconnectGatt(gatt)
+                        try {
+                            gatt.close()
+                        } catch (_: Exception) {
+                        }
                     }
                 }
 
                 override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        currentMtu = mtu
-                    }
+                    currentMtu = if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23
                     try {
                         gatt.discoverServices()
                     } catch (e: SecurityException) {
@@ -172,7 +192,9 @@ internal class BleGattClientTx(
                             txQueue.complete(address, op, success = false)
                             deps.onWriteResult(op.messageId, address, false, softRetry = attrLenFail)
                         }
-                        deps.disconnectGatt(gatt)
+                        if (!attrLenFail) {
+                            deps.disconnectGatt(gatt)
+                        }
                     } else if (op != null) {
                         Log.d("BLE_WRITE_OK", "MessageId=${op.messageId} DeviceMAC=$address")
                         txQueue.complete(address, op, success = true)
