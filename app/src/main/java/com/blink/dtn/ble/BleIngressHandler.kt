@@ -38,6 +38,8 @@ internal class BleIngressHandler(
         fun enqueueMessage(msg: Message)
         fun enqueueProfileBroadcast()
         fun notifyIncoming(packet: Message)
+        /** Soft UX cue when we receive DELIVERED_ACK for our outbound PRIVATE. */
+        fun notifyDeliveredAckFeedback() {}
         fun ensureTrace(messageId: String, type: String? = null, senderId: String? = null, targetId: String? = null)
         fun trace(messageId: String, stage: String, details: Map<String, String> = emptyMap(), visual: String? = null)
         fun markSeen(dedupKey: String): Boolean
@@ -388,6 +390,7 @@ internal class BleIngressHandler(
             com.blink.dtn.router.MessageRouter.noteShipmentStatus(ackedMessageId, "друг получил")
             com.blink.dtn.router.MessageRouter.clearShipmentIf(ackedMessageId)
             com.blink.dtn.ui.GamificationStore.noteSavedDelivery()
+            deps.notifyDeliveredAckFeedback()
         }
         return true
     }

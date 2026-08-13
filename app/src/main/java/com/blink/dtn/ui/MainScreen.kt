@@ -197,8 +197,8 @@ fun CustomBackIcon(modifier: Modifier = Modifier) {
 }
 
 /**
- * V3 Phase 1 — product shell tabs.
- * User thinks in people/messages, not transports.
+ * Minimal Qq shell: dialogs list + profile + add-contact.
+ * Hub / Channels / bottom bar removed from product UI (legacy code remains gated).
  */
 enum class MainTab {
     Dialogs,
@@ -210,32 +210,25 @@ enum class MainTab {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(viewModel: BLinkViewModel) {
-    var selectedTab by remember { mutableStateOf(MainTab.Dialogs) }
-    var showDevPanel by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showAddContact by remember { mutableStateOf(false) }
+    var showDevPanel by remember { mutableStateOf(false) }
     var clickCount by remember { mutableStateOf(0) }
     var lastClickTime by remember { mutableStateOf(0L) }
-    val peerCount by viewModel.peerCount.collectAsState()
-    val vkActive by viewModel.vkActive.collectAsState()
-    val nearbyUpdate by viewModel.nearbyUpdate.collectAsState()
-    val networkLive by com.blink.dtn.router.MessageRouter.networkLive.collectAsState()
-    val isConnected = vkActive || peerCount > 0 || networkLive.sloganActive
     val context = LocalContext.current
     val lang by AppLang.lang.collectAsState()
-    val gm by GamificationStore.snap.collectAsState()
+    val carryCount by viewModel.meshCarryCount.collectAsState()
+    val load = remember(carryCount) { DeliveryLoad.fromQueuedCount(carryCount) }
+    val currentDialogId by viewModel.currentDialogId.collectAsState()
+    val imeVisible = WindowInsets.isImeVisible
+
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
         GamificationStore.init(context)
         ReactionStore.init(context)
-    }
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != MainTab.Profile) {
-            showSettings = false
-            showAbout = false
-            AppWallpaper.discardDraft()
-        }
     }
 
     if (showDevPanel) {
@@ -243,146 +236,164 @@ fun MainScreen(viewModel: BLinkViewModel) {
         return
     }
 
-    val imeVisible = WindowInsets.isImeVisible
-    Box(modifier = Modifier.fillMaxSize().background(CosmeticApply.backdropTint(gm.themeId))) {
+    if (showSettings) {
+        SettingsHub(
+            onBack = {
+                AppWallpaper.discardDraft()
+                showSettings = false
+            },
+            viewModel = viewModel
+        )
+        return
+    }
+
+    if (showAbout) {
+        AboutTukTukScreen(onBack = { showAbout = false })
+        return
+    }
+
+    if (showProfile && currentDialogId == null) {
+        QqMinimalProfile(
+            viewModel = viewModel,
+            onBack = { showProfile = false },
+            onOpenSettings = {
+                showProfile = false
+                showSettings = true
+            },
+            onOpenAbout = {
+                showProfile = false
+                showAbout = true
+            },
+            onScanSuccess = {
+                // After successful QR add, leave profile so PrivateTab can open the chat.
+                showProfile = false
+            }
+        )
+        return
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
         AppRootBackdrop()
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column(
-                            modifier = Modifier.pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = {
-                                        val now = System.currentTimeMillis()
-                                        if (now - lastClickTime < 500) {
-                                            clickCount++
-                                            if (clickCount >= 4) {
-                                                showDevPanel = true
-                                                clickCount = 0
+                if (currentDialogId == null) {
+                    TopAppBar(
+                        title = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastClickTime < 500) {
+                                                clickCount++
+                                                if (clickCount >= 4) {
+                                                    showDevPanel = true
+                                                    clickCount = 0
+                                                }
+                                            } else {
+                                                clickCount = 1
                                             }
-                                        } else {
-                                            clickCount = 1
+                                            lastClickTime = now
                                         }
-                                        lastClickTime = now
-                                    }
-                                )
-                            }
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
-                                if (isConnected) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .background(color = AccentLime, shape = CircleShape)
                                     )
                                 }
+                            ) {
+                                Text("Qq", style = Typography.titleLarge, color = TextPrimary)
+                                if (load != DeliveryLoad.Calm) {
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    DeliveryLoadDot(load = load, count = carryCount)
+                                }
                             }
-                            Text(
-                                S.slogan(lang),
-                                style = Typography.labelSmall,
-                                color = TextSecondary,
-                                maxLines = 1
-                            )
-                        }
-                    },
-                    actions = {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 12.dp)
-                                .size(40.dp)
-                                .glassPanel(corner = 20.dp)
-                                .bounceClick {
-                                    selectedTab = MainTab.Profile
-                                    showAbout = false
-                                    showSettings = true
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = S.settings(lang),
-                                tint = TextPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
-                        titleContentColor = TextPrimary,
-                        actionIconContentColor = TextPrimary
+                        },
+                        actions = {
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 12.dp)
+                                    .size(40.dp)
+                                    .glassPanel(corner = 20.dp)
+                                    .bounceClick { showProfile = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Person,
+                                    contentDescription = S.profile(lang),
+                                    tint = TextPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent,
+                            titleContentColor = TextPrimary,
+                            actionIconContentColor = TextPrimary
+                        )
                     )
-                )
+                }
             },
-            bottomBar = {
-                if (!imeVisible) {
-                    CustomBottomBar(selectedTab) { selectedTab = it }
+            floatingActionButton = {
+                if (currentDialogId == null && !imeVisible) {
+                    Box(
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .padding(end = 4.dp, bottom = 4.dp)
+                            .size(56.dp)
+                            .background(AccentLime, CircleShape)
+                            .bounceClick { showAddContact = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("+", color = BackgroundDark, style = Typography.titleLarge)
+                    }
                 }
             }
         ) { paddingValues ->
-            Column(
+            Box(
                 modifier = Modifier
                     .padding(paddingValues)
                     .fillMaxSize()
                     .then(if (imeVisible) Modifier.imePadding() else Modifier)
             ) {
-                nearbyUpdate?.let { offer ->
-                    NearbyUpdateBanner(
-                        versionName = offer.versionName,
-                        peerNick = offer.peerNick,
-                        onRequest = { viewModel.requestNearbyApkUpdate(offer.peerId) },
-                        onDismiss = { viewModel.dismissNearbyUpdate() }
-                    )
-                }
-                Box(modifier = Modifier.fillMaxSize()) {
-                    when (selectedTab) {
-                        MainTab.Dialogs -> PrivateTab(viewModel)
-                        MainTab.Hub -> {
-                            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-                                PrivateTab(viewModel)
-                            } else {
-                                com.blink.dtn.ui.hub.MainHubScreen(viewModel)
-                            }
-                        }
-                        MainTab.Channels -> {
-                            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-                                PrivateTab(viewModel)
-                            } else {
-                                PublicTab(viewModel) { contactId ->
-                                    viewModel.ensureContact(contactId)
-                                    viewModel.setCurrentDialog(contactId)
-                                    selectedTab = MainTab.Dialogs
-                                }
-                            }
-                        }
-                        MainTab.Profile -> when {
-                            showSettings -> SettingsHub(
-                                onBack = {
-                                    AppWallpaper.discardDraft()
-                                    showSettings = false
-                                },
-                                viewModel = viewModel
-                            )
-                            showAbout -> AboutTukTukScreen(onBack = { showAbout = false })
-                            else -> ProfileTab(
-                                viewModel = viewModel,
-                                onScanSuccess = { selectedTab = MainTab.Dialogs },
-                                onOpenSettings = { showSettings = true },
-                                onOpenAbout = { showAbout = true },
-                                onOpenHub = {
-                                    if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-                                        selectedTab = MainTab.Hub
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
+                PrivateTab(
+                    viewModel = viewModel,
+                    onOpenAddContact = { showAddContact = true }
+                )
             }
+        }
+    }
+
+    if (showAddContact) {
+        AddContactSheet(
+            viewModel = viewModel,
+            onDismiss = { showAddContact = false },
+            onOpenedChat = { showAddContact = false }
+        )
+    }
+}
+
+@Composable
+private fun DeliveryLoadDot(load: DeliveryLoad, count: Int) {
+    if (load == DeliveryLoad.Calm) return
+    val color = when (load) {
+        DeliveryLoad.Light -> Color(0xFFE6C84A)
+        DeliveryLoad.Medium -> Color(0xFFE67E22)
+        DeliveryLoad.Heavy -> Color(0xFFE74C3C)
+        else -> Color.Transparent
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(color, CircleShape)
+        )
+        if (count > 0) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                count.toString(),
+                style = Typography.labelSmall,
+                color = TextSecondary
+            )
         }
     }
 }
@@ -537,19 +548,11 @@ private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun PrivateTab(viewModel: BLinkViewModel) {
+fun PrivateTab(
+    viewModel: BLinkViewModel,
+    onOpenAddContact: () -> Unit = {}
+) {
     val currentDialogId by viewModel.currentDialogId.collectAsState()
-    var showContacts by remember { mutableStateOf(false) }
-    var showInvite by remember { mutableStateOf(false) }
-    var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
-
-    LaunchedEffect(Unit) {
-        contactQr = withContext(Dispatchers.IO) { viewModel.buildContactQr() }
-    }
-
-    if (showInvite) {
-        InviteFriendsSheet(contactQrPayload = contactQr, onDismiss = { showInvite = false })
-    }
 
     when {
         currentDialogId != null -> ConversationScreen(
@@ -557,18 +560,9 @@ fun PrivateTab(viewModel: BLinkViewModel) {
             contactId = currentDialogId!!,
             onBack = { viewModel.setCurrentDialog(null) }
         )
-        showContacts -> ContactsScreen(
-            viewModel = viewModel,
-            onBack = { showContacts = false },
-            onOpenChat = { id ->
-                viewModel.setCurrentDialog(id)
-                showContacts = false
-            },
-            onInvite = { showInvite = true }
-        )
         else -> ChatListScreen(
             viewModel = viewModel,
-            onOpenContacts = { showContacts = true }
+            onOpenContacts = onOpenAddContact
         )
     }
 }
@@ -578,25 +572,20 @@ fun PrivateTab(viewModel: BLinkViewModel) {
 fun ChatListScreen(viewModel: BLinkViewModel, onOpenContacts: () -> Unit = {}) {
     val lang by AppLang.lang.collectAsState()
     val dialogs by viewModel.dialogs.collectAsState()
-    val privateDialogs = dialogs.filter { it.conversationId != "general" }
+    val privateDialogs = dialogs.filter {
+        it.conversationId != "general" && !it.isArchived
+    }
     var searchQuery by remember { mutableStateOf("") }
-    var filterUnread by remember { mutableStateOf(false) }
-    var filterPinned by remember { mutableStateOf(false) }
-    var showArchive by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val listState = rememberLazyListState()
     val query = searchQuery.trim().lowercase()
 
-    val filtered = remember(privateDialogs, query, filterUnread, filterPinned, showArchive) {
+    val filtered = remember(privateDialogs, query) {
         privateDialogs.filter { dialog ->
-            val archiveOk = dialog.isArchived == showArchive
-            val unreadOk = !filterUnread || dialog.unreadCount > 0
-            val pinnedOk = !filterPinned || dialog.isPinned
-            val textOk = query.isEmpty() ||
+            query.isEmpty() ||
                 dialog.displayName.orEmpty().lowercase().contains(query) ||
                 dialog.lastMessage.orEmpty().lowercase().contains(query) ||
                 dialog.conversationId.lowercase().contains(query)
-            archiveOk && unreadOk && pinnedOk && textOk
         }
     }
 
@@ -662,62 +651,26 @@ fun ChatListScreen(viewModel: BLinkViewModel, onOpenContacts: () -> Unit = {}) {
                     modifier = Modifier.bounceClick { startFromQuery() }
                 )
             }
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .glassPanel(corner = 12.dp)
-                    .bounceClick(onOpenContacts),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Person, contentDescription = S.contacts(lang), tint = TextPrimary, modifier = Modifier.size(20.dp))
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp)
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            FilterChip(S.unreadOnly(lang), filterUnread) {
-                filterUnread = !filterUnread
-                if (filterUnread) filterPinned = false
-            }
-            FilterChip(S.pinned(lang), filterPinned) {
-                filterPinned = !filterPinned
-                if (filterPinned) filterUnread = false
-            }
-            FilterChip(S.archive(lang), showArchive) {
-                showArchive = !showArchive
-            }
         }
 
         if (filtered.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = when {
-                            showArchive -> S.noArchivedDialogs(lang)
-                            filterUnread -> S.noUnreadDialogs(lang)
-                            filterPinned -> S.noPinnedDialogs(lang)
-                            else -> S.noDialogs(lang)
-                        },
+                        text = S.noDialogs(lang),
                         color = TextSecondary,
                         style = Typography.bodyMedium,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 24.dp)
                     )
-                    if (!showArchive && !filterUnread && !filterPinned && query.isEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = S.slogan(lang),
-                            color = TextSecondary,
-                            style = Typography.labelSmall,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (lang == "en") "Tap + to add a contact" else "Нажмите + чтобы добавить контакт",
+                        color = AccentLime,
+                        style = Typography.labelSmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.bounceClick { onOpenContacts() }
+                    )
                 }
             }
         } else {

@@ -146,6 +146,8 @@ class BLinkMeshService : Service() {
                                 dao.updateMessageStatus(result.msgId, next)
                             }
                             com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "у соседа")
+                            // Soft carry feedback — throttled; does not alter BLE path.
+                            com.blink.dtn.ui.MeshTransferFeedback.onHopCompleted(this@BLinkMeshService)
                             // Courier emotion: this phone helped move a package (relay of others' mail)
                             if (currentMsg == null ||
                                 (!currentMsg.isMine && currentMsg.senderId != myNodeId)

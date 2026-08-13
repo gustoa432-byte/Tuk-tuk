@@ -99,6 +99,24 @@ class BLinkViewModel(
     // c) Стейт для текущего открытого диалога
     val pendingCount = dao.getPendingMessagesFlow().map { it.size }
 
+    /**
+     * Mesh carry load for UI (DeliveryLoad): messages waiting / in flight / need key.
+     * Reuses backpack query — not a parallel queue.
+     */
+    val meshCarryCount = dao.getBackpackMessagesFlow()
+        .map { rows ->
+            rows.count { m ->
+                !m.isAck &&
+                    m.status in listOf(
+                        Message.STATUS_PENDING,
+                        Message.STATUS_IN_FLIGHT,
+                        Message.STATUS_PENDING_KEY
+                    ) &&
+                    m.type in listOf(Message.TYPE_PRIVATE, Message.TYPE_PRIVATE_IMAGE, Message.TYPE_PUBLIC)
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
+
     val currentDialogId = MutableStateFlow<String?>(null)
     
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

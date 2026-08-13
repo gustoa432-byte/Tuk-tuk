@@ -245,6 +245,9 @@ class BleMeshManager private constructor(
                 override fun enqueueMessage(msg: Message) = this@BleMeshManager.enqueueMessage(msg)
                 override fun enqueueProfileBroadcast() = this@BleMeshManager.enqueueProfileBroadcast()
                 override fun notifyIncoming(packet: Message) = triggerNotification(packet)
+                override fun notifyDeliveredAckFeedback() {
+                    com.blink.dtn.ui.MeshTransferFeedback.onDeliveredAck(context)
+                }
                 override fun ensureTrace(messageId: String, type: String?, senderId: String?, targetId: String?) {
                     this@BleMeshManager.ensureTrace(messageId, type, senderId, targetId)
                 }
