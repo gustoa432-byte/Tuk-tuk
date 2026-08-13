@@ -1,5 +1,7 @@
 # VPS SSH hardening (Этап 1)
 
+> Хост и имена файлов (`node.tuktuk.dev`, `99-tuktuk-hardening.conf`) — технические имена от прежнего названия проекта, с продуктом (**Qq**) они не переименовываются. Сам Internet Gateway опционален: клиент работает офлайн по BLE/DTN без сервера.
+
 Host: `node.tuktuk.dev` / `157.228.136.239` · Ubuntu 24.04 · user `root`
 
 ## Требование

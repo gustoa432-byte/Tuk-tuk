@@ -49,4 +49,6 @@ unzip -p "$APK" classes.dex | sha256sum
 
 ## CI
 
-`.github/workflows/build.yml` currently builds **debug** (`assembleDebug`). A reproducible release pipeline is a follow-up: pin JDK, Gradle, and epoch, then upload SHA256 sums.
+`.github/workflows/build.yml` currently builds **debug** (`assembleDebug`) and runs an advisory `docs-version-check` job that compares documentation against `versionName` in `app/build.gradle.kts` (see [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)). That job never fails the build.
+
+A reproducible release pipeline is a follow-up: pin JDK, Gradle, and epoch, then upload SHA256 sums.

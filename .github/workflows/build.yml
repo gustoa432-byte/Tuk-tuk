@@ -25,3 +25,33 @@ jobs:
         with:
           name: Qq-APK
           path: app/build/outputs/apk/debug/*.apk
+
+  # Advisory only: reports documentation drift, never fails the build.
+  # Source of truth for the version is app/build.gradle.kts (docs/RELEASE_CHECKLIST.md).
+  docs-version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare docs with versionName in app/build.gradle.kts
+        run: |
+          VN=$(grep -oE 'versionName *= *"[^"]+"' app/build.gradle.kts | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+          VC=$(grep -oE 'versionCode *= *[0-9]+' app/build.gradle.kts | head -1 | grep -oE '[0-9]+')
+          echo "Source of truth: versionName=$VN versionCode=$VC"
+          echo "## Docs version check (advisory)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`app/build.gradle.kts\`: versionName **$VN**, versionCode **$VC**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$VN" ]; then
+            echo "- :warning: could not read versionName from app/build.gradle.kts (check the parser in this workflow)" >> "$GITHUB_STEP_SUMMARY"
+          elif grep -qF "$VN" TERMS.md; then
+            echo "- TERMS.md header matches \`$VN\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- :warning: TERMS.md does not mention \`$VN\` — update its version/date header, see docs/RELEASE_CHECKLIST.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version literals in docs outside docs/VERSIONS.md (expected: TERMS.md header and historical mentions only):" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -rnE '0\.1\.[0-9]+' --include='*.md' README.md TERMS.md docs server \
+            | grep -v 'docs/VERSIONS.md' >> "$GITHUB_STEP_SUMMARY" || echo '(none)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit 0

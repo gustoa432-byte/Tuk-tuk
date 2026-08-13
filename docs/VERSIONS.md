@@ -1,6 +1,18 @@
 # Версии Qq — хронология (не semver)
 
-**Актуальная версия: `0.1.109`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.109`).
+## Единственный источник истины
+
+Актуальная версия — это `versionName` (и `versionCode`) в **`app/build.gradle.kts`**. Этот файл — единственный источник истины. Ни этот документ, ни любой другой не должны «объявлять» текущую версию: они на неё ссылаются.
+
+Посмотреть текущее значение:
+
+```bash
+grep -E 'version(Name|Code)' app/build.gradle.kts
+```
+
+Если документ и `app/build.gradle.kts` расходятся — прав `app/build.gradle.kts`, а документ надо поправить (см. [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)).
+
+Этот файл — **хронология тегов**, а не объявление текущей версии.
 
 ## Важно
 
@@ -28,6 +40,9 @@
 | 2026-08-05 | `v0.1.106` — security inventory 1–34 |
 | 2026-08-05 | `v0.1.107` — fix Profile Save (name/nick) |
 | 2026-08-05 | `v0.1.108` — Crowd / Толпа: CROWD duty, short frames, Event Anchor PWA |
-| 2026-08-05 | **`v0.1.109`** — P0 harden: ADV budget, honest delivery statuses, IDENTITY 1-hop, amputate PWA/Wi‑Fi Direct |
+| 2026-08-05 | `v0.1.109` — P0 harden: ADV budget, honest delivery statuses, IDENTITY 1-hop, amputate PWA/Wi‑Fi Direct |
+| 2026-08 | `v0.1.110` … далее — линейка Qq: карантин легаси-поверхностей (`QQ_CORE_ONLY`), приведение продукта и документации к 1:1-мессенджеру. Пофайловые детали — в истории git и в описаниях релизов; отдельные пункты здесь не расписаны |
 
-Скачать: https://github.com/gustoa432-byte/Tuk-tuk/releases/latest
+Актуальный номер сборки не дублируется в этой таблице специально: он берётся из `app/build.gradle.kts` (см. выше).
+
+Скачать: https://github.com/gustoa432-byte/Tuk-tuk/releases/latest (адрес репозитория сохранён с прежнего названия проекта)

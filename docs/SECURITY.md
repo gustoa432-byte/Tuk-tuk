@@ -1,8 +1,10 @@
 # Security policy
 
+Qq is experimental software under development. It makes **no promise of absolute security** and is not an anonymity tool. Scope of this document: the Android client and the optional Internet Gateway.
+
 ## Reporting
 
-Email: **tuktukfb@internet.ru**
+Email: **tuktukfb@internet.ru** (mailbox predates the product rename and is still monitored)
 
 Please include:
 
@@ -79,15 +81,22 @@ Auditors should prioritize:
    - Relay TTL / flood control (`BleRelayEngine`)
 4. **Telemetry side-channels**
    - MessageTrace / Observatory export contents (may include peer MACs, route crumbs)
+   - Upload is off by default (`QQ_ALLOW_TELEMETRY_UPLOAD = false`); exports are user-initiated and local
 5. **Optional transports**
-   - BLE mesh + optional VPS only (Wi‑Fi Direct / Event Anchor amputated in 0.1.109)
-   - Cellular / VK bridges — treat as untrusted relays
+   - BLE mesh + optional Internet Gateway only (Wi‑Fi Direct / Event Anchor removed in 0.1.109)
+   - Gateway image handling (see the image caveat below)
+   - VK / cellular bridges — legacy code, not part of the product; treat as untrusted relays if enabled
 6. **Updates**
    - Peer APK transfer signature check (`security/BuildIntegrity.kt`)
    - Author-signed announcements (`security/SecurityConfig.kt`)
 
 ## Scope notes
 
-- Public chat confidentiality is **out of scope** by design.
-- Reproducible builds: see `docs/REPRODUCIBLE_BUILDS.md`.
-- Threat model narrative: see `docs/THREAT_MODEL.md`.
+- The product is **1:1 private text messaging**. Public channel / public chat code still exists in the repository but is gated off in Core builds (`QQ_CORE_ONLY`), so public-chat confidentiality is not a product concern — do not report it as a product vulnerability, and do not rely on those paths.
+- **Private text** is encrypted on the device; the Internet Gateway relays ciphertext for text and never holds the recipient's private key. Metadata (node IDs, timestamps, sizes) is visible to the gateway.
+- **Image caveat (real, current):** images are intended for the BLE path only. In earlier builds private images were sent to the gateway as unencrypted base64 JPEG. Do not describe the gateway as "ciphertext only" without this exception. Details: [`PRIVACY.md`](PRIVACY.md).
+- **Moderation reports** that carry decrypted message text are a gateway/operator feature, not normal client operation: they require sign-in and an explicit user action, and are being restricted further.
+- Global ban-list synchronisation is **disabled** in Core builds; only local per-device blocking is effective.
+- Known operational gap: after a device reboot or a Bluetooth off/on cycle the app may need to be reopened before mesh activity resumes.
+- Reproducible builds: see [`REPRODUCIBLE_BUILDS.md`](REPRODUCIBLE_BUILDS.md).
+- Threat model narrative: see [`THREAT_MODEL.md`](THREAT_MODEL.md). Data handling: [`PRIVACY.md`](PRIVACY.md).

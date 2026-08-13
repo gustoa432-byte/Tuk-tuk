@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 46
-        versionName = "0.1.116"
+        versionCode = 47
+        versionName = "0.1.117"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -126,6 +126,13 @@ android {
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+    }
+    testOptions {
+        unitTests {
+            // Pure-JVM policy tests (custody, PENDING_KEY flush) touch code paths
+            // that log via android.util.Log; without this every such call throws.
+            isReturnDefaultValues = true
+        }
     }
     packaging {
         // Prefer stable APK entry order for FOSS verification (see docs/REPRODUCIBLE_BUILDS.md).
