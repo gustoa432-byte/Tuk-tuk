@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blink.dtn.ble.BleMeshManager
 import com.blink.dtn.db.BLinkDatabase
+import com.blink.dtn.BuildConfig
+import com.blink.dtn.auth.AuthProvider
 import com.blink.dtn.auth.AuthSessionStore
 import com.blink.dtn.ui.AuthOnboardingScreen
 import com.blink.dtn.ui.BLinkViewModel
@@ -147,7 +149,15 @@ fun BLinkApp(bleManager: BleMeshManager, factory: BLinkViewModelFactory) {
         }
         else -> {
             val viewModel: BLinkViewModel = viewModel(factory = factory)
-            if (!onboardingDone) {
+            // QQ Core: offline entry — no Email/TG gate; messaging works without VPS.
+            if (BuildConfig.QQ_CORE_ONLY) {
+                LaunchedEffect(Unit) {
+                    if (!AuthSessionStore.isOnboardingDone(context)) {
+                        viewModel.completeOnboarding("", "", AuthProvider.OFFLINE)
+                    }
+                }
+                MainScreen(viewModel)
+            } else if (!onboardingDone) {
                 AuthOnboardingScreen { displayName, nick, provider ->
                     viewModel.completeOnboarding(displayName, nick, provider)
                     onboardingDone = true

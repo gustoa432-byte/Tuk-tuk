@@ -319,7 +319,8 @@ class BLinkViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             com.blink.dtn.net.VpsConfig.init(app)
             val looksLikeUuid = id.length >= 32 && id.count { it == '-' } >= 4
-            val canOnline = looksLikeUuid &&
+            val canOnline = !com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+                looksLikeUuid &&
                 com.blink.dtn.auth.AuthSessionStore.hasVpsSession(app) &&
                 com.blink.dtn.net.VpsConfig.isConfigured(app)
 
@@ -492,6 +493,10 @@ class BLinkViewModel(
     }
 
     fun sendPublicMessage(text: String, room: String = com.blink.dtn.ble.MeshRoom.GENERAL) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            android.util.Log.i("SEND", "QQ_CORE_ONLY: PUBLIC send gated")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val trace = TraceStore.begin(
                 kind = TraceKind.MESSAGE,

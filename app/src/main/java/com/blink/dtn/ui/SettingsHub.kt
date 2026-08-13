@@ -256,40 +256,42 @@ private fun SettingsNetworkConfigSection(viewModel: BLinkViewModel, onBack: () -
         SettingsBackRow(S.settingsNetwork(lang), onBack)
         Spacer(modifier = Modifier.height(8.dp))
         Text(S.settingsNetworkHint(lang), color = TextSecondary, style = Typography.bodySmall)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(S.deliveryServer(lang), color = TextSecondary, style = Typography.labelSmall)
-        Spacer(modifier = Modifier.height(6.dp))
-        BasicTextField(
-            value = vpsDraft,
-            onValueChange = { vpsDraft = it },
-            singleLine = true,
-            textStyle = Typography.bodyMedium.copy(color = TextPrimary),
-            cursorBrush = SolidColor(TextPrimary),
-            decorationBox = { inner ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassPanel(corner = 12.dp)
-                        .padding(12.dp)
-                ) {
-                    if (vpsDraft.isEmpty()) {
-                        Text(S.deliveryServerHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(S.deliveryServer(lang), color = TextSecondary, style = Typography.labelSmall)
+            Spacer(modifier = Modifier.height(6.dp))
+            BasicTextField(
+                value = vpsDraft,
+                onValueChange = { vpsDraft = it },
+                singleLine = true,
+                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(TextPrimary),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .glassPanel(corner = 12.dp)
+                            .padding(12.dp)
+                    ) {
+                        if (vpsDraft.isEmpty()) {
+                            Text(S.deliveryServerHint(lang), color = TextSecondary, style = Typography.bodySmall)
+                        }
+                        inner()
                     }
-                    inner()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TukTukButton(onClick = {
+                com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft.trim())
+                showSaved = true
+                Toast.makeText(context, S.deliveryServerSaved(lang), Toast.LENGTH_SHORT).show()
+            }) {
+                Text(S.save(lang), color = TextPrimary)
+                if (showSaved) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
                 }
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        TukTukButton(onClick = {
-            com.blink.dtn.net.VpsConfig.setBaseUrl(context, vpsDraft.trim())
-            showSaved = true
-            Toast.makeText(context, S.deliveryServerSaved(lang), Toast.LENGTH_SHORT).show()
-        }) {
-            Text(S.save(lang), color = TextPrimary)
-            if (showSaved) {
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
             }
         }
         Spacer(modifier = Modifier.height(24.dp))

@@ -225,6 +225,10 @@ internal class BleIngressHandler(
                     }
                 }
                 "PUBLIC", "SYSTEM_ANNOUNCEMENT", "VERSION_ANNOUNCEMENT" -> {
+                    if (packet.type == "PUBLIC" && com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                        Log.d("DTN", "QQ_CORE_ONLY: drop PUBLIC ${packet.id}")
+                        return@launch
+                    }
                     if (packet.type == "PUBLIC" && MeshLimits.exceedsTextLimit(packet.text)) {
                         Log.w("DTN", "Dropped oversized PUBLIC ${packet.id} len=${packet.text.length}")
                         com.blink.dtn.telemetry.ErrorJournal.record(

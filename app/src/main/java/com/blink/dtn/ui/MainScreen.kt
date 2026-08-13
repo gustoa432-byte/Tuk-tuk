@@ -341,11 +341,23 @@ fun MainScreen(viewModel: BLinkViewModel) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedTab) {
                         MainTab.Dialogs -> PrivateTab(viewModel)
-                        MainTab.Hub -> com.blink.dtn.ui.hub.MainHubScreen(viewModel)
-                        MainTab.Channels -> PublicTab(viewModel) { contactId ->
-                            viewModel.ensureContact(contactId)
-                            viewModel.setCurrentDialog(contactId)
-                            selectedTab = MainTab.Dialogs
+                        MainTab.Hub -> {
+                            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                                PrivateTab(viewModel)
+                            } else {
+                                com.blink.dtn.ui.hub.MainHubScreen(viewModel)
+                            }
+                        }
+                        MainTab.Channels -> {
+                            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                                PrivateTab(viewModel)
+                            } else {
+                                PublicTab(viewModel) { contactId ->
+                                    viewModel.ensureContact(contactId)
+                                    viewModel.setCurrentDialog(contactId)
+                                    selectedTab = MainTab.Dialogs
+                                }
+                            }
                         }
                         MainTab.Profile -> when {
                             showSettings -> SettingsHub(
@@ -361,7 +373,11 @@ fun MainScreen(viewModel: BLinkViewModel) {
                                 onScanSuccess = { selectedTab = MainTab.Dialogs },
                                 onOpenSettings = { showSettings = true },
                                 onOpenAbout = { showAbout = true },
-                                onOpenHub = { selectedTab = MainTab.Hub }
+                                onOpenHub = {
+                                    if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                                        selectedTab = MainTab.Hub
+                                    }
+                                }
                             )
                         }
                     }
@@ -441,11 +457,13 @@ fun CustomBottomBar(selectedTab: MainTab, onTabSelected: (MainTab) -> Unit) {
             BottomBarItem(Icons.AutoMirrored.Filled.Chat, S.dialogs(lang), selectedTab == MainTab.Dialogs) {
                 onTabSelected(MainTab.Dialogs)
             }
-            BottomBarItem(Icons.Default.Radar, S.hub(lang), selectedTab == MainTab.Hub) {
-                onTabSelected(MainTab.Hub)
-            }
-            BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == MainTab.Channels) {
-                onTabSelected(MainTab.Channels)
+            if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                BottomBarItem(Icons.Default.Radar, S.hub(lang), selectedTab == MainTab.Hub) {
+                    onTabSelected(MainTab.Hub)
+                }
+                BottomBarItem(Icons.Default.Email, S.groupChat(lang), selectedTab == MainTab.Channels) {
+                    onTabSelected(MainTab.Channels)
+                }
             }
             BottomBarItem(Icons.Default.Person, S.profile(lang), selectedTab == MainTab.Profile) {
                 onTabSelected(MainTab.Profile)
@@ -2146,7 +2164,9 @@ fun ProfileTab(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        SettingsNavRow(S.cosmetics(lang), onOpenHub)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            SettingsNavRow(S.cosmetics(lang), onOpenHub)
+        }
         SettingsNavRow(S.inviteFriends(lang)) { showInvite = true }
         SettingsNavRow(S.settings(lang), onOpenSettings)
         SettingsNavRow(S.aboutProject(lang), onOpenAbout)
@@ -2719,18 +2739,20 @@ fun InfoContent(compact: Boolean = false) {
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        var showErrorReport by remember { mutableStateOf(false) }
-        TukTukButton(onClick = { showErrorReport = true }) {
-            Text(S.errorReportButton(lang), color = TextPrimary)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            var showErrorReport by remember { mutableStateOf(false) }
+            TukTukButton(onClick = { showErrorReport = true }) {
+                Text(S.errorReportButton(lang), color = TextPrimary)
+            }
+            if (showErrorReport) {
+                ErrorReportDialog(
+                    lang = lang,
+                    onDismiss = { showErrorReport = false }
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(S.errorReportHint(lang), style = quietStyle, color = TextSecondary)
         }
-        if (showErrorReport) {
-            ErrorReportDialog(
-                lang = lang,
-                onDismiss = { showErrorReport = false }
-            )
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(S.errorReportHint(lang), style = quietStyle, color = TextSecondary)
 
         Spacer(modifier = Modifier.height(20.dp))
         Text(

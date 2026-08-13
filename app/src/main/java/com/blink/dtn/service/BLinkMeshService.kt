@@ -73,15 +73,19 @@ class BLinkMeshService : Service() {
         }
 
         runCatching {
-            com.blink.dtn.net.VpsConfig.init(this)
-            val vps = com.blink.dtn.net.VpsBridge.getInstance(
-                this,
-                dao,
-                bleMeshManager,
-                myNodeId
-            )
-            bleMeshManager.vpsBridge = vps
-            vps.start()
+            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                android.util.Log.i("MeshService", "QQ_CORE_ONLY: skip VPS bridge start (BLE/DTN only)")
+            } else {
+                com.blink.dtn.net.VpsConfig.init(this)
+                val vps = com.blink.dtn.net.VpsBridge.getInstance(
+                    this,
+                    dao,
+                    bleMeshManager,
+                    myNodeId
+                )
+                bleMeshManager.vpsBridge = vps
+                vps.start()
+            }
         }.onFailure {
             android.util.Log.w("MeshService", "VPS bridge init: ${it.message}")
         }
@@ -115,8 +119,10 @@ class BLinkMeshService : Service() {
         // 2. Start DTN Routing Engine
         startDtnRoutingEngine()
 
-        // 3. Start VK Relay Loop
-        startVkRelayLoop()
+        // 3. Start VK Relay Loop (legacy — isolated in QQ Core)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            startVkRelayLoop()
+        }
 
         return START_STICKY
     }

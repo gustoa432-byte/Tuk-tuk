@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "0.1.109"
+        versionCode = 40
+        versionName = "0.1.110"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -78,6 +78,8 @@ android {
         )
         // Must match server TUKTUK_BANLIST_HMAC (default tuktuk-banlist-v1).
         buildConfigField("String", "BANLIST_HMAC_SECRET", "\"tuktuk-banlist-v1\"")
+        // Qq Great Cleanup P1/P2: P2P-first core. Legacy Hub/PUBLIC/VPS remain in tree but gated.
+        buildConfigField("boolean", "QQ_CORE_ONLY", "true")
     }
 
     signingConfigs {
