@@ -44,7 +44,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.blink.dtn.R
 import com.blink.dtn.ui.theme.AccentLime
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
@@ -238,6 +240,15 @@ fun AboutQqScreen(onBack: () -> Unit) {
     ) {
         SettingsBackRow(S.aboutProject(lang), onBack)
         Spacer(modifier = Modifier.height(16.dp))
+        Image(
+            painter = painterResource(id = R.drawable.qq_logo),
+            contentDescription = "Qq",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .size(96.dp)
+                .align(Alignment.CenterHorizontally)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         Text("Qq", style = Typography.titleLarge, color = TextPrimary)
         Text(S.slogan(lang), style = Typography.bodyMedium, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
@@ -252,7 +263,7 @@ fun AboutQqScreen(onBack: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
         SettingsNavRow(S.deliveryHelpTitle(lang)) { showDeliveryHelp = true }
         SettingsNavRow(S.openGithub(lang)) { openUrl(context, TUKTUK_GITHUB_URL) }
-        SettingsNavRow(S.supportProject(lang)) { openUrl(context, "https://t.me/tuk_tuk_official") }
+        SettingsNavRow(S.supportProject(lang)) { openUrl(context, "https://t.me/qqube_official") }
         Text(
             S.licenseHint(lang),
             color = TextSecondary,

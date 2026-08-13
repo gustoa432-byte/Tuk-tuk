@@ -97,6 +97,7 @@ Work in progress and experimental. Interfaces, storage format and wire protocol 
 - The **single source of truth for the current version** is `versionName` / `versionCode` in `app/build.gradle.kts`. Docs reference it instead of repeating it; if a document and the build file disagree, the build file wins.
 - Version history: [`docs/VERSIONS.md`](docs/VERSIONS.md) (version labels are not semver — read that file before comparing tags). Release steps: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 - Releases: https://github.com/gustoa432-byte/Tuk-tuk/releases/latest (repository URL predates the rename)
+- Project channel: https://t.me/qqube_official
 - Legacy and experimental code from earlier phases is still present in the repository but is disabled in the shipped product (see `QqLegacyQuarantine` and the `QQ_CORE_ONLY` build flag). Documents under `docs/` that describe those earlier concepts are kept for history and marked as historical.
 
 ## Architecture
@@ -133,7 +134,7 @@ Qq — мессенджер один-на-один, задача которог�
 - Ключи создаются и остаются на устройстве; контакты добавляются QR-кодом полностью офлайн.
 - Статус «доставлено» ставится только по сквозному подтверждению от получателя.
 - Ограничения: поведение BLE зависит от устройства и версии Android, доставка может задерживаться и не гарантирована, релей требует физической близости устройств, шлюз опционален. После перезагрузки устройства или выключения/включения Bluetooth приложение может потребоваться открыть заново (известное ограничение, в работе). Проект экспериментальный и в разработке.
-- Что с данными: [`docs/PRIVACY.md`](docs/PRIVACY.md). Условия использования: [`TERMS.md`](TERMS.md).
+- Что с данными: [`docs/PRIVACY.md`](docs/PRIVACY.md). Условия использования: [`TERMS.md`](TERMS.md). Канал: https://t.me/qqube_official
 
 ## License
 

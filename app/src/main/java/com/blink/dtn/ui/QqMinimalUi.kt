@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -49,6 +50,7 @@ import com.blink.dtn.ui.theme.GlassDialogContainer
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
+import com.blink.dtn.R
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
@@ -87,8 +89,14 @@ fun QqIntroScreen(onDone: () -> Unit) {
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 32.dp)
-                .padding(top = 72.dp, bottom = 40.dp)
+                .padding(top = 48.dp, bottom = 40.dp)
         ) {
+            Image(
+                painter = painterResource(id = R.drawable.qq_logo),
+                contentDescription = "Qq",
+                modifier = Modifier.size(88.dp)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
             Text(
                 "Qq",
                 style = Typography.titleLarge.copy(

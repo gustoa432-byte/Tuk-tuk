@@ -2612,7 +2612,7 @@ fun generateQrCode(text: String, size: Int = 512): android.graphics.Bitmap? {
 }
 
 private const val AUTHOR_TELEGRAM = "b6dmachine"
-private const val OFFICIAL_CHANNEL = "tuk_tuk_official"
+private const val OFFICIAL_CHANNEL = "qqube_official"
 private const val FEEDBACK_EMAIL = "tuktukfb@internet.ru"
 
 private fun openTelegramLink(context: Context, pathOrUsername: String) {
