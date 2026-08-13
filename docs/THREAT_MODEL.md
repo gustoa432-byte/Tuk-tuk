@@ -1,6 +1,6 @@
-# Threat model (TukTuk)
+# Threat model (Qq)
 
-Humanitarian BLE mesh messenger. Assumptions below match the product as shipped.
+BLE mesh / DTN messenger. Assumptions below describe the transport and crypto surface; the shipped product UI is 1:1 private messaging only (public-chat code paths are gated off in Core builds).
 
 ## Assets
 

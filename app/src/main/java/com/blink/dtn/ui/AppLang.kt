@@ -60,9 +60,9 @@ object S {
 
     // Network / router
     fun networkActive(lang: String) = if (lang == LANG_EN)
-        "Your network is active. Tuk-Tuk helps deliver messages"
+        "Your network is active. Qq helps deliver messages"
     else
-        "Ваша сеть активна. Tuk-Tuk помогает доставлять сообщения"
+        "Ваша сеть активна. Qq помогает доставлять сообщения"
     fun networkWaiting(lang: String) = if (lang == LANG_EN)
         "Waiting for people nearby — connection where there are people"
     else
@@ -85,9 +85,9 @@ object S {
         "Пока никого рядом — подойдите ближе или подождите"
     fun vpsUrl(lang: String) = if (lang == LANG_EN) "Delivery server (optional)" else "Сервер доставки (необязательно)"
     fun vpsUrlHint(lang: String) = if (lang == LANG_EN)
-        "Example: https://your-server:8080 — leave empty; TukTuk will still find a path through people"
+        "Example: https://your-server:8080 — leave empty; Qq will still find a path through people"
     else
-        "Например: https://ваш-сервер:8080 — можно пусто; TukTuk всё равно найдёт путь через людей"
+        "Например: https://ваш-сервер:8080 — можно пусто; Qq всё равно найдёт путь через людей"
     fun vpsSaved(lang: String) = if (lang == LANG_EN) "Delivery server saved" else "Сервер доставки сохранён"
     fun messageTracker(lang: String) = if (lang == LANG_EN) "Delivery tracker" else "Трекер доставки"
 
@@ -112,7 +112,7 @@ object S {
     fun reportMessage(lang: String) = if (lang == LANG_EN) "Report" else "Пожаловаться"
     fun reportSent(lang: String) = if (lang == LANG_EN) "Report sent" else "Жалоба отправлена"
     fun reportFailed(lang: String) = if (lang == LANG_EN) "Report failed — sign in online" else "Жалоба не отправлена — нужен вход"
-    fun shareTukTuk(lang: String) = if (lang == LANG_EN) "Share Tuk-Tuk" else "Поделиться Tuk-Tuk"
+    fun shareTukTuk(lang: String) = if (lang == LANG_EN) "Share Qq" else "Поделиться Qq"
 
     // Inputs / placeholders
     fun message(lang: String) = if (lang == LANG_EN) "Message..." else "Сообщение..."
@@ -175,6 +175,22 @@ object S {
     fun authNicknameHint(lang: String) = if (lang == LANG_EN) "Optional @handle" else "Необязательный @ник"
     fun authContinue(lang: String) = if (lang == LANG_EN) "Continue" else "Продолжить"
 
+    // Permission rationale (only what the app actually needs)
+    fun permTitle(lang: String) = if (lang == LANG_EN)
+        "Qq needs Bluetooth and location"
+    else
+        "Qq нужны Bluetooth и геолокация"
+    fun permBody(lang: String) = if (lang == LANG_EN)
+        "Bluetooth finds people nearby and carries messages without the internet. " +
+            "Android requires the location permission for any Bluetooth scan — Qq does not " +
+            "collect or send your coordinates. The camera is asked for only when you scan a QR code."
+    else
+        "Bluetooth находит людей рядом и передаёт сообщения без интернета. " +
+            "Android требует разрешение на геолокацию для любого поиска по Bluetooth — " +
+            "Qq не собирает и не отправляет ваши координаты. " +
+            "Камера запрашивается только когда вы сканируете QR-код."
+    fun permGrant(lang: String) = if (lang == LANG_EN) "Allow" else "Разрешить"
+
     // Notifications / toasts
     fun idCopied(lang: String) = if (lang == LANG_EN) "ID copied" else "ID скопирован"
     fun contactAccepted(lang: String) = if (lang == LANG_EN) "Contact accepted" else "Контакт принят"
@@ -182,7 +198,7 @@ object S {
     fun modeSet(lang: String, label: String) = if (lang == LANG_EN) "Mode: $label" else "Режим: $label"
     fun qrVerified(lang: String) = if (lang == LANG_EN) "Contact verified via QR" else "Контакт проверен по QR"
     fun qrKeyMismatch(lang: String) = if (lang == LANG_EN) "Invalid QR: key does not match ID" else "Неверный QR: ключ не совпадает с id"
-    fun qrNotContact(lang: String) = if (lang == LANG_EN) "Need a TukTuk contact QR (with key)" else "Нужен QR контакта TukTuk (с ключом)"
+    fun qrNotContact(lang: String) = if (lang == LANG_EN) "Need a Qq contact QR (with key)" else "Нужен QR контакта Qq (с ключом)"
     fun qrSelf(lang: String) = if (lang == LANG_EN) "That is your own QR" else "Это ваш собственный QR"
     fun telegramError(lang: String) = if (lang == LANG_EN) "Could not open Telegram" else "Не удалось открыть Telegram"
     fun avatarSaved(lang: String) = if (lang == LANG_EN) "Avatar saved" else "Аватар сохранён"
@@ -192,9 +208,9 @@ object S {
 
     // Empty states
     fun noDialogs(lang: String) = if (lang == LANG_EN)
-        "No dialogs yet.\nTap 'Find or start a dialog...' to add a contact."
+        "No dialogs yet.\nTap + to add a contact."
     else
-        "У вас пока нет диалогов.\nНажмите 'Найти или начать диалог...', чтобы добавить контакт."
+        "У вас пока нет диалогов.\nНажмите +, чтобы добавить контакт."
     fun noMessages(lang: String) = if (lang == LANG_EN) "No messages yet." else "Здесь пока нет сообщений."
     fun publicChatEmpty(lang: String) = if (lang == LANG_EN) "Public chat is quiet.\nSay something!" else "В общем чате пока тихо.\nНапишите что-нибудь!"
     fun anonymous(lang: String) = if (lang == LANG_EN) "Anonymous" else "Аноним"
@@ -320,12 +336,12 @@ object S {
     fun scanContact(lang: String) = if (lang == LANG_EN) "Scan contact QR" else "Отсканируйте QR другого пользователя"
 
     // Info screen
-    fun infoTitle(lang: String) = if (lang == LANG_EN) "About Tuk-Tuk" else "О Tuk-Tuk"
+    fun infoTitle(lang: String) = if (lang == LANG_EN) "About Qq" else "О Qq"
     fun infoTagline(lang: String) = if (lang == LANG_EN) "Connection where there are people." else "Связь там где есть люди."
     fun infoBody(lang: String) = if (lang == LANG_EN)
-        "Tuk-Tuk works even when the internet is down and cell towers are silent. Your phones become the network, relaying messages from person to person."
+        "Qq works even when the internet is down and cell towers are silent. Your phones become the network, relaying messages from person to person."
     else
-        "Tuk-Tuk работает, даже когда падает интернет и молчат вышки сотовой связи. Ваши телефоны сами становятся сетью, передавая сообщения от человека к человеку."
+        "Qq работает, даже когда падает интернет и молчат вышки сотовой связи. Ваши телефоны сами становятся сетью, передавая сообщения от человека к человеку."
     fun infoContacts(lang: String) = if (lang == LANG_EN) "Contacts" else "Контакты"
     fun infoChannel(lang: String) = if (lang == LANG_EN) "• Project channel:" else "• Канал проекта:"
     fun infoBugs(lang: String) = if (lang == LANG_EN) "• Ideas and bug reports:" else "• Идеи и баг-репорты:"
@@ -450,22 +466,26 @@ object S {
     else
         "Язык и ваша личность на этом устройстве."
     fun settingsPrivacyBody(lang: String) = if (lang == LANG_EN)
-        "Private chats are encrypted end-to-end. Public channels are open to people nearby."
+        "Chats in Qq are encrypted end-to-end. Only you and the recipient can read them — " +
+            "phones that carry the message along the way cannot."
     else
-        "Личные диалоги шифруются на концах. Публичные каналы открыты людям рядом."
+        "Диалоги в Qq шифруются на концах. Прочитать их можете только вы и получатель — " +
+            "телефоны, которые несут сообщение по пути, не могут."
     fun settingsNotificationsBody(lang: String) = if (lang == LANG_EN)
         "System notifications for new messages. Fine-grained mute comes later."
     else
         "Системные уведомления о новых сообщениях. Тонкая настройка тишины — позже."
     fun settingsNetworkHint(lang: String) = if (lang == LANG_EN)
-        "Optional delivery server and how actively the phone helps nearby. Status lives on the Network tab."
+        "Optional delivery server and how actively this phone helps people nearby. " +
+            "Qq works without a server."
     else
-        "Необязательный сервер доставки и активность телефона рядом. Статус — на вкладке Сеть."
+        "Необязательный сервер доставки и то, насколько активно телефон помогает людям рядом. " +
+            "Qq работает и без сервера."
     fun deliveryServer(lang: String) = if (lang == LANG_EN) "Delivery server (optional)" else "Сервер доставки (необязательно)"
     fun deliveryServerHint(lang: String) = if (lang == LANG_EN)
-        "Leave empty — Tuk-Tuk still finds a path through people"
+        "Leave empty — Qq still finds a path through people"
     else
-        "Можно пусто — Tuk-Tuk всё равно найдёт путь через людей"
+        "Можно пусто — Qq всё равно найдёт путь через людей"
     fun deliveryServerSaved(lang: String) = if (lang == LANG_EN) "Delivery server saved" else "Сервер доставки сохранён"
     fun aboutProject(lang: String) = if (lang == LANG_EN) "About the project" else "О проекте"
     fun versionLabel(lang: String) = if (lang == LANG_EN) "Version" else "Версия"

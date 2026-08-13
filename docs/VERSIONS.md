@@ -1,4 +1,4 @@
-# Версии TukTuk — хронология (не semver)
+# Версии Qq — хронология (не semver)
 
 **Актуальная версия: `0.1.109`** (`versionName` в `app/build.gradle.kts`, тег `v0.1.109`).
 

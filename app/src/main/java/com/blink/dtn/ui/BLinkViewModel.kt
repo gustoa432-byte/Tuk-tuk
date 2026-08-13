@@ -281,6 +281,10 @@ class BLinkViewModel(
 
     fun getProfileFlow(userId: String) = dao.getProfileByIdFlow(userId)
 
+    /** Delivery status shown in the dialog list — null when the last message is not ours. */
+    fun getLastOwnStatusFlow(conversationId: String) =
+        dao.getLastOwnMessageStatusFlow(conversationId)
+
     // Contact QR payload: carries our public key so a scan can pin the key
     // out-of-band without waiting for a BLE identity announcement. Optional
     // compact avatar (`av` = base64 JPEG) when it fits the QR budget.

@@ -149,7 +149,7 @@ fun shareToPackage(context: Context, text: String, vararg packages: String) {
 
 fun copyText(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText("TukTuk", text))
+    cm.setPrimaryClip(ClipData.newPlainText("Qq", text))
 }
 
 fun openUrl(context: Context, url: String) {

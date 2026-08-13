@@ -130,8 +130,8 @@ fun ErrorReportDialog(
                                     com.blink.dtn.telemetry.FeedbackMailer.sendTraceZip(
                                         context,
                                         zip,
-                                        subject = if (note.isBlank()) "TukTuk diagnostics"
-                                        else "TukTuk diagnostics: ${note.take(80)}"
+                                        subject = if (note.isBlank()) "Qq diagnostics"
+                                        else "Qq diagnostics: ${note.take(80)}"
                                     )
                                     phase = ReportPhase.Thanks
                                 } else {

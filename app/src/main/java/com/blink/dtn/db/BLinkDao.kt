@@ -332,6 +332,23 @@ abstract class BLinkDao {
     abstract fun getBackpackMessagesFlow(): Flow<List<Message>>
 
     /**
+     * Dialog list delivery status: status of the newest message in a conversation,
+     * but only when that message is ours. Read-only projection — no schema change.
+     */
+    @Query(
+        """
+        SELECT status FROM (
+            SELECT status, is_mine FROM messages
+            WHERE conversationId = :conversationId
+              AND isAck = 0
+            ORDER BY local_seq DESC, timestamp DESC
+            LIMIT 1
+        ) WHERE is_mine = 1
+        """
+    )
+    abstract fun getLastOwnMessageStatusFlow(conversationId: String): Flow<Int?>
+
+    /**
      * Chronicle: successfully delivered user parcels with optional hop chain.
      */
     @Query(

@@ -137,12 +137,24 @@ fun BLinkApp(bleManager: BleMeshManager, factory: BLinkViewModelFactory) {
 
     when {
         !permissionsGranted -> {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val lang by com.blink.dtn.ui.AppLang.lang.collectAsState()
+            LaunchedEffect(Unit) { com.blink.dtn.ui.AppLang.init(context) }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(28.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Bluetooth & Location permissions are required for Mesh.")
+                    Text(com.blink.dtn.ui.S.permTitle(lang))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        com.blink.dtn.ui.S.permBody(lang),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(onClick = { permissionLauncher.launch(allRequired) }) {
-                        Text("Grant Permissions")
+                        Text(com.blink.dtn.ui.S.permGrant(lang))
                     }
                 }
             }

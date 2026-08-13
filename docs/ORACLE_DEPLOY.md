@@ -1,4 +1,6 @@
-# TukTuk VPS — раскатка release (mesh + Oracle)
+# Qq VPS — раскатка release (mesh + Oracle)
+
+> Пути, имена сервисов и переменные окружения (`/opt/tuktuk`, `tuktuk.service`, `TUKTUK_*`, `node.tuktuk.dev`) — внутренние технические имена, они не переименовываются вместе с продуктом.
 
 Host: `node.tuktuk.dev` / `157.228.136.239` · Ubuntu 24.04 · бинарь systemd, **не Docker**.
 

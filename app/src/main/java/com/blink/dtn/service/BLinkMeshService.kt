@@ -48,7 +48,11 @@ class BLinkMeshService : Service() {
         // as MainActivity → identical id). Overwrites any legacy random id.
         myNodeId = com.blink.dtn.crypto.NodeIdentity.myNodeId()
         prefs.edit().putString("node_id", myNodeId).apply()
-        com.blink.dtn.ui.GamificationStore.init(this)
+        // Notification copy is localised — the service may start before any UI.
+        com.blink.dtn.ui.AppLang.init(this)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            com.blink.dtn.ui.GamificationStore.init(this)
+        }
 
         // ZOMBIE SWEEP
         serviceScope.launch {
@@ -89,8 +93,11 @@ class BLinkMeshService : Service() {
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "mesh_channel")
-            .setContentTitle("Тук...")
-            .setContentText("От человека... к человеку... тук")
+            .setContentTitle("Qq")
+            .setContentText(
+                if (com.blink.dtn.ui.AppLang.isEn()) "Carrying messages from person to person"
+                else "Передаёт сообщения от человека к человеку"
+            )
             .setSmallIcon(com.blink.dtn.R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -267,23 +274,27 @@ class BLinkMeshService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationManager = getSystemService(NotificationManager::class.java)
             
-            // Foreground service channel
+            val en = com.blink.dtn.ui.AppLang.isEn()
+
+            // Foreground service channel. Channel IDs stay stable (user sound/mute settings
+            // are keyed by id) — only the user-visible names/descriptions are rebranded.
             val foregroundChannel = NotificationChannel(
                 "mesh_channel",
-                "Mesh Network",
+                if (en) "Qq in background" else "Qq в фоне",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Maintains P2P Bluetooth connection in background"
+                description = if (en) "Keeps Qq connected to people nearby"
+                else "Держит Qq на связи с людьми рядом"
             }
             notificationManager?.createNotificationChannel(foregroundChannel)
             
             // High priority messages channel
             val messagesChannel = NotificationChannel(
                 "tuktuk_messages",
-                "TukTuk Messages",
+                if (en) "Qq messages" else "Сообщения Qq",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Alerts for new mesh messages"
+                description = if (en) "New message alerts" else "Уведомления о новых сообщениях"
                 
                 // Custom sound setup
                 val soundUri = android.net.Uri.parse("android.resource://${packageName}/raw/tuktuk")

@@ -19,7 +19,7 @@ We read all mail; replies may be delayed. Do not open public issues for unfixed 
 
 - Extracting or redistributing an APK cannot be made impossible. Anyone can install a fork.
 - Mesh routing cannot stop forks from talking to each other.
-- What we *can* do: (1) treat **Play / release signing cert** as the publisher identity for installable updates; (2) require **developer-signed** `SYSTEM_ANNOUNCEMENT` / `VERSION_ANNOUNCEMENT` packets so a forged build cannot claim “official TukTuk news” without the author private key.
+- What we *can* do: (1) treat **Play / release signing cert** as the publisher identity for installable updates; (2) require **developer-signed** `SYSTEM_ANNOUNCEMENT` / `VERSION_ANNOUNCEMENT` packets so a forged build cannot claim “official Qq news” without the author private key.
 
 **Official builds**
 

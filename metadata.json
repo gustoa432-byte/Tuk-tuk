@@ -1,5 +1,5 @@
 {
-  "name": "Tuktuk",
+  "name": "Qq",
   "description": "Offline, peer-to-peer delay-tolerant networking messaging app.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

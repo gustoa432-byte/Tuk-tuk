@@ -69,7 +69,7 @@ data class TraceExportBundle(
     val device: DeviceSnapshot,
     val mesh: MeshSnapshot?,
     val traces: List<MessageTrace>,
-    val notes: String = "TukTuk MessageTrace black-box export"
+    val notes: String = "Qq MessageTrace black-box export"
 )
 
 object TraceStages {

@@ -28,7 +28,7 @@ class MeshNotificationAdapter(private val context: Context) {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(com.blink.dtn.R.drawable.ic_notification)
-            .setContentTitle("Тук... от $senderNick")
+            .setContentTitle(senderNick.ifBlank { "Qq" })
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)

@@ -1,4 +1,4 @@
-name: Build TukTuk82
+name: Build Qq
 on: 
   push:
   workflow_dispatch:
@@ -23,5 +23,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TukTuk82-APK
+          name: Qq-APK
           path: app/build/outputs/apk/debug/*.apk

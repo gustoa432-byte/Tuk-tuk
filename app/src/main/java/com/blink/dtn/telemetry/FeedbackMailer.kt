@@ -20,7 +20,7 @@ object FeedbackMailer {
 
     fun sendFeedback(
         context: Context,
-        subject: String = "TukTuk feedback",
+        subject: String = "Qq feedback",
         body: String = "Опишите ошибку или идею:\n\n"
     ) {
         val intent = Intent(Intent.ACTION_SENDTO).apply {
@@ -32,7 +32,7 @@ object FeedbackMailer {
         }
         try {
             context.startActivity(
-                Intent.createChooser(intent, "Написать в TukTuk")
+                Intent.createChooser(intent, "Написать в Qq")
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         } catch (e: Exception) {
@@ -41,7 +41,7 @@ object FeedbackMailer {
         }
     }
 
-    fun sendTraceZip(context: Context, zip: File, subject: String = "TukTuk MessageTrace / error report") {
+    fun sendTraceZip(context: Context, zip: File, subject: String = "Qq MessageTrace / error report") {
         if (!zip.exists() || zip.length() <= 0L) {
             Toast.makeText(context, "ZIP отчёта пуст или не создан", Toast.LENGTH_LONG).show()
             return
@@ -114,7 +114,7 @@ object FeedbackMailer {
     fun sendZipToTelegram(
         context: Context,
         zip: File,
-        subject: String = "TukTuk error report"
+        subject: String = "Qq error report"
     ): Boolean {
         if (!zip.exists() || zip.length() <= 0L) return false
         val shareFile = ensureUnderCache(context, zip)
@@ -137,7 +137,7 @@ object FeedbackMailer {
                 putExtra(Intent.EXTRA_SUBJECT, subject)
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "TukTuk error report ZIP.\nPlease send to @b6dmachine\n${shareFile.name}"
+                    "Qq error report ZIP.\nPlease send to @b6dmachine\n${shareFile.name}"
                 )
                 putExtra(Intent.EXTRA_STREAM, uri)
                 clipData = ClipData.newUri(context.contentResolver, shareFile.name, uri)
@@ -171,7 +171,7 @@ object FeedbackMailer {
             Toast.makeText(context, "Не удалось собрать отчёт", Toast.LENGTH_LONG).show()
             return
         }
-        val subject = "TukTuk error report ${zip.name}"
+        val subject = "Qq error report ${zip.name}"
         if (!sendZipToTelegram(context, zip, subject)) {
             sendTraceZip(context, zip, subject)
         }

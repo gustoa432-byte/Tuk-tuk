@@ -229,11 +229,15 @@ fun MainScreen(viewModel: BLinkViewModel) {
     LaunchedEffect(Unit) {
         AppLang.init(context)
         AppWallpaper.init(context)
-        GamificationStore.init(context)
-        ReactionStore.init(context)
+        // Legacy gamification / reactions stay out of Core: old prefs must not
+        // resurface as cosmetics or emoji on a plain text messenger.
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            GamificationStore.init(context)
+            ReactionStore.init(context)
+        }
     }
 
-    if (showDevPanel) {
+    if (showDevPanel && com.blink.dtn.BuildConfig.DEBUG) {
         DeliveryObservatoryPanel(viewModel = viewModel, onClose = { showDevPanel = false })
         return
     }
@@ -307,22 +311,27 @@ fun MainScreen(viewModel: BLinkViewModel) {
                         title = {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            val now = System.currentTimeMillis()
-                                            if (now - lastClickTime < 500) {
-                                                clickCount++
-                                                if (clickCount >= 4) {
-                                                    showDevPanel = true
-                                                    clickCount = 0
+                                // Dev panel is a debug-only tool: no hidden entry point in release.
+                                modifier = if (com.blink.dtn.BuildConfig.DEBUG) {
+                                    Modifier.pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onTap = {
+                                                val now = System.currentTimeMillis()
+                                                if (now - lastClickTime < 500) {
+                                                    clickCount++
+                                                    if (clickCount >= 4) {
+                                                        showDevPanel = true
+                                                        clickCount = 0
+                                                    }
+                                                } else {
+                                                    clickCount = 1
                                                 }
-                                            } else {
-                                                clickCount = 1
+                                                lastClickTime = now
                                             }
-                                            lastClickTime = now
-                                        }
-                                    )
+                                        )
+                                    }
+                                } else {
+                                    Modifier
                                 }
                             ) {
                                 Text(
@@ -404,7 +413,9 @@ fun MainScreen(viewModel: BLinkViewModel) {
 
 @Composable
 private fun DeliveryLoadDot(load: DeliveryLoad, count: Int) {
+    // 0 = calm (no dot at all), 1–3 yellow, 4–9 orange, 10+ red.
     if (load == DeliveryLoad.Calm) return
+    val lang by AppLang.lang.collectAsState()
     val color = when (load) {
         DeliveryLoad.Light -> Color(0xFFE6C84A)
         DeliveryLoad.Medium -> Color(0xFFE67E22)
@@ -420,7 +431,7 @@ private fun DeliveryLoadDot(load: DeliveryLoad, count: Int) {
         if (count > 0) {
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                count.toString(),
+                load.label(count, lang),
                 style = Typography.labelSmall,
                 color = TextSecondary
             )
@@ -739,6 +750,8 @@ private fun DialogListRow(
     onToggleArchive: () -> Unit
 ) {
     val profile by viewModel.getProfileFlow(dialog.conversationId).collectAsState(initial = null)
+    val ownStatus by viewModel.getLastOwnStatusFlow(dialog.conversationId)
+        .collectAsState(initial = null)
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = if (dialog.lastTimestamp > 0) formatter.format(Date(dialog.lastTimestamp)) else ""
     val title = peerListTitle(profile, dialog.displayName, dialog.conversationId)
@@ -864,13 +877,31 @@ private fun DialogListRow(
                         }
                     }
                     if (!dialog.lastMessage.isNullOrEmpty()) {
-                        Text(
-                            text = dialog.lastMessage,
-                            color = TextSecondary,
-                            style = Typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ownStatus?.let { status ->
+                                val statusColor = DeliveryVoyageLabels.colorForStatus(status)
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(statusColor, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = DeliveryVoyageLabels.labelForStatus(status, lang = lang),
+                                    color = statusColor,
+                                    style = Typography.labelSmall,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Text(
+                                text = dialog.lastMessage,
+                                color = TextSecondary,
+                                style = Typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
@@ -1700,11 +1731,21 @@ fun MessageBubble(
 ) {
     val lang by AppLang.lang.collectAsState()
     val context = LocalContext.current
-    val reactions by ReactionStore.map.collectAsState()
-    val reaction = reactions[msg.id]
     val isMine = msg.senderId == myNodeId || msg.isMine
-    val gm by GamificationStore.snap.collectAsState()
-    val nickTint = if (isMine) CosmeticApply.nickColor(gm.nickColorId) else TextPrimary
+    // Core = plain text messenger: previously stored reactions are simply not rendered
+    // and legacy nick cosmetics never tint the text.
+    val reaction = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+        null
+    } else {
+        val reactions by ReactionStore.map.collectAsState()
+        reactions[msg.id]
+    }
+    val nickTint = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+        TextPrimary
+    } else {
+        val gm by GamificationStore.snap.collectAsState()
+        if (isMine) CosmeticApply.nickColor(gm.nickColorId) else TextPrimary
+    }
     val canBlockSender = !isMine && onBlockUser != null
     val canReport = !isMine && onReport != null && msg.senderId.isNotBlank()
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -1742,8 +1783,10 @@ fun MessageBubble(
             onCancelSend = onCancelSend,
             onBlockUser = onBlockUser,
             onReport = if (canReport) onReport else null,
-            onReact = { emoji ->
-                ReactionStore.set(context, msg.id, emoji)
+            onReact = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                null
+            } else {
+                { emoji -> ReactionStore.set(context, msg.id, emoji) }
             }
         )
     }
@@ -1904,7 +1947,7 @@ fun shareApk(context: Context) {
     try {
         val appInfo = context.applicationInfo
         val srcFile = File(appInfo.sourceDir)
-        val destFile = File(context.externalCacheDir, "TukTuk_setup.apk")
+        val destFile = File(context.externalCacheDir, "Qq_setup.apk")
         srcFile.copyTo(destFile, overwrite = true)
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", destFile)
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -2732,7 +2775,7 @@ fun InfoContent(compact: Boolean = false) {
             modifier = Modifier.clickable {
                 com.blink.dtn.telemetry.FeedbackMailer.sendFeedback(
                     context,
-                    subject = "Tuk-Tuk feedback",
+                    subject = "Qq feedback",
                     body = S.feedbackBody(lang)
                 )
             }

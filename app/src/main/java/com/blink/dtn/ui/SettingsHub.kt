@@ -161,7 +161,7 @@ fun AboutTukTukScreen(onBack: () -> Unit) {
     ) {
         SettingsBackRow(S.aboutProject(lang), onBack)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Tuk-Tuk", style = Typography.titleLarge, color = TextPrimary)
+        Text("Qq", style = Typography.titleLarge, color = TextPrimary)
         Text(S.slogan(lang), style = Typography.bodyMedium, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         Text("${S.versionLabel(lang)}: $version", color = TextSecondary, style = Typography.bodySmall)

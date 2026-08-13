@@ -227,7 +227,7 @@ private fun SignInStep(
             .padding(horizontal = 24.dp, vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Tuk-Tuk", style = Typography.headlineMedium, color = TextPrimary)
+        Text("Qq", style = Typography.headlineMedium, color = TextPrimary)
         Text(
             S.authSignInTitle(lang),
             style = Typography.bodySmall,

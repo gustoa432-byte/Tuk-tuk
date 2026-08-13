@@ -34,26 +34,36 @@ import com.blink.dtn.ui.theme.Typography
 
 /**
  * User-facing delivery crumbs — no engineer jargon (no ACK / GATT / UUID).
+ *
+ * Wording only: the state machine itself ([com.blink.dtn.db.MessageDeliverySm]) is untouched.
+ * "Delivered" is reserved for [Message.STATUS_DELIVERED_ACK] (true end-to-end confirmation);
+ * a packet handed to a neighbour is honestly reported as "at another Qq".
  */
 object DeliveryVoyageLabels {
-    fun label(msg: Message, lang: String = AppLang.lang.value): String {
-        val base = when (msg.status) {
-            Message.STATUS_PENDING -> if (lang == "en") "waiting" else "ждёт"
-            Message.STATUS_PENDING_KEY -> if (lang == "en") "need key" else "нужен ключ"
-            Message.STATUS_IN_FLIGHT -> if (lang == "en") "sending" else "отправляется"
-            Message.STATUS_STORED_IN_NEIGHBOR -> if (msg.type == "PRIVATE") {
-                if (lang == "en") "at neighbor" else "у соседа"
-            } else {
-                if (lang == "en") "passed on" else "передано"
-            }
-            Message.STATUS_DELIVERED_ACK -> if (lang == "en") "delivered" else "доставлено"
-            Message.STATUS_FAILED -> if (lang == "en") "failed" else "ошибка"
-            else -> if (lang == "en") "waiting" else "ждёт"
+    fun label(msg: Message, lang: String = AppLang.lang.value): String =
+        labelForStatus(msg.status, msg.type == Message.TYPE_PUBLIC, lang)
+
+    fun labelForStatus(
+        status: Int,
+        isPublic: Boolean = false,
+        lang: String = AppLang.lang.value
+    ): String = when (status) {
+        Message.STATUS_PENDING -> if (lang == "en") "queued" else "в очереди"
+        Message.STATUS_PENDING_KEY -> if (lang == "en") "needs key" else "нужен ключ"
+        Message.STATUS_IN_FLIGHT -> if (lang == "en") "sending" else "отправляется"
+        Message.STATUS_STORED_IN_NEIGHBOR -> if (isPublic) {
+            if (lang == "en") "passed on" else "передано"
+        } else {
+            if (lang == "en") "at another Qq" else "у другого Qq"
         }
-        return base
+        Message.STATUS_DELIVERED_ACK -> if (lang == "en") "delivered" else "доставлено"
+        Message.STATUS_FAILED -> if (lang == "en") "failed" else "ошибка"
+        else -> if (lang == "en") "queued" else "в очереди"
     }
 
-    fun color(msg: Message): Color = when (msg.status) {
+    fun color(msg: Message): Color = colorForStatus(msg.status)
+
+    fun colorForStatus(status: Int): Color = when (status) {
         Message.STATUS_DELIVERED_ACK -> TextPrimary
         Message.STATUS_STORED_IN_NEIGHBOR -> TextSecondary
         Message.STATUS_FAILED -> DangerColor
@@ -61,27 +71,31 @@ object DeliveryVoyageLabels {
     }
 
     fun subtitle(msg: Message, lang: String = AppLang.lang.value): String {
-        val path = MessageRouter.pathFor(msg.id)
-        val via = path?.let { " · ${humanPathLabel(it, lang)}" }.orEmpty()
+        // Core keeps the story human: no route / transport details in the chat.
+        val via = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            ""
+        } else {
+            MessageRouter.pathFor(msg.id)?.let { " · ${humanPathLabel(it, lang)}" }.orEmpty()
+        }
         return when (msg.status) {
             Message.STATUS_PENDING ->
-                if (lang == "en") "Looking for a path$via" else "Ищем путь$via"
+                if (lang == "en") "Waiting for a way to send$via" else "Ждёт отправки$via"
             Message.STATUS_PENDING_KEY ->
                 if (lang == "en") "Scan their QR once to lock the encryption key"
                 else "Один раз отсканируйте их QR — нужен ключ шифрования"
             Message.STATUS_IN_FLIGHT ->
-                if (lang == "en") "Handing to radio / delivery server$via"
-                else "Отдаём в радио / сервер доставки$via"
+                if (lang == "en") "Sending$via" else "Отправляется$via"
             Message.STATUS_STORED_IN_NEIGHBOR ->
                 if (msg.type == "PRIVATE") {
-                    if (lang == "en") "Stored on a neighbor — not delivered until friend ACKs"
-                    else "У соседа — доставлено только после подтверждения друга"
+                    if (lang == "en") "Handed to another Qq nearby — delivered only when the recipient confirms"
+                    else "Передано другому Qq рядом — доставлено только когда подтвердит получатель"
                 } else {
                     if (lang == "en") "Shared with people nearby$via"
                     else "Передано людям рядом$via"
                 }
             Message.STATUS_DELIVERED_ACK ->
-                if (lang == "en") "Friend confirmed receipt$via" else "Друг подтвердил получение$via"
+                if (lang == "en") "The recipient confirmed receipt$via"
+                else "Получатель подтвердил получение$via"
             Message.STATUS_FAILED ->
                 if (lang == "en") "Could not send — tap to retry"
                 else "Не удалось отправить — нажмите, чтобы повторить"
@@ -181,6 +195,10 @@ fun MessageVoyageDialog(
                     style = Typography.bodySmall,
                     color = TextSecondary
                 )
+                // Core = plain SMS feel: status + honest explanation, no hop / route chatter.
+                if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                    return@Column
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 MessageTrackerStrip(
                     path = path,

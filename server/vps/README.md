@@ -1,6 +1,6 @@
-# TukTuk VPS MVP
+# Qq VPS MVP (Internet Gateway)
 
-Minimal store-and-forward for the online path of the message router.
+Minimal store-and-forward for the online path of the message router. Paths, file and env names (`/opt/tuktuk`, `tuktuk.db`, `TUKTUK_*`) are internal technical names kept as-is.
 
 ## Recommended: Rust + libSQL (persistent)
 

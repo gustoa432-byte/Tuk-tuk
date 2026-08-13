@@ -113,7 +113,7 @@ object ErrorJournal {
         init(context)
         return try {
             val stamp = SimpleDateFormat("yyyy_MM_dd_HHmmss", Locale.US).format(Date())
-            val out = File(context.cacheDir, "tuktuk_error_report_$stamp.zip")
+            val out = File(context.cacheDir, "qq_error_report_$stamp.zip")
             val appVersion = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
             }.getOrDefault("?")
@@ -136,7 +136,7 @@ object ErrorJournal {
                 put(
                     "README.txt",
                     """
-                    TukTuk error report
+                    Qq error report
                     appVersion=$appVersion ($versionCode)
                     exportedAt=$stamp
                     Please forward this ZIP to @b6dmachine in Telegram.

@@ -1,4 +1,4 @@
-# Официальная сборка TukTuk
+# Официальная сборка Qq
 
 ## Что значит «официальная»
 
@@ -45,7 +45,7 @@
 ./gradlew :app:assembleRelease
 ```
 
-APK: `app/build/outputs/apk/release/Tuktuk.apk`
+APK: `app/build/outputs/apk/release/` (имя файла задаётся в `app/build.gradle.kts`)
 
 Без `keystore.properties` задача `assembleRelease` завершится ошибкой с подсказкой запустить setup-скрипт.
 

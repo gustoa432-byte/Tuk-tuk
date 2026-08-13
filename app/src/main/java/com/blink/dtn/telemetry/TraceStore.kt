@@ -216,7 +216,7 @@ object TraceStore {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
             }.getOrDefault("1.0")
             val summary = buildString {
-                appendLine("TukTuk voyage error report")
+                appendLine("Qq voyage error report")
                 appendLine("messageId=$messageId")
                 appendLine("dbStatus=$dbStatus")
                 appendLine("appVersion=$appVersion")
@@ -287,7 +287,7 @@ object TraceStore {
         FeedbackMailer.sendTraceZip(
             context,
             file,
-            subject = "TukTuk voyage error · ${messageId.take(16)}"
+            subject = "Qq voyage error · ${messageId.take(16)}"
         )
     }
 
@@ -407,6 +407,6 @@ object TraceAutoSend {
         zip.copyTo(dest, overwrite = true)
         Log.i("MessageTrace", "Queued auto-upload artifact ${dest.absolutePath}")
         // Offer email to the feedback mailbox when online + opted-in.
-        FeedbackMailer.sendTraceZip(context, dest, subject = "TukTuk auto MessageTrace")
+        FeedbackMailer.sendTraceZip(context, dest, subject = "Qq auto MessageTrace")
     }
 }

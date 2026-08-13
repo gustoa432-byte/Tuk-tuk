@@ -103,7 +103,7 @@ fun MessageActionSheet(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(bottom = 10.dp)
             )
-            if (onReact != null) {
+            if (onReact != null && !com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)

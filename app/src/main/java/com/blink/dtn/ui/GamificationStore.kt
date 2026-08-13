@@ -39,7 +39,17 @@ object GamificationStore {
     private val _snap = MutableStateFlow(Snapshot())
     val snap: StateFlow<Snapshot> = _snap.asStateFlow()
 
+    /**
+     * Under [com.blink.dtn.BuildConfig.QQ_CORE_ONLY] the old prefs stay on disk but are
+     * never read: [snap] keeps the neutral default so legacy cosmetics cannot change
+     * how Qq looks after an upgrade.
+     */
     fun init(context: Context) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            appContext = context.applicationContext
+            _snap.value = Snapshot()
+            return
+        }
         appContext = context.applicationContext
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val unlocked = p.getStringSet(KEY_UNLOCKED, setOf("default", "none", "dino_basic"))
@@ -83,6 +93,7 @@ object GamificationStore {
     }
 
     fun selectCosmetic(context: Context, kind: String, id: String) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         if (id !in _snap.value.unlocked) return
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val next = when (kind) {

@@ -1,6 +1,8 @@
-# TukTuk message router (Internet → Wi‑Fi Direct → BLE)
+# Qq message router (Internet → BLE)
 
-Product path from the Telegram-vision plan: TukTuk stays the brain; UX feels familiar; VPS is optional online hop.
+The client decides the path; the VPS (Internet Gateway) is an optional online hop.
+
+> Historical note: this document was written when a Wi‑Fi Direct hop was also planned. That path was removed in 0.1.109 — see `docs/SECURITY.md`.
 
 ## Client
 

@@ -1,4 +1,4 @@
-# TukTuk VPS (Rust / Axum + libSQL)
+# Qq VPS / Internet Gateway (Rust / Axum + libSQL)
 
 Store-and-forward mesh bridge + email/Telegram auth + online BLE-key contact handshake.
 
@@ -33,7 +33,7 @@ ssh -i ~/.ssh/id_ed25519 root@157.228.136.239 'bash -s' < scripts/deploy-vps.sh
 | `TUKTUK_SMTP_HOST` | — | SMTP host |
 | `TUKTUK_SMTP_PORT` | `587` | STARTTLS |
 | `TUKTUK_SMTP_USER` / `TUKTUK_SMTP_PASS` | — | SMTP auth |
-| `TUKTUK_SMTP_FROM` | — | From: `TukTuk <noreply@…>` |
+| `TUKTUK_SMTP_FROM` | — | From: `Qq <noreply@…>` |
 | `TUKTUK_TELEGRAM_BOT_TOKEN` | — | для `/auth/telegram` |
 | `TUKTUK_OTP_DEV_LOG` | `true` | без SMTP пишет OTP в лог (+ `devCode` в JSON) |
 

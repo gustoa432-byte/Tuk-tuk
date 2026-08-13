@@ -1,4 +1,4 @@
-# Reproducible / release builds (TukTuk)
+# Reproducible / release builds (Qq)
 
 Goal: a third party can rebuild an APK and compare digests with a published release.
 
@@ -30,14 +30,15 @@ Set epoch via project property when needed:
 3. Compare:
 
 ```bash
-sha256sum app/build/outputs/apk/release/Tuktuk.apk
-apksigner verify --print-certs app/build/outputs/apk/release/Tuktuk.apk
+APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+sha256sum "$APK"
+apksigner verify --print-certs "$APK"
 ```
 
 4. For byte-identical APKs you also need identical signing material and identical R8 mapping inputs. Unsigned or re-signed builds will differ in the signature block even if DEX matches — compare `classes.dex` inside the APK if needed:
 
 ```bash
-unzip -p Tuktuk.apk classes.dex | sha256sum
+unzip -p "$APK" classes.dex | sha256sum
 ```
 
 ## R8 notes

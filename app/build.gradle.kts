@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 45
-        versionName = "0.1.115"
+        versionCode = 46
+        versionName = "0.1.116"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -157,9 +157,9 @@ android {
         outputs.configureEach {
             val out = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
             out.outputFileName = if (name.contains("release", ignoreCase = true)) {
-                "tuktuk.v.$vn.apk"
+                "qq.v.$vn.apk"
             } else {
-                "Tuktuk.apk"
+                "Qq.apk"
             }
         }
     }

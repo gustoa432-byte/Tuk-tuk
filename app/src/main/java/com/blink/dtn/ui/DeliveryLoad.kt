@@ -1,32 +1,33 @@
 package com.blink.dtn.ui
 
 /**
- * Visual metaphor for mesh carry load — not XP / karma / cosmetics.
+ * How many other people's messages this phone is currently carrying.
  *
- * Counts come from existing Room queue (PENDING / IN_FLIGHT / PENDING_KEY),
- * not a parallel delivery system.
- *
- * Name options (product TBD):
- * - «Рюкзак» / Backpack
- * - «Нагрузка» / Delivery load
- * - «Заряд сети» / Social charge
- * - «Ноша» / Carry
+ * Not XP / karma / cosmetics: counts come from the existing Room queue
+ * (PENDING / IN_FLIGHT / PENDING_KEY), not a parallel delivery system.
  */
 enum class DeliveryLoad {
     /** 0 — calm, no indicator */
     Calm,
-    /** few — yellow */
+
+    /** 1–3 — yellow */
     Light,
-    /** several — orange */
+
+    /** 4–9 — orange */
     Medium,
-    /** many — red */
+
+    /** 10+ — red */
     Heavy;
 
+    fun label(count: Int, lang: String = AppLang.lang.value): String = when (this) {
+        Calm -> if (lang == "en") "Nothing to carry" else "Ничего не несёт"
+        else -> if (lang == "en") "Carrying $count" else "Несёт $count"
+    }
+
     companion object {
-        /** Tentative thresholds — not final product numbers. */
         fun fromQueuedCount(count: Int): DeliveryLoad = when {
             count <= 0 -> Calm
-            count <= 2 -> Light
+            count <= 3 -> Light
             count <= 9 -> Medium
             else -> Heavy
         }

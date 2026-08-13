@@ -38,8 +38,12 @@ fun PeerAvatar(
     val dinoRes = remember(uid.ifBlank { label }) {
         AvatarHelper.getDefaultAvatarForUid(uid.ifBlank { label })
     }
-    val gm by GamificationStore.snap.collectAsState()
-    val frame = CosmeticApply.frameColor(gm.frameId)
+    val frame = if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+        null
+    } else {
+        val gm by GamificationStore.snap.collectAsState()
+        CosmeticApply.frameColor(gm.frameId)
+    }
     Box(
         modifier = modifier
             .size(size)
