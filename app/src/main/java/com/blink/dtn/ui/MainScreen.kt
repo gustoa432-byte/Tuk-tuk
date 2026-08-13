@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.AlertDialog
@@ -114,6 +115,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -236,19 +238,41 @@ fun MainScreen(viewModel: BLinkViewModel) {
         return
     }
 
+    // Early-exit screens have no Scaffold — must paint dark backdrop or light text
+    // lands on the Activity's white window (blank / invisible UI).
     if (showSettings) {
-        SettingsHub(
-            onBack = {
-                AppWallpaper.discardDraft()
-                showSettings = false
-            },
-            viewModel = viewModel
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            AppRootBackdrop()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                SettingsHub(
+                    onBack = {
+                        AppWallpaper.discardDraft()
+                        showSettings = false
+                    },
+                    viewModel = viewModel
+                )
+            }
+        }
         return
     }
 
     if (showAbout) {
-        AboutTukTukScreen(onBack = { showAbout = false })
+        Box(modifier = Modifier.fillMaxSize()) {
+            AppRootBackdrop()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                AboutTukTukScreen(onBack = { showAbout = false })
+            }
+        }
         return
     }
 
@@ -301,7 +325,14 @@ fun MainScreen(viewModel: BLinkViewModel) {
                                     )
                                 }
                             ) {
-                                Text("Qq", style = Typography.titleLarge, color = TextPrimary)
+                                Text(
+                                    "Qq",
+                                    style = Typography.titleLarge.copy(
+                                        fontWeight = FontWeight.Medium,
+                                        letterSpacing = 1.sp
+                                    ),
+                                    color = TextPrimary
+                                )
                                 if (load != DeliveryLoad.Calm) {
                                     Spacer(modifier = Modifier.width(10.dp))
                                     DeliveryLoadDot(load = load, count = carryCount)
@@ -309,21 +340,16 @@ fun MainScreen(viewModel: BLinkViewModel) {
                             }
                         },
                         actions = {
-                            Box(
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = S.profile(lang),
+                                tint = TextSecondary,
                                 modifier = Modifier
-                                    .padding(end = 12.dp)
+                                    .padding(end = 16.dp)
                                     .size(40.dp)
-                                    .glassPanel(corner = 20.dp)
-                                    .bounceClick { showProfile = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.Person,
-                                    contentDescription = S.profile(lang),
-                                    tint = TextPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                                    .bounceClick { showProfile = true }
+                                    .padding(10.dp)
+                            )
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
                             containerColor = Color.Transparent,
@@ -338,13 +364,17 @@ fun MainScreen(viewModel: BLinkViewModel) {
                     Box(
                         modifier = Modifier
                             .navigationBarsPadding()
-                            .padding(end = 4.dp, bottom = 4.dp)
-                            .size(56.dp)
-                            .background(AccentLime, CircleShape)
+                            .padding(end = 8.dp, bottom = 8.dp)
+                            .size(52.dp)
+                            .background(TextPrimary, CircleShape)
                             .bounceClick { showAddContact = true },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("+", color = BackgroundDark, style = Typography.titleLarge)
+                        Text(
+                            "+",
+                            color = BackgroundDark,
+                            style = Typography.titleLarge.copy(fontWeight = FontWeight.Light)
+                        )
                     }
                 }
             }
