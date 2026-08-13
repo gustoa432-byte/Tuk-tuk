@@ -98,6 +98,7 @@ object TraceStore {
         visual: String? = null
     ) {
         val t = resolve(key) ?: return
+        val safeDetails = TelemetrySanitize.scrubDetails(details)
         synchronized(t) {
             val now = System.currentTimeMillis()
             t.events.add(
@@ -105,7 +106,7 @@ object TraceStore {
                     timestamp = now,
                     elapsedFromStartMs = now - t.startedAt,
                     stage = stage,
-                    details = details
+                    details = safeDetails
                 )
             )
             if (visual != null) {
@@ -114,7 +115,7 @@ object TraceStore {
             }
         }
         persist(t)
-        Log.d(TAG, "trace=${t.traceId.take(8)} msg=${t.messageId} $stage $details")
+        Log.d(TAG, "trace=${t.traceId.take(8)} msg=${t.messageId} $stage $safeDetails")
     }
 
     fun finish(key: String, status: String, details: Map<String, String> = emptyMap()) {

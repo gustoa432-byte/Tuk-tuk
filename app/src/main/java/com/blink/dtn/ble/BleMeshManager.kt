@@ -256,6 +256,7 @@ class BleMeshManager private constructor(
                     this@BleMeshManager.handleApkUpdateRequest(fromPeerId)
                 }
                 override fun noteSocialOrbitMeet(nodeId: String) {
+                    if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
                     // Stable mesh nodeId after IDENTITY handshake (GATT connect alone is MAC-only).
                     scope.launch(Dispatchers.IO) {
                         socialOrbitDao.upsertContact(nodeId)

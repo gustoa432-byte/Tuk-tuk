@@ -60,6 +60,7 @@ object GamificationStore {
 
     /** Safe from mesh service when UI may not have opened Expedition yet. */
     fun noteHelpedRelay(context: Context? = appContext) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         val ctx = context ?: return
         if (appContext == null) init(ctx)
         bump(ctx, KEY_HELPED) {
@@ -68,12 +69,14 @@ object GamificationStore {
     }
 
     fun noteReceived(context: Context? = appContext) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         val ctx = context ?: return
         if (appContext == null) init(ctx)
         bump(ctx, KEY_RECEIVED) { it.copy(received = it.received + 1) }
     }
 
     fun noteSavedDelivery(context: Context? = appContext) {
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         val ctx = context ?: return
         if (appContext == null) init(ctx)
         bump(ctx, KEY_SAVED) { it.copy(saved = it.saved + 1) }

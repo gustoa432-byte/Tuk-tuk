@@ -33,6 +33,12 @@ object TelemetryApi {
         note: String = "",
         peerNodeId: String? = null
     ): UploadResult {
+        // Qq Core: no auto / in-app upload to VPS→Telegram. Use local share instead.
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+            !com.blink.dtn.BuildConfig.QQ_ALLOW_TELEMETRY_UPLOAD
+        ) {
+            return UploadResult(false, "telemetry_upload_disabled")
+        }
         if (!zip.exists() || zip.length() <= 0L) {
             return UploadResult(false, "zip_empty")
         }

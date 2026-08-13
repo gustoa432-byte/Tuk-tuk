@@ -2154,36 +2154,37 @@ fun ProfileTab(
         }
 
         Spacer(modifier = Modifier.height(20.dp))
-        val helpSnap by GamificationStore.snap.collectAsState()
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassPanel(corner = 14.dp)
-                .padding(14.dp)
-        ) {
-            Text(S.networkHelpStats(lang), color = TextPrimary, style = Typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text(helpSnap.helped.toString(), color = AccentLime, style = Typography.titleLarge)
-                    Text(S.packagesDelivered(lang), color = TextSecondary, style = Typography.labelSmall)
-                }
-                Column {
-                    Text(helpSnap.received.toString(), color = AccentLime, style = Typography.titleLarge)
-                    Text(S.messagesReceived(lang), color = TextSecondary, style = Typography.labelSmall)
-                }
-                Column {
-                    Text(helpSnap.saved.toString(), color = AccentLime, style = Typography.titleLarge)
-                    Text(S.livesSaved(lang), color = TextSecondary, style = Typography.labelSmall)
+        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            val helpSnap by GamificationStore.snap.collectAsState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassPanel(corner = 14.dp)
+                    .padding(14.dp)
+            ) {
+                Text(S.networkHelpStats(lang), color = TextPrimary, style = Typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text(helpSnap.helped.toString(), color = AccentLime, style = Typography.titleLarge)
+                        Text(S.packagesDelivered(lang), color = TextSecondary, style = Typography.labelSmall)
+                    }
+                    Column {
+                        Text(helpSnap.received.toString(), color = AccentLime, style = Typography.titleLarge)
+                        Text(S.messagesReceived(lang), color = TextSecondary, style = Typography.labelSmall)
+                    }
+                    Column {
+                        Text(helpSnap.saved.toString(), color = AccentLime, style = Typography.titleLarge)
+                        Text(S.livesSaved(lang), color = TextSecondary, style = Typography.labelSmall)
+                    }
                 }
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+            Spacer(modifier = Modifier.height(16.dp))
             SettingsNavRow(S.cosmetics(lang), onOpenHub)
+            SettingsNavRow(S.inviteFriends(lang)) { showInvite = true }
+        } else {
+            Spacer(modifier = Modifier.height(16.dp))
         }
-        SettingsNavRow(S.inviteFriends(lang)) { showInvite = true }
         SettingsNavRow(S.settings(lang), onOpenSettings)
         SettingsNavRow(S.aboutProject(lang), onOpenAbout)
         SettingsNavRow(S.scanQr(lang)) {
@@ -2755,20 +2756,18 @@ fun InfoContent(compact: Boolean = false) {
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
-            var showErrorReport by remember { mutableStateOf(false) }
-            TukTukButton(onClick = { showErrorReport = true }) {
-                Text(S.errorReportButton(lang), color = TextPrimary)
-            }
-            if (showErrorReport) {
-                ErrorReportDialog(
-                    lang = lang,
-                    onDismiss = { showErrorReport = false }
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(S.errorReportHint(lang), style = quietStyle, color = TextSecondary)
+        var showErrorReport by remember { mutableStateOf(false) }
+        TukTukButton(onClick = { showErrorReport = true }) {
+            Text(S.errorReportButton(lang), color = TextPrimary)
         }
+        if (showErrorReport) {
+            ErrorReportDialog(
+                lang = lang,
+                onDismiss = { showErrorReport = false }
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.errorReportHint(lang), style = quietStyle, color = TextSecondary)
 
         Spacer(modifier = Modifier.height(20.dp))
         Text(

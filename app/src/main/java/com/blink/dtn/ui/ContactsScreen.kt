@@ -166,7 +166,9 @@ fun ContactsScreen(
             }
             item {
                 Spacer(modifier = Modifier.height(12.dp))
-                SettingsNavRow(S.inviteFriends(lang), onInvite)
+                if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                    SettingsNavRow(S.inviteFriends(lang), onInvite)
+                }
                 SettingsNavRow(S.addById(lang)) { /* scroll focus via add field below */ }
             }
         }

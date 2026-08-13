@@ -88,10 +88,14 @@ class VpsBridge private constructor(
                 refreshRouterSnapshot()
                 if (isConfigured() && VpsConfig.isOnline(context)) {
                     runCatching { register() }
-                    runCatching { syncDirectory() }
+                    // Messaging hop (push/pull) — always when VPS is up.
                     runCatching { performSync() }
-                    runCatching { syncOracleOrbits() }
-                    runCatching { syncModerationBlacklist() }
+                    if (!com.blink.dtn.BuildConfig.QQ_CORE_ONLY) {
+                        // Legacy social/platform surfaces — quarantined in Qq Core.
+                        runCatching { syncDirectory() }
+                        runCatching { syncOracleOrbits() }
+                        runCatching { syncModerationBlacklist() }
+                    }
                 } else {
                     reachable.set(false)
                 }

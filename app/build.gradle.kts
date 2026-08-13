@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 42
-        versionName = "0.1.112"
+        versionCode = 43
+        versionName = "0.1.113"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -78,8 +78,10 @@ android {
         )
         // Must match server TUKTUK_BANLIST_HMAC (default tuktuk-banlist-v1).
         buildConfigField("String", "BANLIST_HMAC_SECRET", "\"tuktuk-banlist-v1\"")
-        // Qq Great Cleanup P1/P2: P2P-first core. Legacy Hub/PUBLIC/VPS remain in tree but gated.
+        // Qq Great Cleanup: P2P-first core. Legacy Hub/PUBLIC/Crowd/VK/Oracle remain gated.
+        // VPS messaging (push/pull) stays enabled. Telemetry upload to VPS→TG is off in Core.
         buildConfigField("boolean", "QQ_CORE_ONLY", "true")
+        buildConfigField("boolean", "QQ_ALLOW_TELEMETRY_UPLOAD", "false")
     }
 
     signingConfigs {

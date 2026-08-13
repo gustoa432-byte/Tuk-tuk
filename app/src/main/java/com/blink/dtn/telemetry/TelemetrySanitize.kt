@@ -9,9 +9,14 @@ object TelemetrySanitize {
     private val DENY_KEY_SUBSTR = listOf(
         "private_key", "privatekey", "privkey",
         "plaintext", "plain_text", "message_text", "message_body", "msg_text",
+        "body_preview", "preview_text", "ui_text",
         "jwt", "bearer", "access_token", "refresh_token",
         "password", "secret", "smtp_pass", "bot_token",
         "cipher_text", "ciphertext", "aes_key", "wrapped_key"
+    )
+
+    private val DENY_EXACT_KEYS = setOf(
+        "text", "body", "content", "payload", "message", "msg"
     )
 
     fun scrubTrace(trace: MessageTrace): MessageTrace {
@@ -39,6 +44,7 @@ object TelemetrySanitize {
         val out = LinkedHashMap<String, String>(details.size)
         for ((k, v) in details) {
             val lk = k.lowercase()
+            if (lk in DENY_EXACT_KEYS) continue
             if (DENY_KEY_SUBSTR.any { lk.contains(it) }) continue
             // Length/stats keys are fine; huge free-form values (e.g. stack) stay capped.
             out[k] = if (v.length > 2_000) "[redacted_len=${v.length}]" else v

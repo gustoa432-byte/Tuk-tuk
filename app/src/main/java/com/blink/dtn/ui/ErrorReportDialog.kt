@@ -69,12 +69,24 @@ fun ErrorReportDialog(
                     )
                     Text(
                         if (en)
-                            "A sanitized diagnostics ZIP (no private keys, no message bodies) will be sent to the developers."
+                            "A sanitized diagnostics ZIP (no private keys, no message bodies)."
                         else
-                            "На разработчиков уйдёт ZIP с диагностикой без приватных ключей и текстов сообщений.",
+                            "ZIP с диагностикой без приватных ключей и текстов сообщений.",
                         style = Typography.bodySmall,
                         color = TextSecondary
                     )
+                    if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+                        !com.blink.dtn.BuildConfig.QQ_ALLOW_TELEMETRY_UPLOAD
+                    ) {
+                        Text(
+                            if (en)
+                                "Core mode: share locally (email / Files). No upload to the server."
+                            else
+                                "Режим Core: только локальная отправка (почта / Файлы). Без загрузки на сервер.",
+                            style = Typography.labelSmall,
+                            color = TextSecondary
+                        )
+                    }
                     OutlinedTextField(
                         value = note,
                         onValueChange = { if (it.length <= 500) note = it },
@@ -98,35 +110,65 @@ fun ErrorReportDialog(
                             phase = ReportPhase.Sending
                             errorHint = null
                             scope.launch {
-                                val result = withContext(Dispatchers.IO) {
-                                    val peerSnap = if (peers.isEmpty()) {
-                                        PeerDirectory.snapshot().map { it.nodeId }
-                                    } else {
-                                        peers
-                                    }
-                                    val count = if (peerCount > 0) peerCount else peerSnap.size
-                                    val zip = ErrorJournal.buildReportZip(context, count, peerSnap)
-                                        ?: return@withContext TelemetryApi.UploadResult(false, "zip_build_failed")
-                                    TelemetryApi.uploadZip(context, zip, note = note)
+                                val localOnly = com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+                                    !com.blink.dtn.BuildConfig.QQ_ALLOW_TELEMETRY_UPLOAD
+                                val peerSnap = if (peers.isEmpty()) {
+                                    PeerDirectory.snapshot().map { it.nodeId }
+                                } else {
+                                    peers
                                 }
-                                if (result.ok) {
+                                val count = if (peerCount > 0) peerCount else peerSnap.size
+                                val zip = withContext(Dispatchers.IO) {
+                                    ErrorJournal.buildReportZip(context, count, peerSnap)
+                                }
+                                if (zip == null) {
+                                    errorHint = "zip_build_failed"
+                                    phase = ReportPhase.Failed
+                                    return@launch
+                                }
+                                if (localOnly) {
+                                    com.blink.dtn.telemetry.FeedbackMailer.sendTraceZip(
+                                        context,
+                                        zip,
+                                        subject = if (note.isBlank()) "TukTuk diagnostics"
+                                        else "TukTuk diagnostics: ${note.take(80)}"
+                                    )
                                     phase = ReportPhase.Thanks
                                 } else {
-                                    errorHint = when (result.error) {
-                                        "not_authenticated" ->
-                                            if (en) "Sign in to VPS first (Settings / Hub)."
-                                            else "Сначала войдите на VPS (настройки / хаб)."
-                                        "rate_limited" ->
-                                            if (en) "Too many reports — try later."
-                                            else "Слишком много отчётов — позже."
-                                        else -> result.error
+                                    val result = withContext(Dispatchers.IO) {
+                                        TelemetryApi.uploadZip(context, zip, note = note)
                                     }
-                                    phase = ReportPhase.Failed
+                                    if (result.ok) {
+                                        phase = ReportPhase.Thanks
+                                    } else {
+                                        errorHint = when (result.error) {
+                                            "not_authenticated" ->
+                                                if (en) "Sign in to delivery server first (Settings → Account)."
+                                                else "Сначала войдите на сервер доставки (Настройки → Аккаунт)."
+                                            "telemetry_upload_disabled" ->
+                                                if (en) "Server upload disabled — use local share."
+                                                else "Загрузка на сервер отключена — используйте локальную отправку."
+                                            "rate_limited" ->
+                                                if (en) "Too many reports — try later."
+                                                else "Слишком много отчётов — позже."
+                                            else -> result.error
+                                        }
+                                        phase = ReportPhase.Failed
+                                    }
                                 }
                             }
                         }
                     ) {
-                        Text(if (en) "Send" else "Отправить", color = TextPrimary)
+                        Text(
+                            if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+                                !com.blink.dtn.BuildConfig.QQ_ALLOW_TELEMETRY_UPLOAD
+                            ) {
+                                if (en) "Share ZIP" else "Поделиться ZIP"
+                            } else {
+                                if (en) "Send" else "Отправить"
+                            },
+                            color = TextPrimary
+                        )
                     }
                     TukTukButton(onClick = onDismiss) {
                         Text(if (en) "Cancel" else "Отмена", color = TextPrimary)
@@ -151,7 +193,15 @@ fun ErrorReportDialog(
                         color = TextPrimary
                     )
                     Text(
-                        if (en) "Your report reached the developers." else "Отчёт дошёл до разработчиков.",
+                        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY &&
+                            !com.blink.dtn.BuildConfig.QQ_ALLOW_TELEMETRY_UPLOAD
+                        ) {
+                            if (en) "Share the ZIP from your mail / files app."
+                            else "Отправьте ZIP из почты или файлов."
+                        } else {
+                            if (en) "Your report reached the developers."
+                            else "Отчёт дошёл до разработчиков."
+                        },
                         style = Typography.bodyMedium,
                         color = TextSecondary
                     )

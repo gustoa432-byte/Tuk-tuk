@@ -190,6 +190,8 @@ object MessageRouter {
         targetNode: String?,
         apply: (List<String>) -> Unit
     ) {
+        // Oracle social graph is legacy — not part of Qq Core messaging.
+        if (com.blink.dtn.BuildConfig.QQ_CORE_ONLY) return
         val target = targetNode?.trim().orEmpty()
         if (target.isEmpty()) return
         if (!com.blink.dtn.net.VpsConfig.isOnline(context)) return
