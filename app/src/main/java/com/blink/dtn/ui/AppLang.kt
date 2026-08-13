@@ -183,6 +183,7 @@ object S {
     fun qrVerified(lang: String) = if (lang == LANG_EN) "Contact verified via QR" else "Контакт проверен по QR"
     fun qrKeyMismatch(lang: String) = if (lang == LANG_EN) "Invalid QR: key does not match ID" else "Неверный QR: ключ не совпадает с id"
     fun qrNotContact(lang: String) = if (lang == LANG_EN) "Need a TukTuk contact QR (with key)" else "Нужен QR контакта TukTuk (с ключом)"
+    fun qrSelf(lang: String) = if (lang == LANG_EN) "That is your own QR" else "Это ваш собственный QR"
     fun telegramError(lang: String) = if (lang == LANG_EN) "Could not open Telegram" else "Не удалось открыть Telegram"
     fun avatarSaved(lang: String) = if (lang == LANG_EN) "Avatar saved" else "Аватар сохранён"
     fun avatarTooBig(lang: String) = if (lang == LANG_EN) "Avatar too large for QR, saved locally" else "Аватар слишком большой для QR, сохранён локально"

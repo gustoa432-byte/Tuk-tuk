@@ -969,23 +969,36 @@ fun ConversationScreen(viewModel: BLinkViewModel, contactId: String, onBack: () 
     val verifyScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned != null && scanned.isNotBlank()) {
-            val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
-            val pk = json?.optString("pk", "")
-            if (json != null && !pk.isNullOrEmpty()) {
-                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
-                val claimedId = json.optString("id", "")
-                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
-                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
-                } else if (derivedId != contactId) {
-                    Toast.makeText(context, if (lang == "en") "QR is for a different person" else "QR другого человека — не этого диалога", Toast.LENGTH_LONG).show()
-                } else {
-                    val nick = json.optString("n", "")
-                    val avatar = decodeContactQrAvatar(json)
-                    viewModel.addScannedContact(derivedId, nick, pk, avatar)
-                    Toast.makeText(context, S.qrVerified(lang), Toast.LENGTH_SHORT).show()
+            when (
+                val parsed = com.blink.dtn.crypto.ContactQr.parse(
+                    scanned,
+                    viewModel.myNodeId,
+                    allowBareNodeId = false
+                )
+            ) {
+                is com.blink.dtn.crypto.ContactQr.Result.Ok -> {
+                    val p = parsed.parsed
+                    if (p.nodeId != contactId) {
+                        Toast.makeText(
+                            context,
+                            if (lang == "en") "QR is for a different person"
+                            else "QR другого человека — не этого диалога",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        val avatar = p.avatarAvBase64?.let { av ->
+                            decodeContactQrAvatar(org.json.JSONObject().put("av", av))
+                        }
+                        viewModel.addScannedContact(p.nodeId, p.nick, p.publicKeyBase64, avatar)
+                        Toast.makeText(context, S.qrVerified(lang), Toast.LENGTH_SHORT).show()
+                    }
                 }
-            } else {
-                Toast.makeText(context, S.qrNotContact(lang), Toast.LENGTH_LONG).show()
+                com.blink.dtn.crypto.ContactQr.Result.KeyMismatch ->
+                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
+                com.blink.dtn.crypto.ContactQr.Result.Self ->
+                    Toast.makeText(context, S.qrSelf(lang), Toast.LENGTH_SHORT).show()
+                com.blink.dtn.crypto.ContactQr.Result.NotContact ->
+                    Toast.makeText(context, S.qrNotContact(lang), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1985,23 +1998,26 @@ fun ProfileTab(
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned != null && scanned.isNotBlank()) {
-            val json = try { org.json.JSONObject(scanned) } catch (e: Exception) { null }
-            val pk = json?.optString("pk", "")
-            if (json != null && !pk.isNullOrEmpty()) {
-                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
-                val claimedId = json.optString("id", "")
-                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
-                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
-                } else {
-                    val nick = json.optString("n", "")
-                    val avatar = decodeContactQrAvatar(json)
-                    viewModel.addScannedContact(derivedId, nick, pk, avatar)
+            when (val parsed = com.blink.dtn.crypto.ContactQr.parse(scanned, viewModel.myNodeId)) {
+                is com.blink.dtn.crypto.ContactQr.Result.Ok -> {
+                    val p = parsed.parsed
+                    val avatar = p.avatarAvBase64?.let { av ->
+                        decodeContactQrAvatar(org.json.JSONObject().put("av", av))
+                    }
+                    if (p.hasPinnedKey) {
+                        viewModel.addScannedContact(p.nodeId, p.nick, p.publicKeyBase64, avatar)
+                    } else {
+                        viewModel.ensureContact(p.nodeId, p.nick)
+                        viewModel.setCurrentDialog(p.nodeId)
+                    }
                     onScanSuccess()
                 }
-            } else {
-                viewModel.ensureContact(scanned)
-                viewModel.setCurrentDialog(scanned)
-                onScanSuccess()
+                com.blink.dtn.crypto.ContactQr.Result.KeyMismatch ->
+                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
+                com.blink.dtn.crypto.ContactQr.Result.Self ->
+                    Toast.makeText(context, S.qrSelf(lang), Toast.LENGTH_SHORT).show()
+                com.blink.dtn.crypto.ContactQr.Result.NotContact ->
+                    Toast.makeText(context, S.qrNotContact(lang), Toast.LENGTH_LONG).show()
             }
         }
     }

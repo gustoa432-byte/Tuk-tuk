@@ -39,15 +39,15 @@ object DeliveryVoyageLabels {
     fun label(msg: Message, lang: String = AppLang.lang.value): String {
         val base = when (msg.status) {
             Message.STATUS_PENDING -> if (lang == "en") "waiting" else "ждёт"
-            Message.STATUS_PENDING_KEY -> if (lang == "en") "almost" else "почти"
-            Message.STATUS_IN_FLIGHT -> if (lang == "en") "with people" else "у людей"
+            Message.STATUS_PENDING_KEY -> if (lang == "en") "need key" else "нужен ключ"
+            Message.STATUS_IN_FLIGHT -> if (lang == "en") "sending" else "отправляется"
             Message.STATUS_STORED_IN_NEIGHBOR -> if (msg.type == "PRIVATE") {
-                if (lang == "en") "with a neighbor" else "у соседа"
+                if (lang == "en") "at neighbor" else "у соседа"
             } else {
                 if (lang == "en") "passed on" else "передано"
             }
             Message.STATUS_DELIVERED_ACK -> if (lang == "en") "delivered" else "доставлено"
-            Message.STATUS_FAILED -> if (lang == "en") "stuck" else "застряло"
+            Message.STATUS_FAILED -> if (lang == "en") "failed" else "ошибка"
             else -> if (lang == "en") "waiting" else "ждёт"
         }
         return base
@@ -67,24 +67,24 @@ object DeliveryVoyageLabels {
             Message.STATUS_PENDING ->
                 if (lang == "en") "Looking for a path$via" else "Ищем путь$via"
             Message.STATUS_PENDING_KEY ->
-                if (lang == "en") "Need to meet this person once (QR helps)"
-                else "Нужна одна встреча с человеком (поможет QR)"
+                if (lang == "en") "Scan their QR once to lock the encryption key"
+                else "Один раз отсканируйте их QR — нужен ключ шифрования"
             Message.STATUS_IN_FLIGHT ->
-                if (lang == "en") "Neighbors are carrying it$via"
-                else "Соседи уже несут$via"
+                if (lang == "en") "Handing to radio / delivery server$via"
+                else "Отдаём в радио / сервер доставки$via"
             Message.STATUS_STORED_IN_NEIGHBOR ->
                 if (msg.type == "PRIVATE") {
-                    if (lang == "en") "On a neighbor's phone — waiting for your friend's ACK"
-                    else "На телефоне соседа — ждём подтверждение друга"
+                    if (lang == "en") "Stored on a neighbor — not delivered until friend ACKs"
+                    else "У соседа — доставлено только после подтверждения друга"
                 } else {
                     if (lang == "en") "Shared with people nearby$via"
                     else "Передано людям рядом$via"
                 }
             Message.STATUS_DELIVERED_ACK ->
-                if (lang == "en") "Your friend confirmed receipt$via" else "Друг подтвердил получение$via"
+                if (lang == "en") "Friend confirmed receipt$via" else "Друг подтвердил получение$via"
             Message.STATUS_FAILED ->
-                if (lang == "en") "Couldn't get through — tap to try again"
-                else "Не удалось пробиться — нажмите, чтобы повторить"
+                if (lang == "en") "Could not send — tap to retry"
+                else "Не удалось отправить — нажмите, чтобы повторить"
             else -> ""
         }
     }

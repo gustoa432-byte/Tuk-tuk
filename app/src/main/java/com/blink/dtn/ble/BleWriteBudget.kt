@@ -29,6 +29,16 @@ class BleWriteBudget {
         return min(fromMtu, min(ANDROID_MAX_ATTR_BYTES, peerCap))
     }
 
+    /** Peer ceiling alone (when negotiated MTU is unknown in the write queue). */
+    fun peerAttrCap(address: String?): Int {
+        if (address == null) return ANDROID_MAX_ATTR_BYTES
+        return peerMaxWrite[address] ?: ANDROID_MAX_ATTR_BYTES
+    }
+
+    /** True if a GATT value would exceed the safe write size for this peer/MTU. */
+    fun exceedsBudget(address: String?, negotiatedMtu: Int, valueBytes: Int): Boolean =
+        valueBytes > maxWriteBytes(address, negotiatedMtu)
+
     /**
      * MTU value to pass into [BleChunkCodec.encode] so that
      * header + payload ≤ [maxWriteBytes].
@@ -62,7 +72,10 @@ class BleWriteBudget {
         val m = message.lowercase()
         return m.contains("longer than max length") ||
             m.contains("max length of an attribute") ||
-            m.contains("invalid attribute length")
+            m.contains("invalid attribute length") ||
+            m.contains("attribute value too long") ||
+            m.contains("value too long") ||
+            m.contains("invalid length")
     }
 
     fun clear(address: String) {

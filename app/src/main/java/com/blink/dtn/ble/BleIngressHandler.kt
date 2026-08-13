@@ -4,6 +4,7 @@ import android.util.Log
 import com.blink.dtn.db.BLinkDao
 import com.blink.dtn.db.BlockedUser
 import com.blink.dtn.db.Message
+import com.blink.dtn.db.MessageDeliverySm
 import com.blink.dtn.security.SecurityConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -357,13 +358,16 @@ internal class BleIngressHandler(
             )
             return true
         }
-        val status = if (ackedMsg.type == "PRIVATE") {
+        val desired = if (ackedMsg.type == "PRIVATE") {
             Message.STATUS_DELIVERED_ACK
         } else {
             // PUBLIC: ACK is not e2e to a target — stay honest about neighbor custody.
             Message.STATUS_STORED_IN_NEIGHBOR
         }
-        dao.updateMessageStatus(ackedMessageId, status)
+        val status = MessageDeliverySm.applyAuto(ackedMsg.status, desired)
+        if (status != ackedMsg.status) {
+            dao.updateMessageStatus(ackedMessageId, status)
+        }
         val latency = System.currentTimeMillis() - ackedMsg.timestamp
         deps.trace(
             ackedMessageId,

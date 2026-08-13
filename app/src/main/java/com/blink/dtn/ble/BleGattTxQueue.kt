@@ -112,6 +112,23 @@ internal class BleGattTxQueue(
 
     private fun executeWrite(op: Op, address: String) {
         try {
+            val cap = writeBudget.peerAttrCap(address)
+            if (op.payload.size > cap) {
+                Log.w(
+                    "BLE_TX",
+                    "Preflight reject write ${op.payload.size}B > peerCap $cap for $address"
+                )
+                writeBudget.noteOversizedWrite(address, op.payload.size, "queue_preflight")
+                hooks.onWriteFail(
+                    op.messageId,
+                    address,
+                    mapOf("peer" to address, "reason" to "over_peer_cap", "cap" to cap)
+                )
+                complete(address, op, success = false)
+                hooks.onPeerWriteResult(op.messageId, address, false, softRetry = true)
+                hooks.disconnectGatt(op.gatt)
+                return
+            }
             Log.d("BLE_TX", "MessageId=${op.messageId} DeviceMAC=$address PayloadSize=${op.payload.size}")
             hooks.onWriteStart(op.messageId, address, op.payload.size, op.msgId)
             var submitted = false

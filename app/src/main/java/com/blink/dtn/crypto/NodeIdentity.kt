@@ -42,6 +42,15 @@ object NodeIdentity {
     /** Length of a self-certifying node id (80-bit Base32, no padding). */
     const val NODE_ID_LENGTH = ID_CHARS
 
+    /** True if [id] looks like a current self-certifying Base32 node id. */
+    fun looksLikeNodeId(id: String?): Boolean {
+        if (id.isNullOrBlank() || id.length != NODE_ID_LENGTH) return false
+        return id.all { ch ->
+            val c = ch.uppercaseChar()
+            c in 'A'..'Z' || c in '2'..'7'
+        }
+    }
+
     /**
      * Pre-v2 ids were `UUID.randomUUID().substring(0, 8).uppercase()` — 8 hex chars,
      * unrelated to the key. Anything of that shape in peer/conversation references

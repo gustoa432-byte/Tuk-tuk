@@ -72,22 +72,26 @@ fun ContactsScreen(
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned != null && scanned.isNotBlank()) {
-            val json = try { org.json.JSONObject(scanned) } catch (_: Exception) { null }
-            val pk = json?.optString("pk", "")
-            if (json != null && !pk.isNullOrEmpty()) {
-                val derivedId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(pk)
-                val claimedId = json.optString("id", "")
-                if (derivedId.isEmpty() || (claimedId.isNotEmpty() && claimedId != derivedId)) {
-                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
-                } else {
-                    val nick = json.optString("n", "")
-                    val avatar = decodeContactQrAvatar(json)
-                    viewModel.addScannedContact(derivedId, nick, pk, avatar)
-                    onOpenChat(derivedId)
+            when (val parsed = com.blink.dtn.crypto.ContactQr.parse(scanned, viewModel.myNodeId)) {
+                is com.blink.dtn.crypto.ContactQr.Result.Ok -> {
+                    val p = parsed.parsed
+                    val avatar = p.avatarAvBase64?.let { av ->
+                        decodeContactQrAvatar(org.json.JSONObject().put("av", av))
+                    }
+                    if (p.hasPinnedKey) {
+                        viewModel.addScannedContact(p.nodeId, p.nick, p.publicKeyBase64, avatar)
+                    } else {
+                        viewModel.ensureContact(p.nodeId, p.nick)
+                        viewModel.setCurrentDialog(p.nodeId)
+                    }
+                    onOpenChat(p.nodeId)
                 }
-            } else {
-                viewModel.ensureContact(scanned)
-                onOpenChat(scanned)
+                com.blink.dtn.crypto.ContactQr.Result.KeyMismatch ->
+                    Toast.makeText(context, S.qrKeyMismatch(lang), Toast.LENGTH_LONG).show()
+                com.blink.dtn.crypto.ContactQr.Result.Self ->
+                    Toast.makeText(context, S.qrSelf(lang), Toast.LENGTH_SHORT).show()
+                com.blink.dtn.crypto.ContactQr.Result.NotContact ->
+                    Toast.makeText(context, S.qrNotContact(lang), Toast.LENGTH_LONG).show()
             }
         }
     }

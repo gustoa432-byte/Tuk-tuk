@@ -268,29 +268,22 @@ class BLinkViewModel(
     // compact avatar (`av` = base64 JPEG) when it fits the QR budget.
     suspend fun buildContactQr(): String {
         val avatar = dao.getProfileById(myNodeId)?.avatarBlob
-        return org.json.JSONObject().apply {
-            put("v", 1)
-            put("id", myNodeId)
-            put("pk", com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
-            put("n", myNick)
-            val qrAvatar = avatar?.let { AvatarCompressor.fitForQr(it) }
-            if (qrAvatar != null) {
-                put(
-                    "av",
-                    android.util.Base64.encodeToString(qrAvatar, android.util.Base64.NO_WRAP)
-                )
-            }
-        }.toString()
+        val qrAvatar = avatar?.let { AvatarCompressor.fitForQr(it) }
+        return com.blink.dtn.crypto.ContactQr.build(
+            nodeId = myNodeId,
+            publicKeyBase64 = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64(),
+            nick = myNick,
+            avatarJpeg = qrAvatar
+        )
     }
 
     /** Sync getter used by UI when avatar is not needed in the payload. */
     val myContactQr: String
-        get() = org.json.JSONObject().apply {
-            put("v", 1)
-            put("id", myNodeId)
-            put("pk", com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64())
-            put("n", myNick)
-        }.toString()
+        get() = com.blink.dtn.crypto.ContactQr.build(
+            nodeId = myNodeId,
+            publicKeyBase64 = com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64(),
+            nick = myNick
+        )
 
     /**
      * Ensure a peer profile exists and is a CONTACT (QR, manual ID, or user-initiated chat).

@@ -163,12 +163,14 @@ internal class BleGattClientTx(
 
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         Log.e("BLE_WRITE_FAIL", "MessageId=${op?.messageId} status=false gattStatus=$status")
-                        if (status == 0x0D && op != null) {
+                        // 0x0D = ATT_INVALID_ATTRIBUTE_VALUE_LENGTH
+                        val attrLenFail = status == 0x0D
+                        if (attrLenFail && op != null) {
                             writeBudget.noteOversizedWrite(address, op.payload.size)
                         }
                         if (op != null) {
                             txQueue.complete(address, op, success = false)
-                            deps.onWriteResult(op.messageId, address, false)
+                            deps.onWriteResult(op.messageId, address, false, softRetry = attrLenFail)
                         }
                         deps.disconnectGatt(gatt)
                     } else if (op != null) {
@@ -197,9 +199,22 @@ internal class BleGattClientTx(
     ): Boolean {
         return try {
             val address = gatt.device.address
-            val encodeMtu = writeBudget.encodeMtu(address, mtu)
+            var encodeMtu = writeBudget.encodeMtu(address, mtu)
             val chunkStart = System.currentTimeMillis()
-            val chunks = BleChunkCodec.encode(payload, encodeMtu, chunkMessageId)
+            var chunks = BleChunkCodec.encode(payload, encodeMtu, chunkMessageId)
+            val maxWrite = writeBudget.maxWriteBytes(address, mtu)
+            val oversized = chunks.firstOrNull { it.size > maxWrite }
+            if (oversized != null) {
+                // Defensive re-encode after learning a tighter peer cap (OEM attr length).
+                writeBudget.noteOversizedWrite(address, oversized.size, "preflight")
+                encodeMtu = writeBudget.encodeMtu(address, mtu)
+                chunks = BleChunkCodec.encode(payload, encodeMtu, chunkMessageId)
+                val stillBad = chunks.any { it.size > writeBudget.maxWriteBytes(address, mtu) }
+                if (stillBad) {
+                    Log.e("BLE_TX", "Chunks still exceed write budget after downshift msg=$messageId")
+                    return false
+                }
+            }
             deps.trace(
                 messageId,
                 com.blink.dtn.telemetry.TraceStages.CHUNK_ENCODE,

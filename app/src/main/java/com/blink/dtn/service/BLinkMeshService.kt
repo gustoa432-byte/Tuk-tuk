@@ -138,12 +138,12 @@ class BLinkMeshService : Service() {
                     when (result) {
                         is com.blink.dtn.ble.TxResult.Success -> {
                             val currentMsg = dao.getMessageById(result.msgId)
-                            // Don't clobber e2e DELIVERED_ACK; STORED_IN_NEIGHBOR = GATT to neighbor only.
-                            if (currentMsg != null &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED_ACK
-                            ) {
-                                dao.updateMessageStatus(result.msgId, com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR)
+                            val next = com.blink.dtn.db.MessageDeliverySm.applyAuto(
+                                currentMsg?.status ?: com.blink.dtn.db.Message.STATUS_PENDING,
+                                com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR
+                            )
+                            if (currentMsg != null && next != currentMsg.status) {
+                                dao.updateMessageStatus(result.msgId, next)
                             }
                             com.blink.dtn.router.MessageRouter.noteShipmentStatus(result.msgId, "у соседа")
                             // Courier emotion: this phone helped move a package (relay of others' mail)
@@ -156,8 +156,11 @@ class BLinkMeshService : Service() {
                         is com.blink.dtn.ble.TxResult.Failure -> {
                             val currentMsg = dao.getMessageById(result.msgId)
                             if (currentMsg != null &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR &&
-                                currentMsg.status != com.blink.dtn.db.Message.STATUS_DELIVERED_ACK
+                                com.blink.dtn.db.MessageDeliverySm.mayAutoUpdate(
+                                    currentMsg.status,
+                                    com.blink.dtn.db.Message.STATUS_FAILED
+                                ) &&
+                                currentMsg.status != com.blink.dtn.db.Message.STATUS_STORED_IN_NEIGHBOR
                             ) {
                                 val newRetry = currentMsg.retryCount + 1
                                 if (newRetry >= 10) {
