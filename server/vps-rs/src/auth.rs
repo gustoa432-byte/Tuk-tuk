@@ -546,6 +546,7 @@ mod tests {
             .connect()
             .unwrap();
         crate::db::init_schema(&db).await.unwrap();
+        crate::moderation::init_schema(&db).await.unwrap();
         AppState {
             db: Arc::new(db),
             cfg: Arc::new(Config::for_tests(SECRET)),
@@ -573,10 +574,10 @@ mod tests {
     #[tokio::test]
     async fn reauth_without_rebind_keeps_primary_key() {
         let st = state().await;
-        upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
+        let _ = upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
             .await
             .unwrap();
-        upsert_user_and_token(&st, "email", "a@x", KEY_B, false)
+        let _ = upsert_user_and_token(&st, "email", "a@x", KEY_B, false)
             .await
             .unwrap();
         assert_eq!(primary_key(&st, "a@x").await, KEY_A);
@@ -585,13 +586,13 @@ mod tests {
     #[tokio::test]
     async fn rebind_primary_updates_only_that_account() {
         let st = state().await;
-        upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
+        let _ = upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
             .await
             .unwrap();
-        upsert_user_and_token(&st, "email", "c@x", KEY_C, false)
+        let _ = upsert_user_and_token(&st, "email", "c@x", KEY_C, false)
             .await
             .unwrap();
-        upsert_user_and_token(&st, "email", "a@x", KEY_B, true)
+        let _ = upsert_user_and_token(&st, "email", "a@x", KEY_B, true)
             .await
             .unwrap();
         assert_eq!(primary_key(&st, "a@x").await, KEY_B);
