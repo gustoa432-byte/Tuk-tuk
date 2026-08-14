@@ -122,6 +122,23 @@ pub async fn init_schema(conn: &Connection) -> Result<(), libsql::Error> {
             (),
         )
         .await;
+    // SHA-256 hex of E.164 only — never a raw phone number.
+    let _ = conn
+        .execute(
+            "ALTER TABLE users ADD COLUMN phone_hash TEXT NOT NULL DEFAULT ''",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_hash
+            ON users(phone_hash)
+            WHERE phone_hash IS NOT NULL AND phone_hash != ''
+            "#,
+            (),
+        )
+        .await;
 
     Ok(())
 }

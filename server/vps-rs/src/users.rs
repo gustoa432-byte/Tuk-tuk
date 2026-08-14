@@ -13,6 +13,7 @@ use crate::oracle::auth::require_active_node;
 use crate::state::{now_ms, AppError, AppState};
 
 const USERNAME_COOLDOWN_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+const PHONE_LOOKUP_BATCH_MAX: usize = 200;
 
 const RESERVED: &[&str] = &[
     "qqube_official",
@@ -48,8 +49,64 @@ pub struct UserAddress {
     pub public_key: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeResponse {
+    pub username: String,
+    pub node_id: String,
+    pub public_id: String,
+    pub public_key: String,
+    /// True when this account has an opt-in phone hash. Never returns the hash.
+    pub phone_discoverable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimPhoneRequest {
+    pub hash: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneLookupRequest {
+    #[serde(default)]
+    pub hashes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneLookupResponse {
+    pub results: Vec<PhoneHit>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneHit {
+    pub hash: String,
+    pub exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+}
+
 pub fn normalize_username(raw: &str) -> String {
     raw.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+pub fn phone_hash_valid(normalized: &str) -> bool {
+    normalized.len() == 64 && normalized.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+pub fn normalize_phone_hash(raw: &str) -> Option<String> {
+    let s = raw.trim().to_ascii_lowercase();
+    if phone_hash_valid(&s) {
+        Some(s)
+    } else {
+        None
+    }
 }
 
 pub fn username_valid(normalized: &str) -> bool {
@@ -120,22 +177,9 @@ pub async fn lookup(
 pub async fn me(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<UserAddress>, AppError> {
+) -> Result<Json<MeResponse>, AppError> {
     let principal = require_active_node(&state, &headers).await?;
-    let mut rows = state
-        .db
-        .query(
-            "SELECT COALESCE(username, ''), public_ble_key FROM users WHERE id = ?1",
-            params![principal.user_id.clone()],
-        )
-        .await?;
-    let row = rows
-        .next()
-        .await?
-        .ok_or_else(|| AppError::not_found("user_not_found"))?;
-    let username: String = row.get(0)?;
-    let public_ble_key: String = row.get(1)?;
-    Ok(Json(own_address(username, public_ble_key)))
+    load_me(&state, &principal.user_id).await.map(Json)
 }
 
 pub async fn claim(
@@ -204,6 +248,173 @@ pub async fn claim(
     Ok(Json(own_address(username, public_ble_key)))
 }
 
+/// Opt-in: store SHA-256 hex of E.164. Raw numbers are rejected.
+pub async fn claim_phone(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ClaimPhoneRequest>,
+) -> Result<Json<MeResponse>, AppError> {
+    let principal = require_active_node(&state, &headers).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_phone_claim(&principal.user_id, &ip)?;
+
+    let hash = normalize_phone_hash(&body.hash)
+        .ok_or_else(|| AppError::bad("hash_invalid"))?;
+
+    let mut taken = state
+        .db
+        .query(
+            "SELECT id FROM users WHERE phone_hash = ?1 AND id != ?2 LIMIT 1",
+            params![hash.clone(), principal.user_id.clone()],
+        )
+        .await?;
+    if taken.next().await?.is_some() {
+        return Err(AppError::conflict("phone_taken"));
+    }
+
+    state
+        .db
+        .execute(
+            "UPDATE users SET phone_hash = ?1 WHERE id = ?2",
+            params![hash, principal.user_id.clone()],
+        )
+        .await?;
+
+    load_me(&state, &principal.user_id).await.map(Json)
+}
+
+/// Discovery off: clear the hash so phone lookup returns exists=false.
+pub async fn clear_phone(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MeResponse>, AppError> {
+    let principal = require_active_node(&state, &headers).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_phone_claim(&principal.user_id, &ip)?;
+
+    state
+        .db
+        .execute(
+            "UPDATE users SET phone_hash = '' WHERE id = ?1",
+            params![principal.user_id.clone()],
+        )
+        .await?;
+
+    load_me(&state, &principal.user_id).await.map(Json)
+}
+
+/// Authenticated batch of SHA-256 hex hashes. Unknown / discovery-off → exists=false.
+/// Never returns similar numbers, never lists the directory, never says who searched.
+pub async fn lookup_phones(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<PhoneLookupRequest>,
+) -> Result<Json<PhoneLookupResponse>, AppError> {
+    let principal = require_active_node(&state, &headers).await?;
+    let ip = crate::rate_limit::client_ip(&headers);
+    state
+        .rate_limits
+        .check_phone_lookup(&principal.user_id, &ip)?;
+
+    if body.hashes.len() > PHONE_LOOKUP_BATCH_MAX {
+        return Err(AppError::bad("batch_too_large"));
+    }
+
+    let mut results = Vec::with_capacity(body.hashes.len());
+    for raw in &body.hashes {
+        let Some(hash) = normalize_phone_hash(raw) else {
+            results.push(PhoneHit {
+                hash: raw.trim().to_ascii_lowercase(),
+                exists: false,
+                node_id: None,
+                public_key: None,
+                username: None,
+            });
+            continue;
+        };
+        let mut rows = state
+            .db
+            .query(
+                r#"
+                SELECT COALESCE(username, ''), public_ble_key
+                FROM users
+                WHERE phone_hash = ?1
+                  AND phone_hash != ''
+                  AND public_ble_key IS NOT NULL
+                  AND public_ble_key != ''
+                LIMIT 1
+                "#,
+                params![hash.clone()],
+            )
+            .await?;
+        let hit = match rows.next().await? {
+            Some(row) => {
+                let username: String = row.get(0)?;
+                let public_ble_key: String = row.get(1)?;
+                match derive_node_id(&public_ble_key) {
+                    Ok(node_id) if !node_id.is_empty() => PhoneHit {
+                        hash,
+                        exists: true,
+                        node_id: Some(node_id),
+                        public_key: Some(public_ble_key),
+                        username: if username.is_empty() {
+                            None
+                        } else {
+                            Some(username)
+                        },
+                    },
+                    _ => PhoneHit {
+                        hash,
+                        exists: false,
+                        node_id: None,
+                        public_key: None,
+                        username: None,
+                    },
+                }
+            }
+            None => PhoneHit {
+                hash,
+                exists: false,
+                node_id: None,
+                public_key: None,
+                username: None,
+            },
+        };
+        results.push(hit);
+    }
+
+    Ok(Json(PhoneLookupResponse { results }))
+}
+
+async fn load_me(state: &AppState, user_id: &str) -> Result<MeResponse, AppError> {
+    let mut rows = state
+        .db
+        .query(
+            "SELECT COALESCE(username, ''), public_ble_key, COALESCE(phone_hash, '') FROM users WHERE id = ?1",
+            params![user_id.to_string()],
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or_else(|| AppError::not_found("user_not_found"))?;
+    let username: String = row.get(0)?;
+    let public_ble_key: String = row.get(1)?;
+    let phone_hash: String = row.get(2)?;
+    let addr = own_address(username, public_ble_key);
+    Ok(MeResponse {
+        username: addr.username,
+        node_id: addr.node_id,
+        public_id: addr.public_id,
+        public_key: addr.public_key,
+        phone_discoverable: !phone_hash.is_empty(),
+    })
+}
+
 fn own_address(username: String, public_ble_key: String) -> UserAddress {
     let node_id = if public_ble_key.is_empty() {
         String::new()
@@ -239,6 +450,16 @@ mod tests {
         assert!(!username_valid("qq"));
         assert!(!username_valid("not valid"));
         assert!(!username_valid("alice%"));
+    }
+
+    #[test]
+    fn phone_hash_rejects_raw_e164_and_accepts_sha256_hex() {
+        assert!(normalize_phone_hash("+79991234567").is_none());
+        assert!(normalize_phone_hash("79991234567").is_none());
+        assert!(normalize_phone_hash("not-a-hash").is_none());
+        let hex = "a".repeat(64);
+        assert_eq!(normalize_phone_hash(&hex.to_uppercase()).as_deref(), Some(hex.as_str()));
+        assert!(phone_hash_valid(&hex));
     }
 }
 
@@ -483,5 +704,237 @@ mod api_tests {
         .0;
         assert_eq!(hit.username, "bob");
         assert!(!hit.public_key.is_empty());
+    }
+
+    fn e164_hash(e164: &str) -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(e164.as_bytes()))
+    }
+
+    async fn claim_hash(st: &AppState, headers: HeaderMap, hash: &str) -> MeResponse {
+        claim_phone(
+            State(st.clone()),
+            headers,
+            Json(ClaimPhoneRequest {
+                hash: hash.to_string(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_found_and_not_found() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let hash = e164_hash("+79991234567");
+        claim_hash(&st, auth(KEY_B, "user-b"), &hash).await;
+
+        let resp = lookup_phones(
+            State(st.clone()),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest {
+                hashes: vec![hash.clone(), e164_hash("+79990000000")],
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(resp.results.len(), 2);
+        assert!(resp.results[0].exists);
+        assert_eq!(resp.results[0].hash, hash);
+        assert_eq!(
+            resp.results[0].node_id.as_deref(),
+            Some(derive_node_id(KEY_B).unwrap().as_str())
+        );
+        assert_eq!(resp.results[0].public_key.as_deref(), Some(KEY_B));
+        assert_eq!(resp.results[0].username.as_deref(), Some("bob"));
+        assert!(!resp.results[1].exists);
+        assert!(resp.results[1].node_id.is_none());
+        assert!(resp.results[1].public_key.is_none());
+        let wire = serde_json::to_value(&resp.results[1]).unwrap();
+        assert_eq!(wire["exists"], false);
+        assert!(wire.get("reason").is_none());
+        assert!(wire.get("seenAt").is_none());
+    }
+
+    #[tokio::test]
+    async fn phone_discovery_off_is_exists_false() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let hash = e164_hash("+79991234567");
+        claim_hash(&st, auth(KEY_B, "user-b"), &hash).await;
+        clear_phone(State(st.clone()), auth(KEY_B, "user-b"))
+            .await
+            .unwrap();
+
+        let resp = lookup_phones(
+            State(st),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest {
+                hashes: vec![hash],
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(resp.results.len(), 1);
+        assert!(!resp.results[0].exists);
+        assert!(resp.results[0].node_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_is_not_a_listing() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let hash = e164_hash("+79991234567");
+        claim_hash(&st, auth(KEY_B, "user-b"), &hash).await;
+
+        let empty = lookup_phones(
+            State(st.clone()),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest { hashes: vec![] }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(empty.results.is_empty(), "empty batch must not dump users");
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_rejects_huge_batch() {
+        let st = state().await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let hashes = (0..=PHONE_LOOKUP_BATCH_MAX)
+            .map(|i| e164_hash(&format!("+7999{:07}", i)))
+            .collect::<Vec<_>>();
+        let err = lookup_phones(
+            State(st),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest { hashes }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "batch_too_large");
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_unauthenticated_is_401() {
+        let st = state().await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let err = lookup_phones(
+            State(st),
+            HeaderMap::new(),
+            Json(PhoneLookupRequest {
+                hashes: vec![e164_hash("+79991234567")],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_is_rate_limited() {
+        let st = state().await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let a = auth(KEY_A, "user-a");
+        let body = Json(PhoneLookupRequest {
+            hashes: vec![e164_hash("+79991234567")],
+        });
+        for _ in 0..10 {
+            lookup_phones(State(st.clone()), a.clone(), body.clone())
+                .await
+                .unwrap();
+        }
+        let err = lookup_phones(State(st), a, body).await.unwrap_err();
+        assert_eq!(err.message, "rate_limited");
+        assert_eq!(err.status, axum::http::StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn phone_hash_not_raw_in_db_and_raw_claim_rejected() {
+        let st = state().await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let raw = "+79991234567";
+        let err = claim_phone(
+            State(st.clone()),
+            auth(KEY_A, "user-a"),
+            Json(ClaimPhoneRequest {
+                hash: raw.to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "hash_invalid");
+
+        let hash = e164_hash(raw);
+        let me = claim_hash(&st, auth(KEY_A, "user-a"), &hash).await;
+        assert!(me.phone_discoverable);
+
+        let mut rows = st
+            .db
+            .query(
+                "SELECT phone_hash FROM users WHERE id = ?1",
+                params!["user-a"],
+            )
+            .await
+            .unwrap();
+        let stored: String = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(stored, hash);
+        assert!(!stored.contains('+'));
+        assert_ne!(stored, raw);
+        assert_eq!(stored.len(), 64);
+        assert!(stored.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn cannot_dump_phone_directory() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-c", KEY_C, Some("cara")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        claim_hash(&st, auth(KEY_B, "user-b"), &e164_hash("+79991111111")).await;
+        claim_hash(&st, auth(KEY_C, "user-c"), &e164_hash("+79992222222")).await;
+
+        let miss = lookup_phones(
+            State(st.clone()),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest {
+                hashes: vec![e164_hash("+70000000000")],
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(miss.results.len(), 1);
+        assert!(!miss.results[0].exists);
+        assert!(miss.results[0].username.is_none());
+        assert!(miss.results[0].public_key.is_none());
+    }
+
+    #[tokio::test]
+    async fn phone_lookup_does_not_require_mutual_contact() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let hash = e164_hash("+79991234567");
+        claim_hash(&st, auth(KEY_B, "user-b"), &hash).await;
+        let resp = lookup_phones(
+            State(st),
+            auth(KEY_A, "user-a"),
+            Json(PhoneLookupRequest {
+                hashes: vec![hash],
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(resp.results[0].exists);
+        assert_eq!(resp.results[0].public_key.as_deref(), Some(KEY_B));
     }
 }

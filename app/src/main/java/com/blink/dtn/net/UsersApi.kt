@@ -86,6 +86,67 @@ class UsersApi(private val context: Context) {
             }.onFailure { Log.w(TAG, "claim: ${it.message}") }
         }
 
+    suspend fun claimPhone(hash: String): Result<UserAddressResponse> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                VpsJwtSupport.withJwtRetry(context) { jwt ->
+                    val body = json.encodeToString(ClaimPhoneRequest(hash.trim().lowercase()))
+                        .toRequestBody(JSON)
+                    val req = Request.Builder()
+                        .url("${base()}/v1/users/phone")
+                        .post(body)
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer $jwt")
+                        .build()
+                    execute(req)
+                }
+            }.onFailure { Log.w(TAG, "claimPhone: ${it.message}") }
+        }
+
+    suspend fun clearPhone(): Result<UserAddressResponse> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                VpsJwtSupport.withJwtRetry(context) { jwt ->
+                    val req = Request.Builder()
+                        .url("${base()}/v1/users/phone/clear")
+                        .post("{}".toRequestBody(JSON))
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer $jwt")
+                        .build()
+                    execute(req)
+                }
+            }.onFailure { Log.w(TAG, "clearPhone: ${it.message}") }
+        }
+
+    suspend fun lookupPhones(hashes: List<String>): Result<PhoneLookupResponse> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (hashes.size > PhoneContactsMatcher.BATCH_SIZE) {
+                    throw ApiException(400, "batch_too_large")
+                }
+                VpsJwtSupport.withJwtRetry(context) { jwt ->
+                    val body = json.encodeToString(PhoneLookupRequest(hashes))
+                        .toRequestBody(JSON)
+                    val req = Request.Builder()
+                        .url("${base()}/v1/users/phone/lookup")
+                        .post(body)
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer $jwt")
+                        .build()
+                    client.newCall(req).execute().use { resp ->
+                        val text = resp.body?.string().orEmpty()
+                        if (!resp.isSuccessful) {
+                            val err = runCatching {
+                                json.decodeFromString<ErrorBody>(text).error
+                            }.getOrDefault(text.ifBlank { "request_failed" })
+                            throw ApiException(resp.code, err)
+                        }
+                        json.decodeFromString<PhoneLookupResponse>(text)
+                    }
+                }
+            }.onFailure { Log.w(TAG, "lookupPhones: ${it.message}") }
+        }
+
     private fun execute(req: Request): UserAddressResponse {
         client.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
@@ -112,5 +173,27 @@ data class ClaimUsernameRequest(val username: String)
 data class UserAddressResponse(
     val publicId: String = "",
     val username: String = "",
-    val publicKey: String = ""
+    val publicKey: String = "",
+    val nodeId: String = "",
+    val phoneDiscoverable: Boolean = false
+)
+
+@Serializable
+data class ClaimPhoneRequest(val hash: String)
+
+@Serializable
+data class PhoneLookupRequest(val hashes: List<String>)
+
+@Serializable
+data class PhoneLookupResponse(
+    val results: List<PhoneHit> = emptyList()
+)
+
+@Serializable
+data class PhoneHit(
+    val hash: String = "",
+    val exists: Boolean = false,
+    val nodeId: String? = null,
+    val publicKey: String? = null,
+    val username: String? = null
 )

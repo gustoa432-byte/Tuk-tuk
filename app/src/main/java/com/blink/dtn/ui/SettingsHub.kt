@@ -74,6 +74,7 @@ enum class SettingsSection {
     DeliveryServer,
     GatewayAccount,
     VpsSignIn,
+    Privacy,
     About
 }
 
@@ -121,6 +122,9 @@ fun SettingsHub(
                 }
             }
         }
+        SettingsSection.Privacy -> SettingsPrivacySection(
+            onBack = { section = SettingsSection.Hub }
+        )
         SettingsSection.About -> AboutQqScreen(
             onBack = { section = SettingsSection.Hub }
         )
@@ -164,6 +168,7 @@ private fun SettingsHubList(
         SettingsNavRow(S.networkMode(lang)) { onOpen(SettingsSection.Battery) }
         SettingsNavRow(S.settingsAppearance(lang)) { onOpen(SettingsSection.Appearance) }
         SettingsNavRow(S.deliveryServer(lang)) { onOpen(SettingsSection.DeliveryServer) }
+        SettingsNavRow(S.settingsPrivacy(lang)) { onOpen(SettingsSection.Privacy) }
         SettingsNavRow(S.settingsAbout(lang)) { onOpen(SettingsSection.About) }
     }
 }
@@ -455,6 +460,140 @@ private fun SettingsDeliveryServerSection(
         }
         Spacer(modifier = Modifier.height(24.dp))
         SettingsNavRow(S.settingsAdvanced(lang), onOpenAccount)
+    }
+}
+
+@Composable
+private fun SettingsPrivacySection(onBack: () -> Unit) {
+    val lang by AppLang.lang.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val signedIn = com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)
+    val gatewayOn = com.blink.dtn.net.VpsConfig.isConfigured(context)
+    var discoverable by remember { mutableStateOf(false) }
+    var phoneDraft by remember { mutableStateOf(PhoneContactsPrefs.myE164(context)) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(signedIn, gatewayOn) {
+        if (signedIn && gatewayOn) {
+            com.blink.dtn.net.UsersApi(context).me().onSuccess { me ->
+                discoverable = me.phoneDiscoverable
+            }
+        }
+    }
+
+    fun saveNumber() {
+        if (busy) return
+        val e164 = com.blink.dtn.net.PhoneE164.normalize(phoneDraft)
+        if (e164.isNullOrBlank()) {
+            Toast.makeText(context, S.phoneNumberInvalid(lang), Toast.LENGTH_LONG).show()
+            return
+        }
+        busy = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.blink.dtn.net.UsersApi(context).claimPhone(
+                    com.blink.dtn.net.PhoneE164.sha256Hex(e164)
+                )
+            }
+            busy = false
+            result.fold(
+                onSuccess = {
+                    PhoneContactsPrefs.setMyE164(context, e164)
+                    phoneDraft = e164
+                    discoverable = it.phoneDiscoverable
+                    Toast.makeText(context, S.phoneDiscoverableSaved(lang), Toast.LENGTH_SHORT).show()
+                },
+                onFailure = { err ->
+                    val text = when ((err as? com.blink.dtn.net.ApiException)?.message) {
+                        "hash_invalid" -> S.phoneNumberInvalid(lang)
+                        "phone_taken" -> S.usernameTaken(lang)
+                        else -> err.message ?: S.phoneContactsLookupFailed(lang)
+                    }
+                    Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    fun setDiscoverable(on: Boolean) {
+        if (busy) return
+        if (on) {
+            val e164 = com.blink.dtn.net.PhoneE164.normalize(phoneDraft)
+            if (e164.isNullOrBlank()) {
+                Toast.makeText(context, S.phoneNumberInvalid(lang), Toast.LENGTH_LONG).show()
+                return
+            }
+            saveNumber()
+            return
+        }
+        busy = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.blink.dtn.net.UsersApi(context).clearPhone()
+            }
+            busy = false
+            result.fold(
+                onSuccess = {
+                    discoverable = false
+                    PhoneContactsPrefs.clearMyE164(context)
+                    Toast.makeText(context, S.phoneDiscoverableOff(lang), Toast.LENGTH_SHORT).show()
+                },
+                onFailure = {
+                    Toast.makeText(context, S.phoneContactsLookupFailed(lang), Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        SettingsBackRow(S.settingsPrivacy(lang), onBack)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(S.settingsPrivacyBody(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(S.phoneDiscoverable(lang), color = TextPrimary, style = Typography.titleMedium)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.phoneDiscoverableHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(12.dp))
+        if (!gatewayOn) {
+            Text(S.usernameNeedServer(lang), color = TextSecondary, style = Typography.bodySmall)
+        } else if (!signedIn) {
+            Text(S.usernameNeedSignIn(lang), color = TextSecondary, style = Typography.bodySmall)
+        } else {
+            SettingsToggleRow(S.phoneDiscoverable(lang), discoverable, lang) { setDiscoverable(it) }
+            Spacer(modifier = Modifier.height(8.dp))
+            BasicTextField(
+                value = phoneDraft,
+                onValueChange = { phoneDraft = it },
+                singleLine = true,
+                enabled = !busy,
+                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(TextPrimary),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .glassPanel(corner = 12.dp)
+                            .padding(12.dp)
+                    ) {
+                        if (phoneDraft.isEmpty()) {
+                            Text(S.phoneNumberHint(lang), color = TextSecondary, style = Typography.bodySmall)
+                        }
+                        inner()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            QqButton(onClick = { saveNumber() }, enabled = !busy) {
+                Text(S.save(lang), color = TextPrimary)
+            }
+        }
     }
 }
 

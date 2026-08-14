@@ -196,6 +196,14 @@ echo "POST /v1/register (no JWT) -> ${code_reg} (expect 401)"
 cat /tmp/tuktuk_reg.json 2>/dev/null || true
 echo
 
+code_phone="$(curl -sS -o /tmp/tuktuk_phone_lookup.json -w '%{http_code}' \
+  -X POST "${BASE}/v1/users/phone/lookup" \
+  -H 'Content-Type: application/json' \
+  -d '{"hashes":[]}')"
+echo "POST /v1/users/phone/lookup (no JWT) -> ${code_phone} (expect 401)"
+cat /tmp/tuktuk_phone_lookup.json 2>/dev/null || true
+echo
+
 # Daily DB backup cron (idempotent)
 BACKUP_SCRIPT="${REPO_DIR}/scripts/backup-tuktuk-db.sh"
 if [[ -f "${BACKUP_SCRIPT}" ]]; then

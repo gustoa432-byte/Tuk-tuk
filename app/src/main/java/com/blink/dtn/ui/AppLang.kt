@@ -752,5 +752,72 @@ object S {
         "Адрес можно сменить раз в 30 дней"
     fun usernameFind(lang: String) = if (lang == LANG_EN) "Find" else "Найти"
     fun usernameSelf(lang: String) = if (lang == LANG_EN) "That is your own address" else "Это ваш собственный адрес"
+
+    fun phoneContacts(lang: String) = if (lang == LANG_EN) "Phone contacts" else "Контакты телефона"
+    fun phoneContactsFindTitle(lang: String) = if (lang == LANG_EN)
+        "Find friends on Qq"
+    else
+        "Найдём друзей в Qq"
+    fun phoneContactsFindBody(lang: String) = if (lang == LANG_EN)
+        "Allow Qq to check your contacts. Numbers stay on this phone — Qq only sends a one-way hash to see who is already here. The full address book is never uploaded."
+    else
+        "Разрешите Qq проверить ваши контакты. Номера остаются на телефоне — Qq отправляет только односторонний хеш, чтобы понять, кто уже в Qq. Записная книжка целиком не загружается."
+    fun phoneContactsContinue(lang: String) = if (lang == LANG_EN) "Continue" else "Продолжить"
+    fun phoneContactsDeniedTitle(lang: String) = if (lang == LANG_EN)
+        "Contacts are closed"
+    else
+        "Контакты закрыты"
+    fun phoneContactsDeniedBody(lang: String) = if (lang == LANG_EN)
+        "Qq will not read your address book. You can still add people by QR or @username."
+    else
+        "Qq не будет читать записную книжку. По-прежнему можно добавить человека по QR или @имени."
+    fun phoneContactsOpenSettings(lang: String) = if (lang == LANG_EN)
+        "Open system settings"
+    else
+        "Открыть системные настройки"
+    fun phoneContactsInQq(lang: String) = if (lang == LANG_EN) "On Qq" else "В Qq"
+    fun phoneContactsInviteSection(lang: String) = if (lang == LANG_EN)
+        "Invite to Qq"
+    else
+        "Пригласить в Qq"
+    fun phoneContactsWrite(lang: String) = if (lang == LANG_EN) "Message" else "Написать"
+    fun phoneContactsInvite(lang: String) = if (lang == LANG_EN) "Invite" else "Пригласить"
+    fun phoneContactsLookupFailed(lang: String) = if (lang == LANG_EN)
+        "Could not check contacts"
+    else
+        "Не удалось проверить контакты"
+    fun phoneContactsRefresh(lang: String) = if (lang == LANG_EN) "Refresh" else "Обновить"
+    fun phoneContactsEmpty(lang: String) = if (lang == LANG_EN)
+        "No numbers on this phone to check"
+    else
+        "На телефоне нет номеров для проверки"
+    fun phoneDiscoverable(lang: String) = if (lang == LANG_EN)
+        "People can find me by number"
+    else
+        "Меня можно найти по номеру"
+    fun phoneDiscoverableHint(lang: String) = if (lang == LANG_EN)
+        "Optional. Qq stores only a hash of the number, never the number itself. Turn off to disappear from phone lookup. Username search stays separate."
+    else
+        "Необязательно. Qq хранит только хеш номера, не сам номер. Выключите — по номеру вас не найдут. Поиск по адресу Qq от этого не зависит."
+    fun phoneNumberHint(lang: String) = if (lang == LANG_EN) "Your number" else "Ваш номер"
+    fun phoneNumberInvalid(lang: String) = if (lang == LANG_EN)
+        "Enter a valid phone number"
+    else
+        "Введите настоящий номер телефона"
+    fun phoneDiscoverableSaved(lang: String) = if (lang == LANG_EN)
+        "You can be found by this number"
+    else
+        "Вас можно найти по этому номеру"
+    fun phoneDiscoverableOff(lang: String) = if (lang == LANG_EN)
+        "You cannot be found by number"
+    else
+        "По номеру вас найти нельзя"
+    fun qqInviteShareText(lang: String): String {
+        val line = if (lang == LANG_EN)
+            "Join Qq — a link that finds a path."
+        else
+            "Присоединяйся к Qq — связь, которая ищет путь."
+        return "$line\n$TUKTUK_DOWNLOAD_URL"
+    }
 }
 

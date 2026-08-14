@@ -111,6 +111,23 @@ const USERNAME_CLAIM_PER_IP: Window = Window {
     max: 20,
     period: Duration::from_secs(60 * 60),
 };
+/// Phone-hash lookup is batched (up to 200 hashes) — stricter than username.
+const PHONE_LOOKUP_PER_USER: Window = Window {
+    max: 10,
+    period: Duration::from_secs(60 * 60),
+};
+const PHONE_LOOKUP_PER_IP: Window = Window {
+    max: 20,
+    period: Duration::from_secs(60 * 60),
+};
+const PHONE_CLAIM_PER_USER: Window = Window {
+    max: 8,
+    period: Duration::from_secs(60 * 60),
+};
+const PHONE_CLAIM_PER_IP: Window = Window {
+    max: 20,
+    period: Duration::from_secs(60 * 60),
+};
 
 #[derive(Default)]
 struct Bucket {
@@ -229,6 +246,18 @@ impl RateLimitState {
         self.check(&format!("username:ip:{ip}"), USERNAME_CLAIM_PER_IP)?;
         Ok(())
     }
+
+    pub fn check_phone_lookup(&self, user_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("phone_lookup:user:{user_id}"), PHONE_LOOKUP_PER_USER)?;
+        self.check(&format!("phone_lookup:ip:{ip}"), PHONE_LOOKUP_PER_IP)?;
+        Ok(())
+    }
+
+    pub fn check_phone_claim(&self, user_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("phone_claim:user:{user_id}"), PHONE_CLAIM_PER_USER)?;
+        self.check(&format!("phone_claim:ip:{ip}"), PHONE_CLAIM_PER_IP)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +288,20 @@ mod tests {
             "lookup must not be a full-table walk"
         );
         assert!(rl.check_lookup("u2", "10.0.0.1").is_ok());
+    }
+
+    #[test]
+    fn phone_lookup_is_stricter_than_username() {
+        let rl = RateLimitState::new();
+        for _ in 0..10 {
+            assert!(rl.check_phone_lookup("u1", "10.0.0.1").is_ok());
+        }
+        assert!(
+            rl.check_phone_lookup("u1", "10.0.0.1").is_err(),
+            "phone lookup must be scarcer than username lookup"
+        );
+        assert!(rl.check_lookup("u1", "10.0.0.1").is_ok());
+        assert!(rl.check_phone_lookup("u2", "10.0.0.1").is_ok());
     }
 }
 

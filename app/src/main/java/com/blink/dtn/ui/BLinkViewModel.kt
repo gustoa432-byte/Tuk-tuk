@@ -409,6 +409,60 @@ class BLinkViewModel(
     }
 
     /**
+     * Phone-book discovery: TOFU contact, never VERIFIED. QR remains the verified path.
+     */
+    fun addFromPhoneDiscovery(
+        nodeId: String,
+        publicKey: String,
+        username: String = "",
+        nick: String = "",
+        onDone: ((ok: Boolean, meshId: String, message: String) -> Unit)? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = nodeId.trim()
+            val key = publicKey.trim()
+            if (id.isEmpty() || key.isEmpty() || id == myNodeId) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, "", "user_not_found")
+                }
+                return@launch
+            }
+            val merge = com.blink.dtn.db.ContactKeyPolicy.applyDiscovered(
+                dao = dao,
+                nodeId = id,
+                advertisedKey = key,
+                asStrangerIfNew = false,
+                username = username,
+                nick = nick.ifBlank { username.ifBlank { id } }
+            )
+            if (merge == com.blink.dtn.db.ContactKeyPolicy.Merge.KeyChangedKeptOld) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, id, "key_changed")
+                }
+                return@launch
+            }
+            if (merge == com.blink.dtn.db.ContactKeyPolicy.Merge.Rejected) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, "", "user_not_found")
+                }
+                return@launch
+            }
+            upsertPeerAsContact(
+                peerId = id,
+                nick = nick.ifBlank { username.ifBlank { id } },
+                username = username
+            )
+            com.blink.dtn.ble.PendingKeyFlush.flushPeer(
+                com.blink.dtn.ble.PendingKeyFlush.store(dao),
+                id
+            ) { bleMeshManager.enqueueMessage(it) }
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onDone?.invoke(true, id, "ok")
+            }
+        }
+    }
+
+    /**
      * Hidden handshake: resolve contact via VPS `/contacts/add` (legacy UUID).
      * Internet add is TOFU — never marks verifiedOutOfBand. Auth UUID is never
      * stored as conversationId.

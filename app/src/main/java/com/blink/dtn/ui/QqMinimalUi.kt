@@ -151,6 +151,7 @@ fun AddContactSheet(
     var finding by remember { mutableStateOf(false) }
     var showMyQr by remember { mutableStateOf(false) }
     var showManualId by remember { mutableStateOf(false) }
+    var showPhoneBook by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         contactQr = withContext(Dispatchers.IO) { viewModel.buildContactQr() }
@@ -193,6 +194,14 @@ fun AddContactSheet(
                 .padding(horizontal = 24.dp, vertical = 8.dp)
                 .padding(bottom = 32.dp)
         ) {
+            if (showPhoneBook) {
+                PhoneContactsPanel(
+                    viewModel = viewModel,
+                    onBack = { showPhoneBook = false },
+                    onOpenedChat = onOpenedChat
+                )
+                return@Column
+            }
             Text(
                 if (lang == "en") "Add contact" else "Добавить контакт",
                 style = Typography.titleLarge,
@@ -255,6 +264,7 @@ fun AddContactSheet(
                 Text(S.usernameFind(lang), color = TextPrimary)
             }
             Spacer(modifier = Modifier.height(20.dp))
+            QuietActionRow(S.phoneContacts(lang)) { showPhoneBook = true }
             QuietActionRow(S.scanQr(lang)) {
                 val options = ScanOptions()
                 options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)

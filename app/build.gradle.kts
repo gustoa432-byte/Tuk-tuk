@@ -62,8 +62,8 @@ android {
         applicationId = "com.blink.dtn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 50
-        versionName = "0.1.120"
+        versionCode = 51
+        versionName = "0.1.121"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -220,6 +220,9 @@ dependencies {
 
     // OkHttp for Cellular Bridge
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // E.164 normalization (same library Android uses internally)
+    implementation("com.googlecode.libphonenumber:libphonenumber:8.13.55")
 
     // EncryptedSharedPreferences for VPS JWT / session ids
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

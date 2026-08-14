@@ -73,6 +73,7 @@ Identity is a keypair, not a login:
 
 - The device generates an RSA keypair; the node ID is derived from the public key.
 - Contacts are exchanged **fully offline via QR code**. The QR payload (`ContactQr`) carries a format version, the node ID, the public key, and optionally a nickname and avatar.
+- Optional Internet Gateway lookup: exact `@username`, or phone contacts via SHA-256 of E.164 (hashes only — the address book is never uploaded). Phone discovery is opt-in in Settings → Privacy. QR remains the verified path.
 - Manual entry of a node ID is also possible.
 - A nickname is a cosmetic label and can be reused by anyone; the node ID and public key are the identity that matters.
 
@@ -131,7 +132,7 @@ Qq — мессенджер один-на-один, задача которог�
 - Работает без аккаунта: офлайн-путь через BLE/DTN между устройствами рядом.
 - Опциональный Internet Gateway (сервер store-and-forward) добавляет доставку через интернет; личный **текст** сервер получает шифротекстом. Метаданные (кто, кому, когда, размер) при этом видны оператору шлюза.
 - **Изображения** рассчитаны только на путь по BLE: в ранних сборках они уходили на шлюз незашифрованными — не считайте картинки защищёнными на интернет-пути.
-- Ключи создаются и остаются на устройстве; контакты добавляются QR-кодом полностью офлайн.
+- Ключи создаются и остаются на устройстве; контакты добавляются QR-кодом полностью офлайн. Через шлюз можно найти человека по точному `@имени` или (по согласию) по хешу номера — записная книжка на сервер не загружается.
 - Статус «доставлено» ставится только по сквозному подтверждению от получателя.
 - Ограничения: поведение BLE зависит от устройства и версии Android, доставка может задерживаться и не гарантирована, релей требует физической близости устройств, шлюз опционален. После перезагрузки устройства или выключения/включения Bluetooth приложение может потребоваться открыть заново (известное ограничение, в работе). Проект экспериментальный и в разработке.
 - Что с данными: [`docs/PRIVACY.md`](docs/PRIVACY.md). Условия использования: [`TERMS.md`](TERMS.md). Канал: https://t.me/qqube_official
