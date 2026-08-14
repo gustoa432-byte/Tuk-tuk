@@ -776,8 +776,42 @@ mod tests {
     async fn directory_returns_empty_roster() {
         let st = state().await;
         let a = auth(KEY_A, "user-a");
+        st.db
+            .execute(
+                r#"INSERT INTO nodes (node_id, nick, pubkey, seen_at)
+                   VALUES (?1, 'alice', ?2, 1)"#,
+                params![node(KEY_A), KEY_A],
+            )
+            .await
+            .unwrap();
         let resp = directory(State(st), a).await.unwrap().0;
-        assert!(resp.nodes.is_empty());
+        assert!(
+            resp.nodes.is_empty(),
+            "directory must not leak the mesh roster"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_does_not_mark_mailbox_delivered() {
+        let st = state().await;
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        push_one(&st, &a, envelope("m-push", "", Some(&node(KEY_B))))
+            .await
+            .unwrap();
+        let mut rows = st
+            .db
+            .query(
+                "SELECT delivered_at FROM envelopes WHERE id = 'm-push'",
+                (),
+            )
+            .await
+            .unwrap();
+        let delivered_at: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(
+            delivered_at, 0,
+            "gateway accept is custody, not recipient ACK"
+        );
+        assert_eq!(pull_for(&st, &b).await.len(), 1);
     }
 }
 

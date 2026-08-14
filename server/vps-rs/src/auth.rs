@@ -294,7 +294,7 @@ pub async fn refresh(
     }))
 }
 
-async fn upsert_user_and_token(
+pub(crate) async fn upsert_user_and_token(
     state: &AppState,
     method: &str,
     auth_id: &str,
@@ -524,4 +524,77 @@ fn verify_telegram_init_data(bot_token: &str, init_data: &str) -> Result<String,
         .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
         .ok_or_else(|| AppError::bad("telegram_user_id"))?;
     Ok(id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::rate_limit::RateLimitState;
+    use std::sync::Arc;
+
+    const SECRET: &str = "test-secret";
+    const KEY_A: &str = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB";
+    const KEY_B: &str = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC";
+    const KEY_C: &str = "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND";
+
+    async fn state() -> AppState {
+        let db = libsql::Builder::new_local(":memory:")
+            .build()
+            .await
+            .unwrap()
+            .connect()
+            .unwrap();
+        crate::db::init_schema(&db).await.unwrap();
+        AppState {
+            db: Arc::new(db),
+            cfg: Arc::new(Config::for_tests(SECRET)),
+            rate_limits: Arc::new(RateLimitState::new()),
+        }
+    }
+
+    async fn primary_key(st: &AppState, auth_id: &str) -> String {
+        let mut rows = st
+            .db
+            .query(
+                "SELECT public_ble_key FROM users WHERE auth_id = ?1",
+                params![auth_id],
+            )
+            .await
+            .unwrap();
+        rows.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get(0)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reauth_without_rebind_keeps_primary_key() {
+        let st = state().await;
+        upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
+            .await
+            .unwrap();
+        upsert_user_and_token(&st, "email", "a@x", KEY_B, false)
+            .await
+            .unwrap();
+        assert_eq!(primary_key(&st, "a@x").await, KEY_A);
+    }
+
+    #[tokio::test]
+    async fn rebind_primary_updates_only_that_account() {
+        let st = state().await;
+        upsert_user_and_token(&st, "email", "a@x", KEY_A, false)
+            .await
+            .unwrap();
+        upsert_user_and_token(&st, "email", "c@x", KEY_C, false)
+            .await
+            .unwrap();
+        upsert_user_and_token(&st, "email", "a@x", KEY_B, true)
+            .await
+            .unwrap();
+        assert_eq!(primary_key(&st, "a@x").await, KEY_B);
+        assert_eq!(primary_key(&st, "c@x").await, KEY_C);
+    }
 }

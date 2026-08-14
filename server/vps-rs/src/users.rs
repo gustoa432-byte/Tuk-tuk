@@ -39,8 +39,12 @@ pub struct ClaimRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserAddress {
-    pub public_id: String,
     pub username: String,
+    /// Mesh node id derived from the current public BLE key.
+    pub node_id: String,
+    /// Same value as `nodeId` — field name the 0.1.120 client already reads.
+    pub public_id: String,
+    /// Current account public BLE key. No seen_at, roster, or profile.
     pub public_key: String,
 }
 
@@ -65,10 +69,12 @@ fn address_from_row(username: String, public_ble_key: String) -> Result<UserAddr
     if public_ble_key.is_empty() {
         return Err(AppError::not_found("user_not_found"));
     }
-    let public_id = derive_node_id(&public_ble_key).map_err(|_| AppError::not_found("user_not_found"))?;
+    let node_id =
+        derive_node_id(&public_ble_key).map_err(|_| AppError::not_found("user_not_found"))?;
     Ok(UserAddress {
-        public_id,
         username,
+        public_id: node_id.clone(),
+        node_id,
         public_key: public_ble_key,
     })
 }
@@ -94,7 +100,9 @@ pub async fn lookup(
             r#"
             SELECT username, public_ble_key
             FROM users
-            WHERE username = ?1
+            WHERE lower(username) = ?1
+              AND username IS NOT NULL
+              AND username != ''
             LIMIT 1
             "#,
             params![username.clone()],
@@ -127,16 +135,7 @@ pub async fn me(
         .ok_or_else(|| AppError::not_found("user_not_found"))?;
     let username: String = row.get(0)?;
     let public_ble_key: String = row.get(1)?;
-    let public_id = if public_ble_key.is_empty() {
-        String::new()
-    } else {
-        derive_node_id(&public_ble_key).unwrap_or_default()
-    };
-    Ok(Json(UserAddress {
-        public_id,
-        username,
-        public_key: public_ble_key,
-    }))
+    Ok(Json(own_address(username, public_ble_key)))
 }
 
 pub async fn claim(
@@ -206,14 +205,15 @@ pub async fn claim(
 }
 
 fn own_address(username: String, public_ble_key: String) -> UserAddress {
-    let public_id = if public_ble_key.is_empty() {
+    let node_id = if public_ble_key.is_empty() {
         String::new()
     } else {
         derive_node_id(&public_ble_key).unwrap_or_default()
     };
     UserAddress {
-        public_id,
         username,
+        public_id: node_id.clone(),
+        node_id,
         public_key: public_ble_key,
     }
 }
@@ -254,6 +254,7 @@ mod api_tests {
     const SECRET: &str = "test-secret";
     const KEY_A: &str = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB";
     const KEY_B: &str = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC";
+    const KEY_C: &str = "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND";
 
     async fn state() -> AppState {
         let db = libsql::Builder::new_local(":memory:")
@@ -316,6 +317,16 @@ mod api_tests {
         assert_eq!(hit.username, "bob");
         assert_eq!(hit.public_key, KEY_B);
         assert_eq!(hit.public_id, derive_node_id(KEY_B).unwrap());
+        assert_eq!(hit.node_id, hit.public_id);
+
+        let wire = serde_json::to_value(&hit).unwrap();
+        assert_eq!(wire["nodeId"], hit.node_id);
+        assert_eq!(wire["publicId"], hit.public_id);
+        assert_eq!(wire["username"], "bob");
+        assert_eq!(wire["publicKey"], KEY_B);
+        assert!(wire.get("seenAt").is_none());
+        assert!(wire.get("nodes").is_none());
+        assert_eq!(wire.as_object().unwrap().len(), 4);
 
         let miss = lookup(
             State(st.clone()),
@@ -356,5 +367,121 @@ mod api_tests {
         .await
         .unwrap_err();
         assert_eq!(err.message, "user_not_found");
+    }
+
+    #[tokio::test]
+    async fn lookup_case_folds_to_stored_lowercase() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let a = auth(KEY_A, "user-a");
+        let hit = lookup(
+            State(st),
+            a,
+            Query(LookupQuery {
+                username: Some("BOB".into()),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(hit.username, "bob");
+        assert_eq!(hit.public_key, KEY_B);
+    }
+
+    #[tokio::test]
+    async fn lookup_rejects_wildcard_and_substring_shapes() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-c", KEY_C, Some("bobby")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let a = auth(KEY_A, "user-a");
+
+        for raw in ["bob%", "%bob%", "bob*", "*"] {
+            let err = lookup(
+                State(st.clone()),
+                a.clone(),
+                Query(LookupQuery {
+                    username: Some(raw.into()),
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                err.message, "username_invalid",
+                "query {raw} must not enumerate"
+            );
+        }
+
+        let err = lookup(
+            State(st.clone()),
+            a.clone(),
+            Query(LookupQuery {
+                username: Some("b_b".into()),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "user_not_found");
+
+        // Underscore is a legal username char — exact `bob_` is unknown, not LIKE.
+        let err = lookup(
+            State(st.clone()),
+            a.clone(),
+            Query(LookupQuery {
+                username: Some("bob_".into()),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "user_not_found");
+
+        let bob = lookup(
+            State(st),
+            a,
+            Query(LookupQuery {
+                username: Some("bob".into()),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(bob.username, "bob");
+        assert_ne!(bob.public_key, "");
+    }
+
+    #[tokio::test]
+    async fn lookup_without_username_is_not_a_listing() {
+        let st = state().await;
+        insert_user(&st, "user-a", KEY_A, Some("alice")).await;
+        let a = auth(KEY_A, "user-a");
+        let err = lookup(
+            State(st),
+            a,
+            Query(LookupQuery { username: None }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.message, "username_invalid");
+    }
+
+    #[tokio::test]
+    async fn lookup_does_not_require_mutual_contact() {
+        let st = state().await;
+        insert_user(&st, "user-b", KEY_B, Some("bob")).await;
+        insert_user(&st, "user-a", KEY_A, None).await;
+        let a = auth(KEY_A, "user-a");
+        let hit = lookup(
+            State(st),
+            a,
+            Query(LookupQuery {
+                username: Some("bob".into()),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(hit.username, "bob");
+        assert!(!hit.public_key.is_empty());
     }
 }

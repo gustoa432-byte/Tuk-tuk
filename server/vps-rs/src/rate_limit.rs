@@ -247,6 +247,19 @@ mod tests {
         assert!(rl.check("k1", w).is_err(), "third hit must be limited");
         assert!(rl.check("k2", w).is_ok(), "other keys are independent");
     }
+
+    #[test]
+    fn lookup_is_bounded_per_account() {
+        let rl = RateLimitState::new();
+        for _ in 0..30 {
+            assert!(rl.check_lookup("u1", "10.0.0.1").is_ok());
+        }
+        assert!(
+            rl.check_lookup("u1", "10.0.0.1").is_err(),
+            "lookup must not be a full-table walk"
+        );
+        assert!(rl.check_lookup("u2", "10.0.0.1").is_ok());
+    }
 }
 
 /// Prefer nginx `X-Forwarded-For` only when `TUKTUK_TRUST_PROXY=1|true`.

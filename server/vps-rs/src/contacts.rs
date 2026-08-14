@@ -2,6 +2,8 @@
 //!
 //! Consent model: adding someone only records *your* side of the edge. The
 //! target's `public_ble_key` is handed out only once they added you back.
+//! Internet username lookup (`GET /v1/users/lookup`) does **not** go through
+//! this table — mutual add is not required to find an opt-in @username.
 //! Before that this endpoint is a request, not a lookup — otherwise anyone
 //! holding a user UUID could harvest keys (and therefore mesh node ids) with no
 //! consent at all. QR / out-of-band remains the primary exchange.
