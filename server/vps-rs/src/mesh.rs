@@ -310,7 +310,7 @@ pub async fn pull(
             ORDER BY created_at ASC
             LIMIT 500
             "#,
-            params![since, node_id],
+            params![since, node_id.clone()],
         )
         .await?;
 
