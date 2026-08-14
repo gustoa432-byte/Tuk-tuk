@@ -94,6 +94,23 @@ const TELEGRAM_AUTH_PER_IP: Window = Window {
     max: 30,
     period: Duration::from_secs(15 * 60),
 };
+/// Exact username lookup is the only internet find — bound guessing.
+const LOOKUP_PER_USER: Window = Window {
+    max: 30,
+    period: Duration::from_secs(60 * 60),
+};
+const LOOKUP_PER_IP: Window = Window {
+    max: 60,
+    period: Duration::from_secs(60 * 60),
+};
+const USERNAME_CLAIM_PER_USER: Window = Window {
+    max: 8,
+    period: Duration::from_secs(60 * 60),
+};
+const USERNAME_CLAIM_PER_IP: Window = Window {
+    max: 20,
+    period: Duration::from_secs(60 * 60),
+};
 
 #[derive(Default)]
 struct Bucket {
@@ -199,6 +216,18 @@ impl RateLimitState {
 
     pub fn check_telegram_auth(&self, ip: &str) -> Result<(), AppError> {
         self.check(&format!("tg_auth:ip:{ip}"), TELEGRAM_AUTH_PER_IP)
+    }
+
+    pub fn check_lookup(&self, user_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("lookup:user:{user_id}"), LOOKUP_PER_USER)?;
+        self.check(&format!("lookup:ip:{ip}"), LOOKUP_PER_IP)?;
+        Ok(())
+    }
+
+    pub fn check_username_claim(&self, user_id: &str, ip: &str) -> Result<(), AppError> {
+        self.check(&format!("username:user:{user_id}"), USERNAME_CLAIM_PER_USER)?;
+        self.check(&format!("username:ip:{ip}"), USERNAME_CLAIM_PER_IP)?;
+        Ok(())
     }
 }
 

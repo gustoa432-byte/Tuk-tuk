@@ -69,6 +69,12 @@ impl AppError {
             message: msg.into(),
         }
     }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: msg.into(),
+        }
+    }
     pub fn too_many(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,

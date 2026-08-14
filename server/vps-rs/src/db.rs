@@ -97,6 +97,31 @@ pub async fn init_schema(conn: &Connection) -> Result<(), libsql::Error> {
             (),
         )
         .await;
+    let _ = conn
+        .execute(
+            "ALTER TABLE envelopes ADD COLUMN sender_pub_key TEXT NOT NULL DEFAULT ''",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute("ALTER TABLE users ADD COLUMN username TEXT", ())
+        .await;
+    let _ = conn
+        .execute(
+            "ALTER TABLE users ADD COLUMN username_changed_at INTEGER NOT NULL DEFAULT 0",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+            ON users(username)
+            WHERE username IS NOT NULL AND username != ''
+            "#,
+            (),
+        )
+        .await;
 
     Ok(())
 }

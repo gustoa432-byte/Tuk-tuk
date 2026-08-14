@@ -328,10 +328,24 @@ private fun SettingsDeliveryServerSection(
         )
     }
     var showSaved by remember { mutableStateOf(false) }
+    var usernameDraft by remember { mutableStateOf("") }
+    var usernameBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val signedIn = com.blink.dtn.auth.AuthSessionStore.hasVpsSession(context)
+    val gatewayOn = com.blink.dtn.net.VpsConfig.isConfigured(context)
     LaunchedEffect(showSaved) {
         if (showSaved) {
             delay(2000)
             showSaved = false
+        }
+    }
+    LaunchedEffect(signedIn, gatewayOn) {
+        if (signedIn && gatewayOn) {
+            com.blink.dtn.net.UsersApi(context).me().onSuccess { me ->
+                if (me.username.isNotBlank() && usernameDraft.isBlank()) {
+                    usernameDraft = me.username
+                }
+            }
         }
     }
 
@@ -376,6 +390,67 @@ private fun SettingsDeliveryServerSection(
             if (showSaved) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(Icons.Filled.Check, null, tint = AccentLime, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(modifier = Modifier.height(28.dp))
+        Text(S.usernameClaim(lang), color = TextPrimary, style = Typography.titleMedium)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(S.usernameClaimHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(12.dp))
+        if (!gatewayOn) {
+            Text(S.usernameNeedServer(lang), color = TextSecondary, style = Typography.bodySmall)
+        } else if (!signedIn) {
+            Text(S.usernameNeedSignIn(lang), color = TextSecondary, style = Typography.bodySmall)
+        } else {
+            BasicTextField(
+                value = usernameDraft,
+                onValueChange = { usernameDraft = it },
+                singleLine = true,
+                enabled = !usernameBusy,
+                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(TextPrimary),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .glassPanel(corner = 12.dp)
+                            .padding(12.dp)
+                    ) {
+                        if (usernameDraft.isEmpty()) {
+                            Text(S.usernameHint(lang), color = TextSecondary, style = Typography.bodySmall)
+                        }
+                        inner()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            QqButton(onClick = {
+                if (usernameBusy) return@QqButton
+                usernameBusy = true
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        com.blink.dtn.net.UsersApi(context).claim(usernameDraft)
+                    }
+                    usernameBusy = false
+                    result.fold(
+                        onSuccess = {
+                            usernameDraft = it.username
+                            Toast.makeText(context, S.usernameSaved(lang), Toast.LENGTH_SHORT).show()
+                        },
+                        onFailure = { err ->
+                            val text = when ((err as? com.blink.dtn.net.ApiException)?.message) {
+                                "username_invalid" -> S.usernameInvalid(lang)
+                                "username_taken" -> S.usernameTaken(lang)
+                                "username_cooldown" -> S.usernameCooldown(lang)
+                                else -> err.message ?: S.usernameInvalid(lang)
+                            }
+                            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                        }
+                    )
+                }
+            }) {
+                Text(S.save(lang), color = TextPrimary)
             }
         }
         Spacer(modifier = Modifier.height(24.dp))

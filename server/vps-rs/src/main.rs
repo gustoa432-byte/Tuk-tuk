@@ -13,6 +13,7 @@ mod oracle;
 mod rate_limit;
 mod state;
 mod telemetry;
+mod users;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -114,6 +115,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Mesh (Android VpsBridge)
         .route("/v1/health", get(mesh::health))
         .route("/v1/directory", get(mesh::directory))
+        .route("/v1/users/lookup", get(users::lookup))
+        .route("/v1/users/me", get(users::me))
+        .route("/v1/users/username", post(users::claim))
         .route("/v1/pull", get(mesh::pull))
         .route("/v1/register", post(mesh::register))
         .route("/v1/push", post(mesh::push))

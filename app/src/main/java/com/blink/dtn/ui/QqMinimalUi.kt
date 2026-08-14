@@ -147,6 +147,8 @@ fun AddContactSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var contactQr by remember { mutableStateOf(viewModel.myContactQr) }
     var manualId by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var finding by remember { mutableStateOf(false) }
     var showMyQr by remember { mutableStateOf(false) }
     var showManualId by remember { mutableStateOf(false) }
 
@@ -196,6 +198,62 @@ fun AddContactSheet(
                 style = Typography.titleLarge,
                 color = TextPrimary
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(S.findViaQq(lang), color = TextSecondary, style = Typography.bodySmall)
+            Spacer(modifier = Modifier.height(8.dp))
+            BasicTextField(
+                value = username,
+                onValueChange = { username = it },
+                singleLine = true,
+                enabled = !finding,
+                textStyle = Typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(TextPrimary),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 14.dp, vertical = 14.dp)
+                    ) {
+                        if (username.isEmpty()) {
+                            Text(S.usernameHint(lang), color = TextSecondary, style = Typography.bodyMedium)
+                        }
+                        inner()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            QqButton(
+                onClick = {
+                    val raw = username.trim()
+                    if (raw.isBlank() || finding) return@QqButton
+                    finding = true
+                    viewModel.findByUsername(raw) { ok, meshId, msg ->
+                        finding = false
+                        if (ok) {
+                            viewModel.setCurrentDialog(meshId)
+                            onOpenedChat()
+                        } else {
+                            val text = when (msg) {
+                                "need_server" -> S.usernameNeedServer(lang)
+                                "need_session" -> S.usernameNeedSignIn(lang)
+                                "username_invalid" -> S.usernameInvalid(lang)
+                                "self" -> S.usernameSelf(lang)
+                                "key_changed" -> S.keyChangedBody(lang)
+                                else -> S.usernameNotFound(lang)
+                            }
+                            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                            if (msg == "key_changed" && meshId.isNotBlank()) {
+                                viewModel.setCurrentDialog(meshId)
+                                onOpenedChat()
+                            }
+                        }
+                    }
+                }
+            ) {
+                Text(S.usernameFind(lang), color = TextPrimary)
+            }
             Spacer(modifier = Modifier.height(20.dp))
             QuietActionRow(S.scanQr(lang)) {
                 val options = ScanOptions()

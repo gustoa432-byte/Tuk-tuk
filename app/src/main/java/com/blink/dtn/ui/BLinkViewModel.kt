@@ -319,10 +319,99 @@ class BLinkViewModel(
     }
 
     /**
-     * Hidden handshake: resolve contact via VPS `/contacts/add`, store `publicBleKey` in Room
-     * under the mesh nodeId derived from that key (what BLE encryption already reads).
-     *
-     * Falls back to local [ensureContact] when offline / no JWT / non-UUID id.
+     * Find someone by opt-in Qq address. Stores a local TOFU contact (not VERIFIED).
+     * QR is the only path that sets verifiedOutOfBand.
+     */
+    fun findByUsername(
+        raw: String,
+        onDone: ((ok: Boolean, meshId: String, message: String) -> Unit)? = null
+    ) {
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            com.blink.dtn.net.VpsConfig.init(app)
+            val normalized = com.blink.dtn.net.Username.normalize(raw)
+            if (!com.blink.dtn.net.Username.isValid(normalized)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, "", "username_invalid")
+                }
+                return@launch
+            }
+            if (!com.blink.dtn.net.VpsConfig.isConfigured(app)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, "", "need_server")
+                }
+                return@launch
+            }
+            if (!com.blink.dtn.auth.AuthSessionStore.hasVpsSession(app)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onDone?.invoke(false, "", "need_session")
+                }
+                return@launch
+            }
+            val result = com.blink.dtn.net.UsersApi(app).lookup(normalized)
+            result.fold(
+                onSuccess = { resp ->
+                    val key = resp.publicKey
+                    val meshId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(key)
+                    if (key.isBlank() || meshId.isBlank() || meshId != resp.publicId) {
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(false, "", "user_not_found")
+                        }
+                        return@fold
+                    }
+                    if (meshId == myNodeId) {
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(false, "", "self")
+                        }
+                        return@fold
+                    }
+                    val merge = com.blink.dtn.db.ContactKeyPolicy.applyDiscovered(
+                        dao = dao,
+                        nodeId = meshId,
+                        advertisedKey = key,
+                        asStrangerIfNew = false,
+                        username = resp.username.ifBlank { normalized },
+                        nick = "@${resp.username.ifBlank { normalized }}"
+                    )
+                    if (merge == com.blink.dtn.db.ContactKeyPolicy.Merge.KeyChangedKeptOld) {
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(false, meshId, "key_changed")
+                        }
+                        return@fold
+                    }
+                    if (merge == com.blink.dtn.db.ContactKeyPolicy.Merge.Rejected) {
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            onDone?.invoke(false, "", "user_not_found")
+                        }
+                        return@fold
+                    }
+                    upsertPeerAsContact(
+                        peerId = meshId,
+                        nick = "@${resp.username.ifBlank { normalized }}",
+                        username = resp.username.ifBlank { normalized }
+                    )
+                    com.blink.dtn.ble.PendingKeyFlush.flushPeer(
+                        com.blink.dtn.ble.PendingKeyFlush.store(dao),
+                        meshId
+                    ) { bleMeshManager.enqueueMessage(it) }
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        onDone?.invoke(true, meshId, "ok")
+                    }
+                },
+                onFailure = {
+                    val code = (it as? com.blink.dtn.net.ApiException)?.message ?: "fail"
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        onDone?.invoke(false, "", code)
+                    }
+                }
+            )
+        }
+    }
+
+    /**
+     * Hidden handshake: resolve contact via VPS `/contacts/add` (legacy UUID).
+     * Internet add is TOFU — never marks verifiedOutOfBand. Auth UUID is never
+     * stored as conversationId.
      */
     fun addContactOnlineOrLocal(
         rawId: String,
@@ -330,6 +419,13 @@ class BLinkViewModel(
     ) {
         val id = rawId.trim()
         if (id.isBlank() || id == myNodeId) return
+        val looksLikeUsername = com.blink.dtn.net.Username.isValid(
+            com.blink.dtn.net.Username.normalize(id)
+        ) && !id.contains('-')
+        if (looksLikeUsername) {
+            findByUsername(id, onDone)
+            return
+        }
         val app = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
             com.blink.dtn.net.VpsConfig.init(app)
@@ -344,36 +440,38 @@ class BLinkViewModel(
                     onSuccess = { resp ->
                         val bleKey = resp.publicBleKey
                         if (bleKey.isBlank()) {
-                            // Consent-gated gateway: the request is recorded, the key
-                            // arrives only once the other side adds us back. Nothing
-                            // was verified, so do not mark the row out-of-band trusted.
-                            upsertPeerAsContact(id)
                             kotlinx.coroutines.withContext(Dispatchers.Main) {
-                                onDone?.invoke(false, id, "pending")
+                                onDone?.invoke(false, "", "pending")
                             }
                             return@fold
                         }
                         val meshId = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(bleKey)
-                            .ifBlank { id }
-                        upsertPeerAsContact(
-                            peerId = meshId,
-                            nick = meshId,
-                            pubKeyBase64 = bleKey,
-                            verifiedOutOfBand = true
+                        if (meshId.isBlank()) {
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                onDone?.invoke(false, "", "fail")
+                            }
+                            return@fold
+                        }
+                        val merge = com.blink.dtn.db.ContactKeyPolicy.applyDiscovered(
+                            dao = dao,
+                            nodeId = meshId,
+                            advertisedKey = bleKey,
+                            asStrangerIfNew = false
                         )
-                        // Remember server UUID → mesh id for later lookups
-                        app.getSharedPreferences("blink_prefs", android.content.Context.MODE_PRIVATE)
-                            .edit()
-                            .putString("vps_uid_$id", meshId)
-                            .apply()
+                        if (merge == com.blink.dtn.db.ContactKeyPolicy.Merge.KeyChangedKeptOld) {
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                onDone?.invoke(false, meshId, "key_changed")
+                            }
+                            return@fold
+                        }
+                        upsertPeerAsContact(peerId = meshId)
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             onDone?.invoke(true, meshId, "ok")
                         }
                     },
                     onFailure = {
-                        upsertPeerAsContact(id)
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
-                            onDone?.invoke(false, id, it.message ?: "fail")
+                            onDone?.invoke(false, "", it.message ?: "fail")
                         }
                     }
                 )
@@ -391,19 +489,46 @@ class BLinkViewModel(
         nick: String = "",
         pubKeyBase64: String? = null,
         verifiedOutOfBand: Boolean = false,
-        avatarBlob: ByteArray? = null
+        avatarBlob: ByteArray? = null,
+        username: String = "",
+        pinKeyFromQr: Boolean = false
     ) {
         val existing = dao.getProfileById(peerId)
         if (existing?.isBlocked == true) return
+        val advertised = pubKeyBase64?.takeIf { it.isNotEmpty() }.orEmpty()
+        val resolvedKey = when {
+            advertised.isEmpty() -> existing?.publicKey.orEmpty()
+            pinKeyFromQr && com.blink.dtn.db.ContactKeyPolicy.advertisedDerivesTo(peerId, advertised) ->
+                advertised
+            else -> {
+                val merge = com.blink.dtn.db.ContactKeyPolicy.merge(
+                    existing?.publicKey.orEmpty(),
+                    advertised,
+                    com.blink.dtn.db.ContactKeyPolicy.advertisedDerivesTo(peerId, advertised)
+                )
+                when (merge) {
+                    com.blink.dtn.db.ContactKeyPolicy.Merge.Tofu,
+                    com.blink.dtn.db.ContactKeyPolicy.Merge.Unchanged ->
+                        advertised.ifBlank { existing?.publicKey.orEmpty() }
+                    com.blink.dtn.db.ContactKeyPolicy.Merge.KeyChangedKeptOld -> {
+                        com.blink.dtn.ble.KeyChangeAlerts.notify(peerId)
+                        existing?.publicKey.orEmpty()
+                    }
+                    com.blink.dtn.db.ContactKeyPolicy.Merge.Rejected ->
+                        existing?.publicKey.orEmpty()
+                }
+            }
+        }
         val resolvedNick = nick.ifBlank { existing?.nickname.orEmpty() }.ifBlank { peerId }
         val profile = if (existing != null) {
             existing.copy(
                 nickname = if (nick.isNotBlank()) nick else existing.nickname,
                 lastSeen = System.currentTimeMillis(),
-                publicKey = pubKeyBase64?.takeIf { it.isNotEmpty() } ?: existing.publicKey,
+                publicKey = resolvedKey,
                 trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
                 verifiedOutOfBand = existing.verifiedOutOfBand || verifiedOutOfBand,
-                avatarBlob = avatarBlob ?: existing.avatarBlob
+                avatarBlob = avatarBlob ?: existing.avatarBlob,
+                username = username.ifBlank { existing.username }
             )
         } else {
             com.blink.dtn.db.UserProfile(
@@ -411,10 +536,11 @@ class BLinkViewModel(
                 nickname = resolvedNick,
                 lastSeen = System.currentTimeMillis(),
                 isVip = false,
-                publicKey = pubKeyBase64.orEmpty(),
+                publicKey = resolvedKey,
                 trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT,
                 verifiedOutOfBand = verifiedOutOfBand,
-                avatarBlob = avatarBlob
+                avatarBlob = avatarBlob,
+                username = username
             )
         }
         dao.insertOrUpdateProfile(profile)
@@ -508,7 +634,8 @@ class BLinkViewModel(
                 nick,
                 pubKeyBase64,
                 verifiedOutOfBand = true,
-                avatarBlob = avatarBlob
+                avatarBlob = avatarBlob,
+                pinKeyFromQr = true
             )
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 setCurrentDialog(id)

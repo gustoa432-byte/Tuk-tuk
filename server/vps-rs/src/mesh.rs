@@ -53,6 +53,9 @@ pub(crate) struct EnvelopeIn {
     payload_b64: String,
     ts: Option<i64>,
     kind: Option<String>,
+    /// Sender RSA public key so the addressee can reply without a prior lookup.
+    #[serde(default)]
+    sender_pub_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +78,8 @@ pub(crate) struct EnvelopeOut {
     payload_b64: String,
     ts: i64,
     kind: String,
+    #[serde(default)]
+    sender_pub_key: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,37 +116,13 @@ pub async fn directory(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<DirectoryResponse>, AppError> {
-    // No anonymous scrape of mesh roster / pubkeys.
+    // Bulk roster is off the product path: it was a phone book that
+    // auto-created contacts and handed out keys. Exact username lookup
+    // is the only internet find. Keep the route so old clients get 200 + empty.
     let principal = require_active_node(&state, &headers).await?;
     reject_if_banned(&state.db, &principal.user_id, &principal.node_id).await?;
-    let mut rows = state
-        .db
-        .query(
-            "SELECT node_id, nick, pubkey, seen_at FROM nodes ORDER BY seen_at DESC LIMIT 200",
-            (),
-        )
-        .await?;
-    let mut nodes = Vec::new();
-    while let Some(row) = rows.next().await? {
-        let node_id: String = row.get(0)?;
-        let nick: String = row.get(1)?;
-        let pubkey: String = row.get(2)?;
-        let seen_at: i64 = row.get(3)?;
-        // Drop poisoned rows: pubkey must self-certify node_id.
-        if !pubkey.is_empty() {
-            match derive_node_id(&pubkey) {
-                Ok(derived) if derived == node_id => {}
-                _ => continue,
-            }
-        }
-        nodes.push(DirectoryNode {
-            node_id,
-            nick,
-            pubkey,
-            seen_at,
-        });
-    }
-    Ok(Json(DirectoryResponse { nodes }))
+    let _ = &state;
+    Ok(Json(DirectoryResponse { nodes: Vec::new() }))
 }
 
 pub async fn register(
@@ -224,6 +205,7 @@ pub async fn push(
     }
     let mut accepted = 0u32;
     let mut broadcast_count = 0u32;
+    let account_pub = account_pubkey(&state, &principal.user_id).await?;
     for env in body.envelopes {
         if env.id.is_empty() {
             continue;
@@ -263,14 +245,16 @@ pub async fn push(
             .kind
             .filter(|k| !k.is_empty())
             .unwrap_or_else(|| "mesh_bytes".into());
+        let sender_pub_key =
+            resolve_sender_pub_key(&principal.node_id, env.sender_pub_key, &account_pub)?;
 
         let changed = state
             .db
             .execute(
                 r#"
                 INSERT OR IGNORE INTO envelopes
-                    (id, sender_id, receiver_id, payload, kind, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    (id, sender_id, receiver_id, payload, kind, created_at, sender_pub_key)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 "#,
                 params![
                     env.id,
@@ -278,7 +262,8 @@ pub async fn push(
                     receiver_sql,
                     env.payload_b64,
                     kind,
-                    created_at
+                    created_at,
+                    sender_pub_key
                 ],
             )
             .await?;
@@ -311,7 +296,8 @@ pub async fn pull(
         .db
         .query(
             r#"
-            SELECT id, sender_id, COALESCE(receiver_id, '*'), payload, created_at, kind
+            SELECT id, sender_id, COALESCE(receiver_id, '*'), payload, created_at, kind,
+                   COALESCE(sender_pub_key, '')
             FROM envelopes
             WHERE created_at > ?1
               AND sender_id != ?2
@@ -337,6 +323,7 @@ pub async fn pull(
             payload_b64: row.get(3)?,
             ts: row.get(4)?,
             kind: row.get(5)?,
+            sender_pub_key: row.get(6)?,
         });
     }
 
@@ -391,6 +378,44 @@ pub async fn ack(
             .await?;
     }
     Ok(Json(AckResponse { ok: true, deleted }))
+}
+
+fn resolve_sender_pub_key(
+    jwt_node: &str,
+    advertised: Option<String>,
+    account_pub: &str,
+) -> Result<String, AppError> {
+    let advertised = advertised.unwrap_or_default();
+    let advertised = advertised.trim();
+    if !advertised.is_empty() {
+        return match derive_node_id(advertised) {
+            Ok(derived) if derived == jwt_node => Ok(advertised.to_string()),
+            _ => Err(AppError::unauthorized("sender_pub_key_mismatch_jwt")),
+        };
+    }
+    if account_pub.is_empty() {
+        return Ok(String::new());
+    }
+    match derive_node_id(account_pub) {
+        Ok(derived) if derived == jwt_node => Ok(account_pub.to_string()),
+        _ => Ok(String::new()),
+    }
+}
+
+async fn account_pubkey(state: &AppState, user_id: &str) -> Result<String, AppError> {
+    let mut rows = state
+        .db
+        .query(
+            "SELECT public_ble_key FROM users WHERE id = ?1",
+            params![user_id.to_string()],
+        )
+        .await?;
+    Ok(rows
+        .next()
+        .await?
+        .map(|r| r.get::<String>(0))
+        .transpose()?
+        .unwrap_or_default())
 }
 
 async fn queue_depth(state: &AppState, receiver: &str) -> Result<i64, AppError> {
@@ -504,6 +529,7 @@ mod tests {
             payload_b64: "cGF5bG9hZA==".into(),
             ts: Some(now_ms()),
             kind: Some("mesh_bytes".into()),
+            sender_pub_key: None,
         }
     }
 
@@ -702,6 +728,56 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.message, "recipient_queue_full");
+    }
+
+    #[tokio::test]
+    async fn pull_carries_sender_pub_key_from_envelope() {
+        let st = state().await;
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        let mut env = envelope("m-key", "", Some(&node(KEY_B)));
+        env.sender_pub_key = Some(KEY_A.into());
+        push_one(&st, &a, env).await.unwrap();
+        let got = pull_for(&st, &b).await;
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].sender_pub_key, KEY_A);
+        assert_eq!(got[0].from, node(KEY_A));
+    }
+
+    #[tokio::test]
+    async fn pull_fills_sender_pub_key_from_account_if_omitted() {
+        let st = state().await;
+        st.db
+            .execute(
+                r#"INSERT INTO users (id, auth_method, auth_id, public_ble_key, created_at)
+                   VALUES ('user-a', 'email', 'a@x', ?1, 1)"#,
+                params![KEY_A],
+            )
+            .await
+            .unwrap();
+        let (a, b) = (auth(KEY_A, "user-a"), auth(KEY_B, "user-b"));
+        push_one(&st, &a, envelope("m-fill", "", Some(&node(KEY_B))))
+            .await
+            .unwrap();
+        let got = pull_for(&st, &b).await;
+        assert_eq!(got[0].sender_pub_key, KEY_A);
+    }
+
+    #[tokio::test]
+    async fn rejects_spoofed_sender_pub_key() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        let mut env = envelope("m-spoof", "", Some(&node(KEY_B)));
+        env.sender_pub_key = Some(KEY_B.into());
+        let err = push_one(&st, &a, env).await.unwrap_err();
+        assert_eq!(err.message, "sender_pub_key_mismatch_jwt");
+    }
+
+    #[tokio::test]
+    async fn directory_returns_empty_roster() {
+        let st = state().await;
+        let a = auth(KEY_A, "user-a");
+        let resp = directory(State(st), a).await.unwrap().0;
+        assert!(resp.nodes.is_empty());
     }
 }
 

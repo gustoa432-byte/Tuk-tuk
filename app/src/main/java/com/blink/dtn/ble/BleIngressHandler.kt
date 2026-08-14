@@ -464,7 +464,8 @@ internal class BleIngressHandler(
                 appVersionName = appVersionName.ifBlank {
                     existingProfile?.appVersionName.orEmpty()
                 },
-                avatarBlob = existingProfile?.avatarBlob
+                avatarBlob = existingProfile?.avatarBlob,
+                username = existingProfile?.username.orEmpty()
             )
         )
         Log.i("DTN", "Successfully saved public key for Node: ${packet.senderId}")

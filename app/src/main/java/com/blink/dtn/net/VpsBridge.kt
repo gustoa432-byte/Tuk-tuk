@@ -144,7 +144,8 @@ class VpsBridge private constructor(
                 from = myNodeId,
                 to = to,
                 payloadB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-                ts = System.currentTimeMillis()
+                ts = System.currentTimeMillis(),
+                senderPubKey = mySenderPubKey()
             )
             val body = json.encodeToString(PushRequest(listOf(envelope)))
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -260,57 +261,12 @@ class VpsBridge private constructor(
         }
     }
 
-    /** Pull online directory → local contacts (same identity online ↔ mesh). */
+    private fun mySenderPubKey(): String =
+        com.blink.dtn.crypto.RsaUtils.getPublicKeyBase64()
+
+    /** Bulk roster is not a product path — exact username lookup is the find. */
     private suspend fun syncDirectory() {
-        val jwt = meshJwtOrNull() ?: return
-        val req = Request.Builder()
-            .url("${baseUrl()}/v1/directory")
-            .get()
-            .header("Authorization", "Bearer $jwt")
-            .header("X-Node-Id", myNodeId)
-            .build()
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                reachable.set(false)
-                return
-            }
-            reachable.set(true)
-            val text = resp.body?.string().orEmpty()
-            if (text.isBlank()) return
-            val dir = json.decodeFromString<DirectoryResponse>(text)
-            for (node in dir.nodes) {
-                if (node.nodeId.isBlank() || node.nodeId == myNodeId) continue
-                // Identity binding: refuse directory rows where pubkey does not derive to nodeId.
-                if (node.pubkey.isNotBlank()) {
-                    val derived = com.blink.dtn.crypto.NodeIdentity.deriveNodeId(node.pubkey)
-                    if (derived.isBlank() || derived != node.nodeId) {
-                        Log.w(TAG, "Skip directory node unbound pubkey nodeId=${node.nodeId}")
-                        continue
-                    }
-                }
-                val existing = dao.getProfileById(node.nodeId)
-                if (existing?.isBlocked == true) continue
-                val nick = node.nick.ifBlank { existing?.nickname.orEmpty() }
-                val profile = existing?.copy(
-                    nickname = if (node.nick.isNotBlank()) node.nick else existing.nickname,
-                    lastSeen = maxOf(existing.lastSeen, node.seenAt),
-                    publicKey = node.pubkey.ifBlank { existing.publicKey },
-                    trustStatus = if (existing.trustStatus == com.blink.dtn.db.UserProfile.TRUST_BLOCKED)
-                        existing.trustStatus
-                    else
-                        com.blink.dtn.db.UserProfile.TRUST_CONTACT
-                ) ?: com.blink.dtn.db.UserProfile(
-                    userId = node.nodeId,
-                    nickname = nick.ifBlank { "Friend" },
-                    lastSeen = if (node.seenAt > 0) node.seenAt else System.currentTimeMillis(),
-                    isVip = false,
-                    publicKey = node.pubkey,
-                    trustStatus = com.blink.dtn.db.UserProfile.TRUST_CONTACT
-                )
-                dao.insertOrUpdateProfile(profile)
-                com.blink.dtn.telemetry.PeerDirectory.noteNode(node.nodeId, profile.nickname)
-            }
-        }
+        return
     }
 
     private suspend fun performSync() {
@@ -338,7 +294,8 @@ class VpsBridge private constructor(
                         to = recipientFor(msg),
                         payloadB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
                         ts = msg.timestamp,
-                        kind = "mesh_bytes"
+                        kind = "mesh_bytes",
+                        senderPubKey = mySenderPubKey()
                     )
                 )
                 pushedIds.add(msg.id)
@@ -503,6 +460,14 @@ class VpsBridge private constructor(
     private suspend fun ingestEnvelope(env: VpsEnvelope) {
         if (dao.hasSeenPacket(env.id)) return
         dao.rememberSeenPacket(env.id)
+        if (env.senderPubKey.isNotBlank() && env.from.isNotBlank()) {
+            com.blink.dtn.db.ContactKeyPolicy.applyDiscovered(
+                dao = dao,
+                nodeId = env.from,
+                advertisedKey = env.senderPubKey,
+                asStrangerIfNew = true
+            )
+        }
         val raw = try {
             Base64.decode(env.payloadB64, Base64.DEFAULT)
         } catch (_: Exception) {
@@ -639,7 +604,8 @@ class VpsBridge private constructor(
         val to: String,
         val payloadB64: String,
         val ts: Long,
-        val kind: String = "mesh_bytes"
+        val kind: String = "mesh_bytes",
+        val senderPubKey: String = ""
     )
 
     @Serializable
@@ -651,17 +617,6 @@ class VpsBridge private constructor(
         val caption: String = "📷",
         val timestamp: Long = 0L,
         val imageB64: String
-    )
-
-    @Serializable
-    private data class DirectoryResponse(val nodes: List<DirectoryNode> = emptyList())
-
-    @Serializable
-    private data class DirectoryNode(
-        val nodeId: String = "",
-        val nick: String = "",
-        val pubkey: String = "",
-        val seenAt: Long = 0L
     )
 
     @Serializable

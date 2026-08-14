@@ -215,9 +215,9 @@ object S {
         "Когда нет интернета и не ловит сеть, ваше сообщение идёт через телефоны людей " +
             "вокруг, пока не дойдёт до того, кому вы написали."
     fun welcomeHow(lang: String) = if (lang == LANG_EN)
-        "To add someone, tap + and scan their QR code. Both of you need Qq — nothing else."
+        "To add someone, tap + and find them by Qq address, or scan their QR. QR marks them as verified."
     else
-        "Чтобы добавить человека, нажмите + и отсканируйте его QR-код. Qq нужен обоим — больше ничего."
+        "Чтобы добавить человека, нажмите + и найдите его по адресу Qq — или отсканируйте QR. QR помечает контакт как проверенный."
     fun welcomeTime(lang: String) = if (lang == LANG_EN)
         "Delivery can take minutes or hours: the message waits until someone walks close " +
             "enough to carry it further. You can close the app — it keeps working."
@@ -723,5 +723,34 @@ object S {
         "Qq will keep writing with the key you already have. Scan their QR to confirm the new one — otherwise someone else could be pretending to be them."
     else
         "Qq продолжит писать со старым ключом. Отсканируйте их QR, чтобы подтвердить новый — иначе это может быть кто-то другой."
+    fun findViaQq(lang: String) = if (lang == LANG_EN) "Find by Qq address" else "Найти по адресу Qq"
+    fun usernameHint(lang: String) = if (lang == LANG_EN) "@username" else "@имя"
+    fun usernameNeedServer(lang: String) = if (lang == LANG_EN)
+        "Set a delivery server in Settings to find people by address"
+    else
+        "Укажите сервер доставки в настройках, чтобы искать людей по адресу"
+    fun usernameNeedSignIn(lang: String) = if (lang == LANG_EN)
+        "Sign in to the delivery server to find people by address"
+    else
+        "Войдите на сервер доставки, чтобы искать людей по адресу"
+    fun usernameNotFound(lang: String) = if (lang == LANG_EN)
+        "No one with that address" else "Такого адреса нет"
+    fun usernameInvalid(lang: String) = if (lang == LANG_EN)
+        "Address is 3–20 characters: latin letters, digits, underscore"
+    else
+        "Адрес — 3–20 символов: латиница, цифры, подчёркивание"
+    fun usernameClaim(lang: String) = if (lang == LANG_EN) "Your Qq address" else "Ваш адрес Qq"
+    fun usernameClaimHint(lang: String) = if (lang == LANG_EN)
+        "Optional. Others can find you by this exact address. It is not a public profile."
+    else
+        "Необязательно. Другие смогут найти вас по этому точному адресу. Это не публичный профиль."
+    fun usernameSaved(lang: String) = if (lang == LANG_EN) "Address saved" else "Адрес сохранён"
+    fun usernameTaken(lang: String) = if (lang == LANG_EN) "That address is taken" else "Этот адрес занят"
+    fun usernameCooldown(lang: String) = if (lang == LANG_EN)
+        "You can change the address once every 30 days"
+    else
+        "Адрес можно сменить раз в 30 дней"
+    fun usernameFind(lang: String) = if (lang == LANG_EN) "Find" else "Найти"
+    fun usernameSelf(lang: String) = if (lang == LANG_EN) "That is your own address" else "Это ваш собственный адрес"
 }
 

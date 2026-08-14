@@ -37,7 +37,16 @@ data class UserProfile(
      * Mesh-sized avatar JPEG bytes (square, ≤~128px). Null = none.
      * Stored locally and optionally embedded in contact QR as base64 `av`.
      */
-    val avatarBlob: ByteArray? = null
+    /**
+     * Mesh-sized avatar JPEG bytes (square, ≤~128px). Null = none.
+     * Stored locally and optionally embedded in contact QR as base64 `av`.
+     */
+    val avatarBlob: ByteArray? = null,
+    /**
+     * Opt-in internet address (`alice`), stored locally. Empty if unknown.
+     * Not a public profile — just how this phone found them.
+     */
+    val username: String = ""
 ) {
     companion object {
         const val TRUST_STRANGER = "STRANGER"

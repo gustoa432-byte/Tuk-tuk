@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         SocialOrbitEntity::class,
         BannedNodeEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -347,6 +347,14 @@ abstract class BLinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `user_profiles` ADD COLUMN `username` TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): BLinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Never wipe blink_database on migration failure — user messages must survive.
@@ -378,7 +386,8 @@ abstract class BLinkDatabase : RoomDatabase() {
                     MIGRATION_21_22,
                     MIGRATION_22_23,
                     MIGRATION_23_24,
-                    MIGRATION_24_25
+                    MIGRATION_24_25,
+                    MIGRATION_25_26
                 )
                 // Pre-v9 never had migrations; wipe those only.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
