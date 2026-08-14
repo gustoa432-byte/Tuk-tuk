@@ -372,10 +372,11 @@ object S {
     fun settings(lang: String) = if (lang == LANG_EN) "Settings" else "Настройки"
     fun wallpaper(lang: String) = if (lang == LANG_EN) "Wallpaper" else "Обои"
     fun wallpaperHint(lang: String) = if (lang == LANG_EN)
-        "Photo sits on a black background — dial how strong it shows."
+        "Built-in pack starts at 25% over black. You can pick a photo or turn the strength."
     else
-        "Фото поверх чёрного фона — ползунком настройте, насколько оно видно."
+        "Встроенный набор сразу ставится на 25% поверх чёрного. Можно своё фото или подвинуть силу."
     fun chooseWallpaper(lang: String) = if (lang == LANG_EN) "Choose photo" else "Выбрать фото"
+    fun wallpaperPack(lang: String) = if (lang == LANG_EN) "Qq wallpapers" else "Обои Qq"
     fun resetWallpaper(lang: String) = if (lang == LANG_EN) "Remove wallpaper" else "Убрать обои"
     fun wallpaperNone(lang: String) = if (lang == LANG_EN) "Black background" else "Чёрный фон"
     fun wallpaperOpacity(lang: String) = if (lang == LANG_EN) "Wallpaper strength" else "Прозрачность обоев"

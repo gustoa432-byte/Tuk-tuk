@@ -4,32 +4,50 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import com.blink.dtn.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.max
 
+data class WallpaperPreset(
+    val id: String,
+    val resId: Int
+)
+
 /**
  * Local app wallpaper over a black base.
  * [opacity] = how strongly the photo shows (0 = black only).
- * Draft photo/opacity preview live until [commitDraft].
+ * Built-in pack applies at [DEFAULT_OPACITY] (25%). Draft photo/opacity
+ * preview live until [commitDraft].
  */
 object AppWallpaper {
 
     private const val PREFS_NAME = "blink_prefs"
     private const val KEY_CUSTOM = "wallpaper_custom"
+    private const val KEY_PRESET = "wallpaper_preset"
     private const val KEY_OPACITY = "wallpaper_opacity"
     private const val FILE_NAME = "wallpaper.jpg"
     private const val MAX_EDGE_PX = 1920
     private const val JPEG_QUALITY = 82
-    const val DEFAULT_OPACITY = 0.45f
+
+    /** Automatic strength for pack (and first gallery pick). */
+    const val DEFAULT_OPACITY = 0.25f
+
+    val PRESETS: List<WallpaperPreset> = listOf(
+        WallpaperPreset("dinos_radio", R.drawable.wp_dinos_radio),
+        WallpaperPreset("dinos_blocks", R.drawable.wp_dinos_blocks)
+    )
 
     private val _revision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = _revision
 
     private val _opacity = MutableStateFlow(DEFAULT_OPACITY)
     val opacity: StateFlow<Float> = _opacity
+
+    private val _presetId = MutableStateFlow<String?>(null)
+    val presetId: StateFlow<String?> = _presetId
 
     private val _draftBitmap = MutableStateFlow<Bitmap?>(null)
     val draftBitmap: StateFlow<Bitmap?> = _draftBitmap
@@ -44,7 +62,9 @@ object AppWallpaper {
             prefs.edit().putBoolean(KEY_CUSTOM, false).apply()
         }
         _opacity.value = prefs.getFloat(KEY_OPACITY, DEFAULT_OPACITY).coerceIn(0f, 1f)
-        if (_revision.value == 0L && enabled) {
+        _presetId.value = prefs.getString(KEY_PRESET, null)
+            ?.takeIf { id -> PRESETS.any { it.id == id } }
+        if (_revision.value == 0L && (enabled || _presetId.value != null)) {
             _revision.value = file(context).lastModified().coerceAtLeast(1L)
         }
     }
@@ -62,6 +82,23 @@ object AppWallpaper {
         _draftOpacity.value = value.coerceIn(0f, 1f)
     }
 
+    /** Apply a built-in pack image at automatic 25% strength. */
+    fun applyPreset(context: Context, id: String): Boolean {
+        val preset = PRESETS.firstOrNull { it.id == id } ?: return false
+        discardDraft()
+        file(context).delete()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_CUSTOM, false)
+            .putString(KEY_PRESET, preset.id)
+            .putFloat(KEY_OPACITY, DEFAULT_OPACITY)
+            .apply()
+        _opacity.value = DEFAULT_OPACITY
+        _presetId.value = preset.id
+        _revision.value = System.currentTimeMillis()
+        return true
+    }
+
     /** Load gallery photo into draft only — not written until [commitDraft]. */
     fun loadDraftFromUri(context: Context, uri: Uri): Boolean {
         val bitmap = decodeSampled(context, uri, MAX_EDGE_PX) ?: return false
@@ -71,7 +108,7 @@ object AppWallpaper {
         _draftBitmap.value = scaled
         if (old != null && old !== scaled && !old.isRecycled) old.recycle()
         if (_draftOpacity.value == null) {
-            _draftOpacity.value = _opacity.value
+            _draftOpacity.value = DEFAULT_OPACITY
         }
         return true
     }
@@ -87,9 +124,11 @@ object AppWallpaper {
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean(KEY_CUSTOM, true)
+                    .remove(KEY_PRESET)
                     .putFloat(KEY_OPACITY, draftOp.coerceIn(0f, 1f))
                     .apply()
                 _opacity.value = draftOp.coerceIn(0f, 1f)
+                _presetId.value = null
                 _revision.value = System.currentTimeMillis()
             } else if (_draftOpacity.value != null) {
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -118,14 +157,25 @@ object AppWallpaper {
         discardDraft()
         file(context).delete()
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_CUSTOM, false).apply()
+            .edit()
+            .putBoolean(KEY_CUSTOM, false)
+            .remove(KEY_PRESET)
+            .apply()
+        _presetId.value = null
         _revision.value = System.currentTimeMillis()
     }
 
     fun loadBitmap(context: Context): Bitmap? {
-        if (!hasCustom(context)) return null
+        if (hasCustom(context)) {
+            return try {
+                BitmapFactory.decodeFile(file(context).absolutePath)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val resId = PRESETS.firstOrNull { it.id == _presetId.value }?.resId ?: return null
         return try {
-            BitmapFactory.decodeFile(file(context).absolutePath)
+            BitmapFactory.decodeResource(context.resources, resId)
         } catch (_: Exception) {
             null
         }

@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -39,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -48,6 +51,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.blink.dtn.R
 import com.blink.dtn.ui.theme.AccentLime
+import com.blink.dtn.ui.theme.BackgroundDark
 import com.blink.dtn.ui.theme.TextPrimary
 import com.blink.dtn.ui.theme.TextSecondary
 import com.blink.dtn.ui.theme.Typography
@@ -250,7 +254,6 @@ fun AboutQqScreen(onBack: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text("Qq", style = Typography.titleLarge, color = TextPrimary)
-        Text(S.slogan(lang), style = Typography.bodyMedium, color = TextSecondary)
         Spacer(modifier = Modifier.height(8.dp))
         Text("${S.versionLabel(lang)}: $version", color = TextSecondary, style = Typography.bodySmall)
         Spacer(modifier = Modifier.height(16.dp))
@@ -444,6 +447,7 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
     val lang by AppLang.lang.collectAsState()
     val revision by AppWallpaper.revision.collectAsState()
     val savedOpacity by AppWallpaper.opacity.collectAsState()
+    val presetId by AppWallpaper.presetId.collectAsState()
     val draftBitmap by AppWallpaper.draftBitmap.collectAsState()
     val draftOpacity by AppWallpaper.draftOpacity.collectAsState()
     val scope = rememberCoroutineScope()
@@ -453,6 +457,8 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
     val wallpaperDirty = draftBitmap != null ||
         (draftOpacity != null && draftOpacity != savedOpacity)
     var loading by remember { mutableStateOf(false) }
+    val noneSelected = draftBitmap == null && presetId == null &&
+        !AppWallpaper.hasCustom(context)
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -482,6 +488,45 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
     ) {
         SettingsBackRow(S.settingsAppearance(lang), onBack)
         Spacer(modifier = Modifier.height(12.dp))
+        Text(S.wallpaperPack(lang), color = TextSecondary, style = Typography.labelSmall)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            WallpaperPackTile(
+                selected = noneSelected,
+                onClick = { AppWallpaper.clear(context) },
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(BackgroundDark),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(S.wallpaperNone(lang), color = TextSecondary, style = Typography.labelSmall)
+                }
+            }
+            AppWallpaper.PRESETS.forEach { preset ->
+                WallpaperPackTile(
+                    selected = draftBitmap == null && presetId == preset.id,
+                    onClick = { AppWallpaper.applyPreset(context, preset.id) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Image(
+                        painter = painterResource(id = preset.resId),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                        alpha = AppWallpaper.DEFAULT_OPACITY
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(S.wallpaperHint(lang), color = TextSecondary, style = Typography.bodySmall)
+        Spacer(modifier = Modifier.height(12.dp))
         Text(S.wallpaper(lang), color = TextSecondary, style = Typography.labelSmall)
         Spacer(modifier = Modifier.height(8.dp))
         Box(
@@ -506,9 +551,15 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(S.wallpaperOpacity(lang), color = TextSecondary, style = Typography.labelSmall)
+        Text(
+            "${(displayOpacity * 100).toInt()}%",
+            color = AccentLime,
+            style = Typography.labelSmall
+        )
         Slider(
             value = displayOpacity,
             onValueChange = { AppWallpaper.setDraftOpacity(it) },
+            valueRange = 0f..1f,
             colors = SliderDefaults.colors(
                 thumbColor = AccentLime,
                 activeTrackColor = AccentLime
@@ -539,6 +590,28 @@ private fun SettingsAppearanceSection(onBack: () -> Unit) {
                 Text(S.resetWallpaper(lang), color = TextSecondary)
             }
         }
+    }
+}
+
+@Composable
+private fun WallpaperPackTile(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(112.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) AccentLime else TextSecondary.copy(alpha = 0.25f),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .bounceClick(onClick)
+    ) {
+        content()
     }
 }
 
